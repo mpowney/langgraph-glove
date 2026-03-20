@@ -1,0 +1,38 @@
+{
+  "name": "@langgraph-glove/core",
+  "version": "0.1.0",
+  "description": "Core agent, channels, RPC clients and remote tool support for langgraph-glove",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/examples/cli.ts --format esm --dts --out-dir dist",
+    "dev": "tsup src/index.ts src/examples/cli.ts --format esm --dts --out-dir dist --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@langchain/core": "^0.3.0",
+    "@langchain/langgraph": "^0.2.0",
+    "@langchain/ollama": "^0.2.4",
+    "@langchain/openai": "^0.3.0",
+    "express": "^4.21.0",
+    "uuid": "^10.0.0",
+    "ws": "^8.18.0",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "@types/ws": "^8.5.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}
