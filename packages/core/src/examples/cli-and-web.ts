@@ -84,7 +84,7 @@ const model = createModel();
 
 const agent = new GloveAgent(model, tools, {
   systemPrompt:
-    "You are a helpful assistant with access to real-time weather data for Australia, Europe, and the United States. " +
+    "You are a helpful assistant with access to rain forecast and real-time weather data for Australia, Europe, and the United States. " +
     "Use weather_au for Australian locations, weather_eu for European locations, and weather_us for US locations. " +
     "Answer concisely and always include the unit when reporting temperatures.",
 });

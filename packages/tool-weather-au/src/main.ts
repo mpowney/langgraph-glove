@@ -14,6 +14,7 @@
 import { HttpToolServer, UnixSocketToolServer } from "@langgraph-glove/tool-server";
 import type { ToolServer } from "@langgraph-glove/tool-server";
 import { weatherToolMetadata, handleWeather } from "./tools/WeatherTool";
+import { rainForecastToolMetadata, handleRainForecast } from "./tools/RainForecastTool";
 
 const mode = (process.env["RPC_MODE"] ?? "http").toLowerCase();
 
@@ -28,6 +29,7 @@ if (mode === "unix") {
 
 // Register all tools
 server.register(weatherToolMetadata, handleWeather);
+server.register(rainForecastToolMetadata, handleRainForecast);
 
 // Start
 await server.start();
