@@ -3,7 +3,7 @@ import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { Channel } from "./Channel";
-import type { IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {
@@ -14,7 +14,7 @@ interface ClientMessage {
 
 /** Messages sent from server → browser client. */
 type ServerMessage =
-  | { type: "chunk"; text: string; conversationId: string }
+  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" }
   | { type: "done"; conversationId: string }
   | { type: "error"; message: string; conversationId: string };
 
@@ -57,8 +57,8 @@ const WEB_UI_HTML = /* html */ `<!DOCTYPE html>
       word-break: break-word;
     }
     .user { align-self: flex-end; background: #0078d4; color: #fff; border-bottom-right-radius: 2px; }
-    .assistant { align-self: flex-start; background: #fff; color: #1a1a2e; border-bottom-left-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-    .assistant.streaming::after { content: "▌"; animation: blink .7s step-end infinite; }
+    .agent { align-self: flex-start; background: #fff; color: #1a1a2e; border-bottom-left-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+    .agent.streaming::after { content: "▌"; animation: blink .7s step-end infinite; }
     @keyframes blink { 50% { opacity: 0; } }
     #input-bar {
       display: flex;
@@ -110,7 +110,7 @@ const WEB_UI_HTML = /* html */ `<!DOCTYPE html>
         if (!el) {
           el = document.createElement('div');
           el.id = 'streaming-response';
-          el.className = 'message assistant streaming';
+          el.className = 'message ' + (msg.role || 'agent') + ' streaming';
           chat.appendChild(el);
         }
         el.textContent += msg.text;
@@ -126,13 +126,13 @@ const WEB_UI_HTML = /* html */ `<!DOCTYPE html>
       } else if (msg.type === 'error') {
         const el = document.getElementById('streaming-response');
         if (el) el.remove();
-        appendMessage('assistant', '⚠ ' + msg.message);
+        appendMessage('agent', '⚠ ' + msg.message);
         sendBtn.disabled = false;
         input.focus();
       }
     };
 
-    ws.onclose = () => appendMessage('assistant', '⚠ Connection closed. Refresh the page to reconnect.');
+    ws.onclose = () => appendMessage('agent', '⚠ Connection closed. Refresh the page to reconnect.');
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
@@ -159,7 +159,7 @@ const WEB_UI_HTML = /* html */ `<!DOCTYPE html>
 </body>
 </html>`;
 
-export interface WebChannelConfig {
+export interface WebChannelConfig extends ChannelConfig {
   /** Port for the HTTP + WebSocket server. Default: `8080`. */
   port?: number;
   /** Hostname to bind. Default: `"0.0.0.0"`. */
@@ -187,7 +187,7 @@ export class WebChannel extends Channel {
   private readonly host: string;
 
   constructor(config: WebChannelConfig = {}) {
-    super();
+    super(config);
     this.port = config.port ?? 8080;
     this.host = config.host ?? "0.0.0.0";
     this.app = express();
@@ -225,6 +225,7 @@ export class WebChannel extends Channel {
       type: "chunk",
       text: message.text,
       conversationId: message.conversationId,
+      role: message.role,
     };
     this.broadcast(message.conversationId, payload);
     this.broadcast(message.conversationId, { type: "done", conversationId: message.conversationId });
@@ -285,8 +286,9 @@ export class WebChannel extends Channel {
   private broadcast(conversationId: string, message: ServerMessage): void {
     const payload = JSON.stringify(message);
     this.wss?.clients.forEach((client) => {
+      if (client.readyState !== WebSocket.OPEN) return;
       const tagged = client as WebSocket & { conversationId?: string };
-      if (tagged.conversationId === conversationId && client.readyState === WebSocket.OPEN) {
+      if (this.receiveAll || tagged.conversationId === conversationId) {
         client.send(payload);
       }
     });

@@ -20,10 +20,26 @@ export interface OutgoingMessage {
   conversationId: string;
   /** Plain-text content to deliver. */
   text: string;
+  /**
+   * Who produced this message.  `"user"` is used when mirroring an incoming
+   * message from another channel; `"agent"` (default) is the model's reply.
+   */
+  role?: "user" | "agent";
 }
 
 /** Callback invoked by the channel for every incoming message. */
 export type MessageHandler = (message: IncomingMessage) => Promise<void>;
+
+/** Configuration options shared by all channel implementations. */
+export interface ChannelConfig {
+  /**
+   * When `true`, this channel will also receive the agent's responses to
+   * messages that originated from *other* channels.  Useful for observation,
+   * logging, or mirroring conversations across channels.
+   * Default: `false`.
+   */
+  receiveAll?: boolean;
+}
 
 /**
  * Abstract base class for all agent channels.
@@ -46,6 +62,17 @@ export type MessageHandler = (message: IncomingMessage) => Promise<void>;
 export abstract class Channel extends EventEmitter {
   /** Human-readable identifier used in logs and error messages. */
   abstract readonly name: string;
+
+  /**
+   * When `true`, this channel receives the agent's responses to messages from
+   * all other channels in addition to its own.
+   */
+  readonly receiveAll: boolean;
+
+  protected constructor(config: ChannelConfig = {}) {
+    super();
+    this.receiveAll = config.receiveAll ?? false;
+  }
 
   /**
    * Whether this channel can deliver token-by-token streaming output.

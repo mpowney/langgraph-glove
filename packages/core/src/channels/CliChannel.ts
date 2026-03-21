@@ -2,7 +2,7 @@ import readline from "node:readline";
 import process from "node:process";
 import { v4 as uuidv4 } from "uuid";
 import { Channel } from "./Channel";
-import type { IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
 
 /**
  * A streaming channel that reads from `stdin` and writes to `stdout`.
@@ -19,6 +19,10 @@ export class CliChannel extends Channel {
   private readonly conversationId = uuidv4();
   /** Prevent overlapping responses when the user types quickly. */
   private processing = false;
+
+  constructor(config: ChannelConfig = {}) {
+    super(config);
+  }
 
   async start(): Promise<void> {
     this.rl = readline.createInterface({

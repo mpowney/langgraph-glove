@@ -13,7 +13,7 @@ export type LlmProvider = "openai" | "ollama";
 export interface CreateModelOptions {
   /**
    * Override the provider.  Defaults to the `LLM_PROVIDER` env var,
-   * falling back to `"openai"` if that is not set.
+   * falling back to `"ollama"` if that is not set.
    */
   provider?: LlmProvider;
 
@@ -62,16 +62,16 @@ export interface CreateModelOptions {
  *
  * | Variable          | Description                                    | Default              |
  * |---|---|---|
- * | `LLM_PROVIDER`    | `openai` or `ollama`                           | `openai`             |
+ * | `LLM_PROVIDER`    | `openai` or `ollama`                           | `ollama`             |
  * | `OPENAI_API_KEY`  | OpenAI secret key                              | *(required)*         |
  * | `OPENAI_MODEL`    | OpenAI model name                              | `gpt-4o-mini`        |
  * | `OLLAMA_URL`      | Ollama server base URL                         | `http://localhost:11434` |
  * | `OLLAMA_MODEL`    | Ollama model name                              | `llama3.2`           |
  *
- * @example Using OpenAI (default)
+ * @example Using OpenAI
  * ```ts
  * // OPENAI_API_KEY=sk-... in environment
- * const model = createModel();
+ * const model = createModel({ provider: "openai" });
  * ```
  *
  * @example Using Ollama
@@ -93,7 +93,7 @@ export interface CreateModelOptions {
 export function createModel(options: CreateModelOptions = {}): BaseChatModel {
   const provider: LlmProvider =
     options.provider ??
-    ((process.env["LLM_PROVIDER"] ?? "openai").toLowerCase() as LlmProvider);
+    ((process.env["LLM_PROVIDER"] ?? "ollama").toLowerCase() as LlmProvider);
 
   const temperature = options.temperature ?? 0;
 

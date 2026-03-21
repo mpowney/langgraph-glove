@@ -2,7 +2,7 @@ import http from "node:http";
 import express, { type Express } from "express";
 import { v4 as uuidv4 } from "uuid";
 import { Channel } from "./Channel";
-import type { IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
 
 /** Webhook payload sent by the BlueBubbles server for new incoming messages. */
 interface BlueBubblesWebhookPayload {
@@ -16,7 +16,7 @@ interface BlueBubblesWebhookPayload {
   };
 }
 
-export interface BlueBubblesChannelConfig {
+export interface BlueBubblesChannelConfig extends ChannelConfig {
   /** Base URL of the BlueBubbles server (e.g. `http://192.168.1.10:1234`). */
   serverUrl: string;
   /** BlueBubbles server password. */
@@ -61,7 +61,7 @@ export class BlueBubblesChannel extends Channel {
   private readonly webhookHost: string;
 
   constructor(config: BlueBubblesChannelConfig) {
-    super();
+    super(config);
     this.serverUrl = config.serverUrl.replace(/\/$/, "");
     this.password = config.password;
     this.webhookPort = config.webhookPort ?? 5001;

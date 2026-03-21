@@ -8,6 +8,27 @@ import { Logger } from "../logging/Logger";
 
 const logger = new Logger("Agent.ts");
 
+/**
+ * Walk the `cause` chain of an error and return a human-readable string that
+ * includes every nested message.  Useful for surfacing the root cause of
+ * `TypeError: fetch failed` errors from undici, which wrap the real network
+ * error (e.g. `ECONNREFUSED`) in `err.cause`.
+ */
+function formatError(err: unknown): string {
+  const parts: string[] = [];
+  let current: unknown = err;
+  while (current != null) {
+    if (current instanceof Error) {
+      parts.push(current.message);
+      current = (current as NodeJS.ErrnoException & { cause?: unknown }).cause;
+    } else {
+      parts.push(String(current));
+      break;
+    }
+  }
+  return parts.join(" → ");
+}
+
 export interface AgentConfig {
   /**
    * System prompt prepended to every conversation.
@@ -71,11 +92,12 @@ export class GloveAgent {
       channel.onMessage(async (message) => {
         logger.debug(`Incoming message on channel "${channel.name}" (conversation: ${message.conversationId})`);
         await this.dispatchMessage(message, channel).catch(async (err) => {
-          logger.error(`Error handling message on channel "${channel.name}"`, err);
+          const detail = formatError(err);
+          logger.error(`Error handling message on channel "${channel.name}": ${detail}`, err);
           await channel
             .sendMessage({
               conversationId: message.conversationId,
-              text: "Sorry, an error occurred while processing your message.",
+              text: `Sorry, an error occurred processing your message`,
             })
             .catch((e: unknown) => logger.error("Failed to send error reply", e));
         });
@@ -143,12 +165,45 @@ export class GloveAgent {
   // Private helpers
   // ---------------------------------------------------------------------------
 
-  private async dispatchMessage(message: IncomingMessage, channel: Channel): Promise<void> {
-    if (channel.supportsStreaming) {
-      await channel.sendStream(message.conversationId, this.stream(message.text, message.conversationId));
+  private async dispatchMessage(message: IncomingMessage, sourceChannel: Channel): Promise<void> {
+    const observers = this.channels.filter((ch) => ch !== sourceChannel && ch.receiveAll);
+
+    // Mirror the user's message to observers before the agent replies.
+    for (const ch of observers) {
+      await ch
+        .sendMessage({ conversationId: message.conversationId, text: message.text, role: "user" })
+        .catch((e: unknown) => logger.error(`Failed to forward user message to channel "${ch.name}"`, e));
+    }
+
+    if (sourceChannel.supportsStreaming) {
+      let fullText = "";
+      const baseStream = this.stream(message.text, message.conversationId);
+
+      // Intercept the stream so we can buffer the complete response for observers
+      // without re-invoking the model.
+      async function* teedStream(): AsyncGenerator<string> {
+        for await (const chunk of baseStream) {
+          fullText += chunk;
+          yield chunk;
+        }
+      }
+
+      await sourceChannel.sendStream(message.conversationId, teedStream());
+
+      for (const ch of observers) {
+        await ch
+          .sendMessage({ conversationId: message.conversationId, text: fullText, role: "agent" })
+          .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
+      }
     } else {
       const response = await this.invoke(message.text, message.conversationId);
-      await channel.sendMessage({ conversationId: message.conversationId, text: response });
+      await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
+
+      for (const ch of observers) {
+        await ch
+          .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
+          .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
+      }
     }
   }
 

@@ -9,6 +9,10 @@ LLM_PROVIDER=ollama node dist/examples/cli.js
 
 # Remote Ollama instance with a specific model
 LLM_PROVIDER=ollama OLLAMA_URL=http://192.168.1.50:11434 OLLAMA_MODEL=qwen2.5:7b node dist/examples/cli.js
+
+# CLI and web channel with Browser UI and web socket: http://localhost:8080 ws://localhost:8080 
+WEB_PORT=8080 WEB_HOST=0.0.0.0 node dist/examples/cli-and-web.js
+
 ```
 
 ## Packages
