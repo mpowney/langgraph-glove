@@ -2,16 +2,16 @@ import type { ToolMetadata } from "@langgraph-glove/tool-server";
 
 /** JSON Schema metadata for the weather tool — consumed by introspection. */
 export const weatherToolMetadata: ToolMetadata = {
-  name: "weather",
+  name: "weather_au",
   description:
-    "Get the current weather conditions for a given location. " +
+    "Get the current weather conditions for a given location within Australia. Only locations in Australia are supported. " +
     "Returns temperature, conditions, humidity and wind speed.",
   parameters: {
     type: "object",
     properties: {
       location: {
         type: "string",
-        description: "City name, e.g. 'London' or 'New York, NY'.",
+        description: "City name within Australia, e.g. 'Sydney' or 'Melbourne'.",
       },
       unit: {
         type: "string",
@@ -55,6 +55,10 @@ export async function handleWeather(params: Record<string, unknown>): Promise<st
     throw new Error("weather: 'location' parameter is required and must be a string");
   }
 
+  if (!(location.toLowerCase().includes("australia") || location.toLowerCase().includes("sydney") || location.toLowerCase().includes("melbourne") || location.toLowerCase().includes("brisbane") || location.toLowerCase().includes("perth") || location.toLowerCase().includes("adelaide"))) {
+    throw new Error("weather: only locations within Australia are supported in this mock implementation");
+  }
+  
   // Deterministic-ish values derived from the location name so repeated calls
   // for the same city return consistent results.
   const seed = [...location].reduce((acc, c) => acc + c.charCodeAt(0), 0);

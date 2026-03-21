@@ -22,14 +22,16 @@
  *   Browser UI:  http://localhost:8080
  *   WebSocket:   ws://localhost:8080
  *
- * RPC transport (tool server):
- *   Start the weather tool server first:
- *     cd packages/tool-example && RPC_MODE=http PORT=3001 node dist/main.js
- *   Then run:
- *     cd packages/core && node dist/examples/cli-and-web.js
+ * Tool servers (start both before running this):
+ *   cd packages/tool-weather-au && RPC_MODE=http PORT=3001 node dist/main.js
+ *   cd packages/tool-weather-eu && RPC_MODE=http PORT=3002 node dist/main.js
  *
- *   Switch to Unix socket:
- *     RPC_MODE=unix SOCKET_PATH=/tmp/weather.sock node dist/examples/cli-and-web.js
+ * Then run:
+ *   cd packages/core && node dist/examples/cli-and-web.js
+ *
+ * Override URLs:
+ *   WEATHER_AU_URL=http://localhost:3001
+ *   WEATHER_EU_URL=http://localhost:3002
  */
 
 import { z } from "zod";
@@ -37,8 +39,6 @@ import { GloveAgent } from "../agent/Agent.js";
 import { CliChannel } from "../channels/CliChannel.js";
 import { WebChannel } from "../channels/WebChannel.js";
 import { HttpRpcClient } from "../rpc/HttpRpcClient.js";
-import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient.js";
-import type { RpcClient } from "../rpc/RpcClient.js";
 import { RemoteTool } from "../tools/RemoteTool.js";
 import { createModel } from "../llm/createModel.js";
 import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel } from "../logging/index.js";
@@ -54,33 +54,36 @@ if (process.env["LOG_FILE"]) {
 }
 
 // ---------------------------------------------------------------------------
-// Transport selection
+// RPC clients — one per tool server
 // ---------------------------------------------------------------------------
 
-const rpcMode = (process.env["RPC_MODE"] ?? "http").toLowerCase();
+const auClient = new HttpRpcClient(process.env["WEATHER_AU_URL"] ?? "http://localhost:3001");
+const euClient = new HttpRpcClient(process.env["WEATHER_EU_URL"] ?? "http://localhost:3002");
 
-let rpcClient: RpcClient;
-if (rpcMode === "unix") {
-  const socketPath = process.env["SOCKET_PATH"] ?? "/tmp/langgraph-glove-weather.sock";
-  rpcClient = new UnixSocketRpcClient(socketPath);
-} else {
-  const toolServerUrl = process.env["TOOL_SERVER_URL"] ?? "http://localhost:3001";
-  rpcClient = new HttpRpcClient(toolServerUrl);
-}
-
-await rpcClient.connect();
+await Promise.all([auClient.connect(), euClient.connect()]);
 
 // ---------------------------------------------------------------------------
 // Remote tools
 // ---------------------------------------------------------------------------
 
-const weatherTool = new RemoteTool(rpcClient, {
-  name: "weather",
+const weatherAuTool = new RemoteTool(auClient, {
+  name: "weather_au",
   description:
-    "Get the current weather conditions for a given location. " +
+    "Get the current weather conditions for a location within Australia. " +
     "Returns temperature, conditions, humidity and wind speed.",
   schema: z.object({
-    location: z.string().describe("City name, e.g. 'London' or 'New York, NY'"),
+    location: z.string().describe("City name within Australia, e.g. 'Sydney' or 'Melbourne'"),
+    unit: z.enum(["celsius", "fahrenheit"]).optional().describe("Temperature unit"),
+  }),
+});
+
+const weatherEuTool = new RemoteTool(euClient, {
+  name: "weather_eu",
+  description:
+    "Get the current weather conditions for a location within Europe. " +
+    "Returns temperature, conditions, humidity and wind speed.",
+  schema: z.object({
+    location: z.string().describe("City name within Europe, e.g. 'London' or 'Paris'"),
     unit: z.enum(["celsius", "fahrenheit"]).optional().describe("Temperature unit"),
   }),
 });
@@ -91,9 +94,10 @@ const weatherTool = new RemoteTool(rpcClient, {
 
 const model = createModel();
 
-const agent = new GloveAgent(model, [weatherTool], {
+const agent = new GloveAgent(model, [weatherAuTool, weatherEuTool], {
   systemPrompt:
-    "You are a helpful assistant with access to real-time weather data. " +
+    "You are a helpful assistant with access to real-time weather data for Australia and Europe. " +
+    "Use weather_au for Australian locations and weather_eu for European locations. " +
     "Answer concisely and always include the unit when reporting temperatures.",
 });
 

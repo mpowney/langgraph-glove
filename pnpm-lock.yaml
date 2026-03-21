@@ -64,25 +64,6 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  packages/tool-example:
-    dependencies:
-      '@langgraph-glove/tool-server':
-        specifier: workspace:*
-        version: link:../tool-server
-    devDependencies:
-      '@types/node':
-        specifier: ^22.0.0
-        version: 22.19.15
-      tsup:
-        specifier: ^8.3.0
-        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
-      tsx:
-        specifier: ^4.19.0
-        version: 4.21.0
-      typescript:
-        specifier: ^5.6.0
-        version: 5.9.3
-
   packages/tool-server:
     dependencies:
       express:
@@ -104,6 +85,44 @@ importers:
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/tool-weather-au:
+    dependencies:
+      '@langgraph-glove/tool-server':
+        specifier: workspace:*
+        version: link:../tool-server
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/tool-weather-eu:
+    dependencies:
+      '@langgraph-glove/tool-server':
+        specifier: workspace:*
+        version: link:../tool-server
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(tsx@4.21.0)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
       typescript:
         specifier: ^5.6.0
         version: 5.9.3

@@ -1,7 +1,7 @@
 {
-  "name": "@langgraph-glove/tool-example",
+  "name": "@langgraph-glove/tool-weather-eu",
   "version": "0.1.0",
-  "description": "Example remote tool package — a mock weather tool runnable via Unix socket or HTTP",
+  "description": "Remote tool package — mock European weather tool runnable via Unix socket or HTTP",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
