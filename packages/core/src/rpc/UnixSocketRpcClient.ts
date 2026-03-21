@@ -9,6 +9,18 @@ interface PendingRequest {
 }
 
 /**
+ * Convert a tool name to a safe, deterministic Unix socket path.
+ * Must stay in sync with the identical helper in `@langgraph-glove/tool-server`.
+ *
+ * @example
+ * socketPathForTool("weather_us") // "/tmp/langgraph-glove-weather_us.sock"
+ */
+export function socketPathForTool(name: string): string {
+  const safe = name.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  return `/tmp/langgraph-glove-${safe}.sock`;
+}
+
+/**
  * RPC client that communicates with a {@link UnixSocketToolServer} using
  * newline-delimited JSON (NDJSON) over a Unix domain socket.
  *
@@ -17,18 +29,21 @@ interface PendingRequest {
  *
  * @example
  * ```ts
- * const client = new UnixSocketRpcClient("/tmp/my-tool.sock");
+ * const client = new UnixSocketRpcClient("weather_us");
+ * // Connects to /tmp/langgraph-glove-weather_us.sock
  * await client.connect();
- * const result = await client.call("weather", { location: "London" });
+ * const result = await client.call("weather_us", { location: "New York" });
  * ```
  */
 export class UnixSocketRpcClient extends RpcClient {
   private socket: net.Socket | null = null;
   private pending = new Map<string, PendingRequest>();
   private readBuffer = "";
+  readonly socketPath: string;
 
-  constructor(private readonly socketPath: string) {
+  constructor(readonly name: string) {
     super();
+    this.socketPath = socketPathForTool(name);
   }
 
   async connect(): Promise<void> {

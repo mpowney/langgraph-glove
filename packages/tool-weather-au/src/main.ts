@@ -4,7 +4,8 @@
  * Select the RPC transport at runtime via the RPC_MODE environment variable:
  *
  *   RPC_MODE=http   PORT=3001       node dist/main.js   (default)
- *   RPC_MODE=unix   SOCKET_PATH=/tmp/weather-au.sock  node dist/main.js
+ *   RPC_MODE=unix                   node dist/main.js
+ *   (socket path derived from tool name: /tmp/langgraph-glove-weather_au.sock)
  *
  * The agent (in @langgraph-glove/core) connects to this process using the
  * matching RpcClient implementation.
@@ -19,8 +20,7 @@ const mode = (process.env["RPC_MODE"] ?? "http").toLowerCase();
 let server: ToolServer;
 
 if (mode === "unix") {
-  const socketPath = process.env["SOCKET_PATH"] ?? "/tmp/langgraph-glove-weather-au.sock";
-  server = new UnixSocketToolServer(socketPath);
+  server = new UnixSocketToolServer("weather_au");
 } else {
   const port = Number(process.env["PORT"] ?? 3001);
   server = new HttpToolServer(port);

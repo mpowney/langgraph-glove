@@ -1,2 +1,2 @@
-export { RemoteTool } from "./RemoteTool";
+export { RemoteTool, jsonSchemaToZodObject } from "./RemoteTool";
 export type { RemoteToolConfig } from "./RemoteTool";

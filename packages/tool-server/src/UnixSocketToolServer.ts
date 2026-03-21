@@ -4,6 +4,20 @@ import { ToolServer } from "./ToolServer";
 import type { RpcRequest } from "./RpcProtocol";
 
 /**
+ * Convert a tool name to a safe, deterministic Unix socket path.
+ *
+ * Non-alphanumeric characters (except `-` and `_`) are replaced with `-`
+ * so the resulting filename is safe on all Unix filesystems.
+ *
+ * @example
+ * socketPathForTool("weather_us") // "/tmp/langgraph-glove-weather_us.sock"
+ */
+export function socketPathForTool(name: string): string {
+  const safe = name.toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+  return `/tmp/langgraph-glove-${safe}.sock`;
+}
+
+/**
  * A tool server that communicates via newline-delimited JSON (NDJSON) over a
  * Unix domain socket.
  *
@@ -15,7 +29,8 @@ import type { RpcRequest } from "./RpcProtocol";
  *
  * @example
  * ```ts
- * const server = new UnixSocketToolServer("/tmp/my-tool.sock");
+ * const server = new UnixSocketToolServer("my-tool");
+ * // Listens on /tmp/langgraph-glove-my-tool.sock
  * server.register({ name: "echo", description: "Echoes input", parameters: {} },
  *   async (params) => params);
  * await server.start();
@@ -23,9 +38,11 @@ import type { RpcRequest } from "./RpcProtocol";
  */
 export class UnixSocketToolServer extends ToolServer {
   private server: net.Server;
+  readonly socketPath: string;
 
-  constructor(private readonly socketPath: string) {
+  constructor(readonly name: string) {
     super();
+    this.socketPath = socketPathForTool(name);
     this.server = net.createServer((socket) => this.handleConnection(socket));
   }
 
