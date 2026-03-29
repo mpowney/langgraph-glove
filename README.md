@@ -278,10 +278,12 @@ You can test tool servers directly with curl:
 
 ```bash
 # List available tools
-curl -s http://localhost:3001 -d '{"method":"listTools","params":{}}'
+curl -s http://localhost:3001/rpc -H 'Content-Type: application/json' \
+  -d '{"id":"1","method":"__introspect__","params":{}}'
 
 # Call a specific tool
-curl -s http://localhost:3001 -d '{"method":"callTool","params":{"name":"weather_au","input":{"location":"Sydney"}}}'
+curl -s http://localhost:3001/rpc -H 'Content-Type: application/json' \
+  -d '{"id":"2","method":"weather_au","params":{"location":"Sydney"}}'
 ```
 
 ### Running the examples
