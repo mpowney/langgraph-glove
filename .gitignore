@@ -3,3 +3,9 @@ dist/
 *.tsbuildinfo
 .env
 *.sock
+
+# Secret files — never commit
+secrets/
+
+# SQLite persistence — local data
+data/

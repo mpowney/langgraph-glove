@@ -2,6 +2,9 @@
 export { GloveAgent } from "./agent/index";
 export type { AgentConfig } from "./agent/index";
 
+// Persistence
+export { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+
 // LLM factory
 export { createModel } from "./llm/createModel";
 export type { CreateModelOptions, LlmProvider } from "./llm/createModel";

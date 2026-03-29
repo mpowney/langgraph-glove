@@ -19,14 +19,16 @@
     "debug": "tsx --inspect src/examples/cli-and-web.ts"
   },
   "dependencies": {
-    "@langchain/core": "^0.3.0",
-    "@langchain/langgraph": "^0.2.0",
-    "@langchain/ollama": "^0.2.4",
-    "@langchain/openai": "^0.3.0",
+    "@langchain/core": "^1.1.36",
+    "@langchain/langgraph": "^1.2.6",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.0.1",
+    "@langchain/ollama": "^1.2.6",
+    "@langchain/openai": "^1.3.1",
+    "@langgraph-glove/config": "workspace:*",
     "express": "^4.21.0",
     "uuid": "^10.0.0",
     "ws": "^8.18.0",
-    "zod": "^3.23.0"
+    "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

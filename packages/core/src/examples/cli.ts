@@ -1,16 +1,8 @@
 /**
  * Minimal example: CLI channel + remote weather tools over HTTP RPC.
  *
- * LLM backend is selected via LLM_PROVIDER ("openai" | "ollama", default: openai).
- *
- * OpenAI prerequisites:
- *   OPENAI_API_KEY=sk-...  (required)
- *   OPENAI_MODEL=gpt-4o-mini  (optional)
- *
- * Ollama prerequisites:
- *   LLM_PROVIDER=ollama
- *   OLLAMA_URL=http://localhost:11434  (optional, this is the default)
- *   OLLAMA_MODEL=llama3.2  (optional, this is the default)
+ * Configuration is loaded from the project-level `config/` and `secrets/`
+ * directories. See `config/models.json` for model provider setup.
  *
  * Tool servers (start all three before running this):
  *   cd packages/tool-weather-au && RPC_MODE=http PORT=3001 node dist/main.js
@@ -26,23 +18,57 @@
  *   WEATHER_EU_URL=http://localhost:3002
  */
 
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { GloveAgent } from "../agent/Agent";
 import { CliChannel } from "../channels/CliChannel";
 import { HttpRpcClient } from "../rpc/HttpRpcClient";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import { RemoteTool } from "../tools/RemoteTool";
-import { createModel } from "../llm/createModel";
 import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel } from "../logging/index";
+import { ConfigLoader, ModelRegistry, resolveConfigEntry } from "@langgraph-glove/config";
+import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
+import type { AgentEntry } from "@langgraph-glove/config";
 
 // ---------------------------------------------------------------------------
-// Logging
+// Project root (two levels up from packages/core/src/examples/)
 // ---------------------------------------------------------------------------
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const projectRoot = path.resolve(__dirname, "..", "..", "..", "..");
+const configDir = path.join(projectRoot, "config");
+const secretsDir = path.join(projectRoot, "secrets");
+
+// ---------------------------------------------------------------------------
+// Config + Secrets
+// ---------------------------------------------------------------------------
+
+const loader = new ConfigLoader(configDir, secretsDir);
+const config = loader.load();
+
+// ---------------------------------------------------------------------------
+// Logging (register secret redactions before any logging occurs)
+// ---------------------------------------------------------------------------
+
+LogService.addRedactions(loader.secrets.values);
 LogService.subscribe(new ConsoleSubscriber(LogLevel.INFO));
 
 if (process.env["LOG_FILE"]) {
   LogService.subscribe(new FileSubscriber(LogLevel.DEBUG));
 }
+
+// ---------------------------------------------------------------------------
+// Model Registry
+// ---------------------------------------------------------------------------
+
+const models = new ModelRegistry(config.models);
+
+// ---------------------------------------------------------------------------
+// Persistence — SQLite (survives restarts)
+// ---------------------------------------------------------------------------
+
+const dbPath = path.join(projectRoot, "data", "checkpoints.sqlite");
+const checkpointer = SqliteSaver.fromConnString(dbPath);
 
 // ---------------------------------------------------------------------------
 // RPC clients — HTTP for AU/EU, Unix socket for US
@@ -66,16 +92,19 @@ const [auTools, euTools, usTools] = await Promise.all([
 const tools = [...auTools, ...euTools, ...usTools];
 
 // ---------------------------------------------------------------------------
-// LLM + Agent
+// Agent (config-driven)
 // ---------------------------------------------------------------------------
 
-const model = createModel();
+const agentEntry = resolveConfigEntry(
+  config.agents as Record<string, AgentEntry>,
+  "default",
+);
+const model = models.get(agentEntry.modelKey);
 
 const agent = new GloveAgent(model, tools, {
-  systemPrompt:
-    "You are a helpful assistant with access to real-time weather data for Australia, Europe, and the United States. " +
-    "Use weather_au for Australian locations, weather_eu for European locations, and weather_us for US locations. " +
-    "Answer concisely and always include the unit when reporting temperatures.",
+  systemPrompt: agentEntry.systemPrompt,
+  recursionLimit: agentEntry.recursionLimit,
+  checkpointer,
 });
 
 agent.addChannel(new CliChannel());

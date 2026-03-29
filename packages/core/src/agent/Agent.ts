@@ -1,7 +1,7 @@
 import { HumanMessage, SystemMessage, AIMessage, AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { StateGraph, MessagesAnnotation, END, START, MemorySaver } from "@langchain/langgraph";
+import { StateGraph, MessagesAnnotation, END, START, MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import type { Channel, IncomingMessage } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
@@ -41,6 +41,12 @@ export interface AgentConfig {
    * Default: `25`.
    */
   recursionLimit?: number;
+  /**
+   * Checkpointer for persisting conversation state across invocations.
+   * Defaults to an in-memory `MemorySaver`.  Pass a `SqliteSaver` for
+   * durable persistence.
+   */
+  checkpointer?: BaseCheckpointSaver;
 }
 
 /**
@@ -230,7 +236,7 @@ export class GloveAgent {
       return last.tool_calls?.length ? "tools" : END;
     };
 
-    const checkpointer = new MemorySaver();
+    const checkpointer = this.config.checkpointer ?? new MemorySaver();
 
     return new StateGraph(MessagesAnnotation)
       .addNode("agent", callAgent)
