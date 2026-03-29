@@ -1,14 +1,31 @@
 {
   "weather-au": {
-    "transport": "http",
-    "url": "http://localhost:3001"
+    "transport": "unix-socket",
+    "url": "http://localhost:3001",
+    "socketName": "weather_au"
   },
   "weather-eu": {
-    "transport": "http",
-    "url": "http://localhost:3002"
+    "transport": "unix-socket",
+    "url": "http://localhost:3002",
+    "socketName": "weather_eu"
   },
   "weather-us": {
     "transport": "unix-socket",
     "socketName": "weather_us"
+  },
+  "browse": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3010",
+    "socketName": "browse"
+  },
+  "browse-session": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3011",
+    "socketName": "browse-session"
+  },
+  "search": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3012",
+    "socketName": "search"
   }
 }

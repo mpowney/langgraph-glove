@@ -1,8 +1,15 @@
 {
   "default": {
     "modelKey": "default",
-    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. Delegate weather-related questions to the appropriate regional weather agent. For general questions, answer directly.",
-    "description": "Orchestrator that routes requests to specialised agents"
+    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. Delegate weather-related questions to the appropriate regional weather agent. For web research, browsing, or form interactions, use the web tools directly or delegate to the researcher agent. For general questions, answer directly.",
+    "description": "Orchestrator that routes requests to specialised agents",
+    "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search"]
+  },
+  "researcher": {
+    "modelKey": "local",
+    "systemPrompt": "You are a web research specialist. Use web_search to find information, then browse pages with browse_open and web_get_content to extract details. Use browse_get_fields and browse_submit_form for interactive pages. Use web_screenshot to capture visual page state. Always cite your sources with URLs. Close browser sessions when done.",
+    "description": "Web research, browsing, and form interaction",
+    "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search"]
   },
   "weather-au": {
     "modelKey": "default",

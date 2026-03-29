@@ -9,3 +9,5 @@ secrets/
 
 # SQLite persistence — local data
 data/
+
+logs/

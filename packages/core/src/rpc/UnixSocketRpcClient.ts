@@ -48,10 +48,14 @@ export class UnixSocketRpcClient extends RpcClient {
 
   async connect(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const sock = net.createConnection({ path: this.socketPath }, resolve);
+      let connected = false;
+      const sock = net.createConnection({ path: this.socketPath }, () => {
+        connected = true;
+        resolve();
+      });
 
       sock.on("error", (err) => {
-        if (!this.socket) {
+        if (!connected) {
           // Still in the connection phase
           reject(err);
         } else {

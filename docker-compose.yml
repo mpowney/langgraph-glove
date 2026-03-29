@@ -12,6 +12,49 @@ services:
     environment:
       - NODE_ENV=production
       - LOG_LEVEL=INFO
+    depends_on:
+      browse:
+        condition: service_healthy
+      browse-session:
+        condition: service_healthy
+      search:
+        condition: service_healthy
+
+  browse:
+    build:
+      context: .
+      dockerfile: packages/tool-browse/Dockerfile
+    container_name: langgraph-glove-browse
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro
+    environment:
+      - NODE_ENV=production
+
+  browse-session:
+    build:
+      context: .
+      dockerfile: packages/tool-browse-session/Dockerfile
+    container_name: langgraph-glove-browse-session
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro
+    environment:
+      - NODE_ENV=production
+
+  search:
+    build:
+      context: .
+      dockerfile: packages/tool-search/Dockerfile
+    container_name: langgraph-glove-search
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro
+    environment:
+      - NODE_ENV=production
 
 volumes:
   glove-data:

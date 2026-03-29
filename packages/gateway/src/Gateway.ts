@@ -260,19 +260,25 @@ export class Gateway extends EventEmitter {
     );
 
     await Promise.all(
-      entries.map(async ([name, entry]) => {
+      entries.map(async ([name, entry]): Promise<void> => {
         try {
+          logger.debug(`Tool server "${name}": creating client…`);
           const client = this.createRpcClient(name, entry);
           this.rpcClients.push(client);
+          logger.debug(`Tool server "${name}": connecting…`);
           await client.connect();
+          logger.debug(`Tool server "${name}": connected, discovering tools…`);
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
         } catch (err) {
           logger.error(`Failed to connect to tool server "${name}"`, err);
         }
-      }),
+        return;
+      })
     );
+
+    logger.debug("All tool discovery promises resolved");
 
     return allTools;
   }
