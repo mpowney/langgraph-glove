@@ -1,0 +1,29 @@
+{
+  "name": "@langgraph-glove/channel-telegram",
+  "version": "0.1.0",
+  "description": "Telegram channel for langgraph-glove using grammY",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --out-dir dist",
+    "dev": "tsup src/index.ts --format esm --dts --out-dir dist --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@langgraph-glove/core": "workspace:*",
+    "grammy": "^1.35.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}

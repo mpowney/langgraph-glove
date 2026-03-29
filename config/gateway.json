@@ -1,0 +1,5 @@
+{
+  "healthPort": 9090,
+  "healthHost": "0.0.0.0",
+  "dbPath": "data/checkpoints.sqlite"
+}

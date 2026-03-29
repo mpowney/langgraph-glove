@@ -1,0 +1,14 @@
+{
+  "weather-au": {
+    "transport": "http",
+    "url": "http://localhost:3001"
+  },
+  "weather-eu": {
+    "transport": "http",
+    "url": "http://localhost:3002"
+  },
+  "weather-us": {
+    "transport": "unix-socket",
+    "socketName": "weather_us"
+  }
+}

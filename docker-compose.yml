@@ -1,0 +1,17 @@
+services:
+  gateway:
+    build: .
+    container_name: langgraph-glove
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./config:/app/config:ro
+      - ./secrets:/app/secrets:ro
+      - glove-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - LOG_LEVEL=INFO
+
+volumes:
+  glove-data:

@@ -17,6 +17,10 @@ export {
   ChannelsConfigSchema,
   AgentEntrySchema,
   AgentsConfigSchema,
+  ToolTransportSchema,
+  ToolServerEntrySchema,
+  ToolsConfigSchema,
+  GatewayConfigSchema,
   SECRET_REF_PATTERN,
 } from "./schemas.js";
 export type {
@@ -27,4 +31,8 @@ export type {
   ChannelsConfig,
   AgentEntry,
   AgentsConfig,
+  ToolTransport,
+  ToolServerEntry,
+  ToolsConfig,
+  GatewayConfig,
 } from "./schemas.js";

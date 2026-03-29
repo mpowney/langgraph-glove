@@ -6,9 +6,13 @@ import {
   ModelsConfigSchema,
   ChannelsConfigSchema,
   AgentsConfigSchema,
+  ToolsConfigSchema,
+  GatewayConfigSchema,
   type ModelsConfig,
   type ChannelsConfig,
   type AgentsConfig,
+  type ToolsConfig,
+  type GatewayConfig,
 } from "./schemas.js";
 
 /**
@@ -18,6 +22,8 @@ export interface GloveConfig {
   models: ModelsConfig;
   channels: ChannelsConfig;
   agents: AgentsConfig;
+  tools: ToolsConfig;
+  gateway: GatewayConfig;
 }
 
 /**
@@ -67,8 +73,10 @@ export class ConfigLoader {
     const agents = this.loadFileOptional("agents.json", AgentsConfigSchema) ?? {
       default: {},
     };
+    const tools = this.loadFileOptional("tools.json", ToolsConfigSchema) ?? {};
+    const gateway = this.loadFileOptional("gateway.json", GatewayConfigSchema) ?? {};
 
-    return { models, channels, agents };
+    return { models, channels, agents, tools, gateway };
   }
 
   /**

@@ -1,0 +1,36 @@
+{
+  "name": "@langgraph-glove/gateway",
+  "version": "0.1.0",
+  "description": "Application gateway — lifecycle management, tool discovery, health endpoint, and graceful shutdown",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/main.ts --format esm --dts --out-dir dist",
+    "dev": "tsup src/index.ts src/main.ts --format esm --dts --out-dir dist --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@langchain/core": "^1.1.36",
+    "@langchain/langgraph": "^1.2.6",
+    "@langchain/langgraph-checkpoint-sqlite": "^1.0.1",
+    "@langgraph-glove/config": "workspace:*",
+    "@langgraph-glove/core": "workspace:*",
+    "express": "^4.21.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}

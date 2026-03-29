@@ -20,7 +20,7 @@ export type { LogEntry } from "./logging/LogEntry";
 
 // Channels
 export { Channel } from "./channels/Channel";
-export type { IncomingMessage, OutgoingMessage, MessageHandler } from "./channels/Channel";
+export type { IncomingMessage, OutgoingMessage, MessageHandler, ChannelConfig } from "./channels/Channel";
 export { CliChannel } from "./channels/CliChannel";
 export { WebChannel } from "./channels/WebChannel";
 export type { WebChannelConfig } from "./channels/WebChannel";

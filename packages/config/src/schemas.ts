@@ -89,3 +89,45 @@ export const AgentsConfigSchema = z
     message: 'agents.json must contain a "default" key',
   });
 export type AgentsConfig = z.infer<typeof AgentsConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Tool server config schema
+// ---------------------------------------------------------------------------
+
+/** Transport used to reach a remote tool server. */
+export const ToolTransportSchema = z.enum(["http", "unix-socket"]);
+export type ToolTransport = z.infer<typeof ToolTransportSchema>;
+
+/** A single tool server entry in tools.json. */
+export const ToolServerEntrySchema = z.object({
+  /** Transport type. */
+  transport: ToolTransportSchema,
+  /** HTTP URL (required when transport is "http"). */
+  url: z.string().url().optional(),
+  /** Unix socket name (required when transport is "unix-socket"). */
+  socketName: z.string().optional(),
+  /** Whether this tool server is enabled. Defaults to `true` if omitted. */
+  enabled: z.boolean().optional(),
+});
+export type ToolServerEntry = z.infer<typeof ToolServerEntrySchema>;
+
+/**
+ * Top-level tools.json schema.
+ * Keys are human-readable names for each tool server.
+ */
+export const ToolsConfigSchema = z.record(z.string(), ToolServerEntrySchema);
+export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Gateway config schema
+// ---------------------------------------------------------------------------
+
+export const GatewayConfigSchema = z.object({
+  /** Port for the health / control HTTP server. Defaults to 9090. */
+  healthPort: z.number().int().positive().optional(),
+  /** Host to bind the health server to. Defaults to "0.0.0.0". */
+  healthHost: z.string().optional(),
+  /** Path to the SQLite database for checkpoint persistence. */
+  dbPath: z.string().optional(),
+});
+export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
