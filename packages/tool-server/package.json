@@ -18,6 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@langgraph-glove/config": "workspace:*",
     "express": "^4.21.0",
     "uuid": "^10.0.0"
   },

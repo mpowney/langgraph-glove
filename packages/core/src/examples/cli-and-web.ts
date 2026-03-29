@@ -124,6 +124,6 @@ const webHost = process.env["WEB_HOST"] ?? "0.0.0.0";
 
 agent
   .addChannel(new CliChannel())
-  .addChannel(new WebChannel({ port: webPort, host: webHost }));
+  .addChannel(new WebChannel({ port: webPort, host: webHost, receiveAll: true }));
 
 await agent.start();

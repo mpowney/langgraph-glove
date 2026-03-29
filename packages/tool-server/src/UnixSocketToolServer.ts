@@ -88,6 +88,7 @@ export class UnixSocketToolServer extends ToolServer {
           continue;
         }
 
+        console.log(`[UnixSocketToolServer] Received RPC request: ${JSON.stringify(request)}`);
         const response = await this.dispatch(request);
         if (socket.writable) {
           socket.write(JSON.stringify(response) + "\n", "utf8");

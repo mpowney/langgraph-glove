@@ -1,49 +1,18 @@
 /**
  * Entry point for the tool-weather-us server.
  *
- * The US weather tool always uses a Unix socket — the socket path is derived
- * from the tool name automatically:
+ * Transport and port are read from `config/tools.json` under the
+ * `"weather-us"` key.  Override config paths via:
  *
- *   node dist/main.js
- *   (listens on /tmp/langgraph-glove-weather_us.sock)
- *
- * HTTP mode is also available for convenience:
- *
- *   RPC_MODE=http   PORT=3003   node dist/main.js
- *
- * The agent (in @langgraph-glove/core) connects via UnixSocketRpcClient("weather_us").
+ *   GLOVE_CONFIG_DIR=./config  GLOVE_SECRETS_DIR=./secrets  node dist/main.js
  */
 
-import { HttpToolServer, UnixSocketToolServer } from "@langgraph-glove/tool-server";
-import type { ToolServer } from "@langgraph-glove/tool-server";
+import { launchToolServer } from "@langgraph-glove/tool-server";
 import { weatherToolMetadata, handleWeather } from "./tools/WeatherTool.js";
 
-const mode = (process.env["RPC_MODE"] ?? "unix").toLowerCase();
-
-let server: ToolServer;
-
-if (mode === "unix") {
-  server = new UnixSocketToolServer("weather_us");
-} else {
-  const port = Number(process.env["PORT"] ?? 3003);
-  server = new HttpToolServer(port);
-}
-
-// Register all tools
-server.register(weatherToolMetadata, handleWeather);
-
-// Start
-await server.start();
-console.log(`US weather tool server running in "${mode}" mode. Press Ctrl-C to stop.`);
-
-// Graceful shutdown
-process.on("SIGINT", async () => {
-  console.log("\nShutting down…");
-  await server.stop();
-  process.exit(0);
-});
-
-process.on("SIGTERM", async () => {
-  await server.stop();
-  process.exit(0);
+await launchToolServer({
+  toolKey: "weather-us",
+  register(server) {
+    server.register(weatherToolMetadata, handleWeather);
+  },
 });

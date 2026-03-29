@@ -222,9 +222,10 @@ The gateway handles the full lifecycle: config loading, tool discovery, agent cr
 
 ```bash
 # Start tool servers first (each in its own terminal)
-cd packages/tool-weather-au && RPC_MODE=http PORT=3001 node dist/main.js
-cd packages/tool-weather-eu && RPC_MODE=http PORT=3002 node dist/main.js
-cd packages/tool-weather-us && node dist/main.js   # Unix socket mode
+# Transport and port are read from config/tools.json
+node packages/tool-weather-au/dist/main.js
+node packages/tool-weather-eu/dist/main.js
+node packages/tool-weather-us/dist/main.js
 
 # Start the gateway
 node packages/gateway/dist/main.js
@@ -260,18 +261,15 @@ Start tool servers individually to test and debug them in isolation:
 # Build everything first
 pnpm build
 
-# Terminal 1 — Australian weather tool (HTTP on port 3001)
-cd packages/tool-weather-au
-RPC_MODE=http PORT=3001 node dist/main.js
+# Each tool server reads its transport and address from config/tools.json
+# Terminal 1 — Australian weather tool
+node packages/tool-weather-au/dist/main.js
 
-# Terminal 2 — European weather tool (HTTP on port 3002)
-cd packages/tool-weather-eu
-RPC_MODE=http PORT=3002 node dist/main.js
+# Terminal 2 — European weather tool
+node packages/tool-weather-eu/dist/main.js
 
-# Terminal 3 — US weather tool (Unix socket)
-cd packages/tool-weather-us
-node dist/main.js
-# Listens on /tmp/langgraph-glove-weather_us.sock
+# Terminal 3 — US weather tool
+node packages/tool-weather-us/dist/main.js
 ```
 
 You can test tool servers directly with curl:
@@ -292,8 +290,7 @@ The `core` package includes standalone examples that wire up tools and agent man
 
 ```bash
 # CLI only — interactive terminal chat
-cd packages/core
-node dist/examples/cli.js
+node packages/core/dist/examples/cli.js
 
 # CLI + Web UI — terminal chat + browser at http://localhost:8080
 cd packages/core
@@ -366,20 +363,6 @@ pnpm init
 pnpm add @langgraph-glove/tool-server
 ```
 
-```typescript
-// src/main.ts
-import { HttpToolServer } from "@langgraph-glove/tool-server";
-
-const server = new HttpToolServer(3003);
-
-server.register(
-  { name: "my_tool", description: "Does something useful", parameters: {} },
-  async (params) => `Result for ${JSON.stringify(params)}`,
-);
-
-await server.start();
-```
-
 Then add it to `config/tools.json`:
 
 ```json
@@ -391,7 +374,24 @@ Then add it to `config/tools.json`:
 }
 ```
 
-And optionally scope it to a specific agent in `config/agents.json`:
+Create the entry point using the config-driven launcher:
+
+```typescript
+// src/main.ts
+import { launchToolServer } from "@langgraph-glove/tool-server";
+
+await launchToolServer({
+  toolKey: "my-tool",
+  register(server) {
+    server.register(
+      { name: "my_tool", description: "Does something useful", parameters: {} },
+      async (params) => `Result for ${JSON.stringify(params)}`,
+    );
+  },
+});
+```
+
+The launcher reads transport, port, and host from `tools.json` automatically. Optionally scope the tool to a specific agent in `config/agents.json`:
 
 ```json
 {
@@ -416,5 +416,4 @@ And optionally scope it to a specific agent in `config/agents.json`:
 | `WEATHER_EU_URL` | examples | Override EU tool server URL |
 | `WEB_PORT` | cli-and-web example | Web UI port (default: `8080`) |
 | `WEB_HOST` | cli-and-web example | Web UI bind host (default: `0.0.0.0`) |
-| `RPC_MODE` | tool servers | `http` or `unix` (default: `http`) |
-| `PORT` | tool servers | HTTP tool server port |
+

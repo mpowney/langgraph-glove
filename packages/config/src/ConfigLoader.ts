@@ -68,7 +68,7 @@ export class ConfigLoader {
     this.secrets.load(this.secretsDir);
 
     // 2. Load each config file
-    const models = this.loadFile("models.json", ModelsConfigSchema);
+    const models = this.loadFileOptional("models.json", ModelsConfigSchema) ?? {};
     const channels = this.loadFileOptional("channels.json", ChannelsConfigSchema) ?? {};
     const agents = this.loadFileOptional("agents.json", AgentsConfigSchema) ?? {
       default: {},
