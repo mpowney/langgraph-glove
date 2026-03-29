@@ -1,0 +1,244 @@
+import {
+  HumanMessage,
+  SystemMessage,
+  AIMessage,
+  ToolMessage,
+  type BaseMessage,
+} from "@langchain/core/messages";
+import type { StructuredToolInterface } from "@langchain/core/tools";
+import { tool } from "@langchain/core/tools";
+import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import {
+  StateGraph,
+  MessagesAnnotation,
+  Command,
+  END,
+  START,
+  MemorySaver,
+  type BaseCheckpointSaver,
+} from "@langchain/langgraph";
+import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { z } from "zod";
+
+// ---------------------------------------------------------------------------
+// Single-agent ReAct graph
+// ---------------------------------------------------------------------------
+
+export interface SingleAgentGraphConfig {
+  model: BaseChatModel;
+  tools: StructuredToolInterface[];
+  systemPrompt?: string;
+  /** Pass a checkpointer for standalone use. Omit when the graph will be used as a subgraph. */
+  checkpointer?: BaseCheckpointSaver;
+}
+
+/**
+ * Build a standard ReAct agent graph: agent → tools → agent → … → END.
+ *
+ * When used standalone, pass a `checkpointer` for persistence.
+ * When used as a sub-agent inside an orchestrator, omit the checkpointer —
+ * the parent graph handles persistence.
+ */
+export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
+  const { model, tools, systemPrompt, checkpointer } = config;
+
+  if (!model.bindTools) {
+    throw new Error(
+      "buildSingleAgentGraph requires a chat model that supports tool calling (bindTools).",
+    );
+  }
+
+  const toolNode = new ToolNode(tools);
+  const modelWithTools = model.bindTools(tools);
+
+  const callAgent = async (state: typeof MessagesAnnotation.State) => {
+    const messages: BaseMessage[] = systemPrompt
+      ? [new SystemMessage(systemPrompt), ...state.messages]
+      : [...state.messages];
+    const response = await modelWithTools.invoke(messages);
+    return { messages: [response] };
+  };
+
+  const routeAfterAgent = (
+    state: typeof MessagesAnnotation.State,
+  ): "tools" | typeof END => {
+    const last = state.messages.at(-1) as AIMessage;
+    return last.tool_calls?.length ? "tools" : END;
+  };
+
+  return new StateGraph(MessagesAnnotation)
+    .addNode("agent", callAgent)
+    .addNode("tools", toolNode)
+    .addEdge(START, "agent")
+    .addConditionalEdges("agent", routeAfterAgent)
+    .addEdge("tools", "agent")
+    .compile({ checkpointer });
+}
+
+// ---------------------------------------------------------------------------
+// Multi-agent orchestrator graph
+// ---------------------------------------------------------------------------
+
+export interface SubAgentDef {
+  /** Unique name for this sub-agent (used as graph node name). */
+  name: string;
+  /** Human-readable description — the orchestrator uses this to decide when to delegate. */
+  description: string;
+  model: BaseChatModel;
+  /** Tools available to this sub-agent. */
+  tools: StructuredToolInterface[];
+  systemPrompt?: string;
+}
+
+export interface OrchestratorGraphConfig {
+  orchestrator: {
+    model: BaseChatModel;
+    systemPrompt?: string;
+    /** Orchestrator's own tools (in addition to auto-generated handoff tools). */
+    tools?: StructuredToolInterface[];
+  };
+  subAgents: SubAgentDef[];
+  checkpointer?: BaseCheckpointSaver;
+}
+
+/**
+ * Build a multi-agent orchestrator graph.
+ *
+ * Structure:
+ * ```
+ * START → orchestrator ──→ sub-agent-A → orchestrator
+ *                      ├─→ sub-agent-B → orchestrator
+ *                      ├─→ orchestrator_tools → orchestrator
+ *                      └─→ END
+ * ```
+ *
+ * The orchestrator model receives auto-generated `transfer_to_<name>` tools
+ * for each sub-agent. When it calls one of these, the graph routes to that
+ * sub-agent's ReAct loop. When the sub-agent finishes, control returns to
+ * the orchestrator, which can delegate again or respond directly.
+ */
+export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
+  const { orchestrator, subAgents, checkpointer } = config;
+
+  if (!orchestrator.model.bindTools) {
+    throw new Error(
+      "buildOrchestratorGraph requires a chat model that supports tool calling (bindTools).",
+    );
+  }
+
+  // -- Create handoff tools (one per sub-agent) -----------------------------
+  const handoffTools = subAgents.map((sa) =>
+    tool(
+      async () => `Transferred to ${sa.name}.`,
+      {
+        name: `transfer_to_${sa.name}`,
+        description: `Hand off the conversation to the "${sa.name}" agent. ${sa.description}`,
+        schema: z.object({
+          request: z.string().describe("A summary of what you need this agent to do"),
+        }),
+      },
+    ),
+  );
+
+  const handoffToolNames: Set<string> = new Set(handoffTools.map((t) => t.name));
+  const allOrchestratorTools = [
+    ...(orchestrator.tools ?? []),
+    ...handoffTools,
+  ];
+  const orchestratorModelWithTools =
+    orchestrator.model.bindTools(allOrchestratorTools);
+
+  // -- Build sub-agent subgraphs (no checkpointer — parent handles it) ------
+  const subAgentGraphs = new Map<string, ReturnType<typeof buildSingleAgentGraph>>();
+  for (const sa of subAgents) {
+    if (!sa.model.bindTools) {
+      throw new Error(
+        `Sub-agent "${sa.name}" requires a chat model that supports tool calling.`,
+      );
+    }
+    subAgentGraphs.set(
+      sa.name,
+      buildSingleAgentGraph({
+        model: sa.model,
+        tools: sa.tools,
+        systemPrompt: sa.systemPrompt,
+        // No checkpointer — parent graph owns persistence
+      }),
+    );
+  }
+
+  // -- Orchestrator node ----------------------------------------------------
+  const orchestratorNode = async (state: typeof MessagesAnnotation.State) => {
+    const messages: BaseMessage[] = orchestrator.systemPrompt
+      ? [new SystemMessage(orchestrator.systemPrompt), ...state.messages]
+      : [...state.messages];
+
+    const response = await orchestratorModelWithTools.invoke(messages);
+
+    // Check for handoff tool calls
+    if (response.tool_calls?.length) {
+      const handoffCall = response.tool_calls.find((tc: { name: string }) =>
+        handoffToolNames.has(tc.name),
+      );
+      if (handoffCall) {
+        const targetAgent = handoffCall.name.replace(/^transfer_to_/, "");
+        // Respond to the handoff tool call so the conversation stays valid,
+        // then route to the sub-agent via Command.
+        const toolResponse = new ToolMessage({
+          content: `Transferring to ${targetAgent} agent.`,
+          tool_call_id: handoffCall.id!,
+        });
+        return new Command({
+          goto: targetAgent as never,
+          update: { messages: [response, toolResponse] },
+        });
+      }
+    }
+
+    // No handoff — either regular tool calls or final answer
+    return { messages: [response] };
+  };
+
+  // -- Routing after orchestrator (only fires for non-Command returns) ------
+  const hasOrchestratorTools = (orchestrator.tools?.length ?? 0) > 0;
+
+  const routeAfterOrchestrator = (
+    state: typeof MessagesAnnotation.State,
+  ): string => {
+    const last = state.messages.at(-1) as AIMessage;
+    if (last.tool_calls?.length && hasOrchestratorTools) {
+      return "orchestrator_tools";
+    }
+    return END;
+  };
+
+  // -- Assemble the graph ---------------------------------------------------
+  // LangGraph's TypeScript types track node names at compile time, but our
+  // node set is dynamic (sub-agents come from config), so we use `any` for
+  // the builder chain.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let graph: any = new StateGraph(MessagesAnnotation);
+
+  graph = graph.addNode("orchestrator", orchestratorNode, {
+    ends: [...subAgentGraphs.keys()],
+  });
+
+  // Orchestrator's own tool node (optional)
+  if (hasOrchestratorTools) {
+    graph = graph.addNode("orchestrator_tools", new ToolNode(orchestrator.tools!));
+    graph = graph.addConditionalEdges("orchestrator", routeAfterOrchestrator);
+    graph = graph.addEdge("orchestrator_tools", "orchestrator");
+  } else {
+    graph = graph.addConditionalEdges("orchestrator", routeAfterOrchestrator);
+  }
+
+  // Sub-agent subgraph nodes
+  for (const [name, subGraph] of subAgentGraphs) {
+    graph = graph.addNode(name, subGraph);
+    graph = graph.addEdge(name, "orchestrator");
+  }
+
+  graph = graph.addEdge(START, "orchestrator");
+
+  return graph.compile({ checkpointer: checkpointer ?? new MemorySaver() });
+}

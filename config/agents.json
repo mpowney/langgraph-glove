@@ -1,6 +1,25 @@
 {
   "default": {
     "modelKey": "default",
-    "systemPrompt": "You are a helpful assistant with access to real-time weather data for Australia, Europe, and the United States. Use weather_au for Australian locations, weather_eu for European locations, and weather_us for US locations. Answer concisely and always include the unit when reporting temperatures."
+    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. Delegate weather-related questions to the appropriate regional weather agent. For general questions, answer directly.",
+    "description": "Orchestrator that routes requests to specialised agents"
+  },
+  "weather-au": {
+    "modelKey": "default",
+    "systemPrompt": "You are an Australian weather specialist. Use the weather_au tools to answer questions about Australian weather. Always include units (°C) and location details.",
+    "description": "Australian weather forecasts and conditions",
+    "tools": ["weather_au", "rain_forecast_au"]
+  },
+  "weather-eu": {
+    "modelKey": "default",
+    "systemPrompt": "You are a European weather specialist. Use the weather_eu tools to answer questions about European weather. Always include units (°C) and location details.",
+    "description": "European weather forecasts and conditions",
+    "tools": ["weather_eu"]
+  },
+  "weather-us": {
+    "modelKey": "default",
+    "systemPrompt": "You are a US weather specialist. Use the weather_us tools to answer questions about US weather. Always include units (°F) and location details.",
+    "description": "United States weather forecasts and conditions",
+    "tools": ["weather_us"]
   }
 }

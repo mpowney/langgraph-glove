@@ -17,8 +17,11 @@ import {
   HttpRpcClient,
   UnixSocketRpcClient,
   RemoteTool,
+  buildSingleAgentGraph,
+  buildOrchestratorGraph,
   type RpcClient,
   type Channel,
+  type SubAgentDef,
 } from "@langgraph-glove/core";
 
 const logger = new Logger("Gateway");
@@ -107,17 +110,14 @@ export class Gateway extends EventEmitter {
       const tools = await this.discoverTools(this.config.tools);
       logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
 
-      // 5. Agent
-      const agentEntry = resolveConfigEntry(
-        this.config.agents as Record<string, AgentEntry>,
-        "default",
-      );
-      const model = this.models.get(agentEntry.modelKey ?? "default");
+      // 5. Build agent graph (single-agent or multi-agent orchestrator)
+      const graph = this.buildAgentGraph(tools);
 
-      this.agent = new GloveAgent(model, tools, {
-        systemPrompt: agentEntry.systemPrompt,
-        recursionLimit: agentEntry.recursionLimit,
-        checkpointer: this.checkpointer,
+      this.agent = new GloveAgent(graph, {
+        recursionLimit: resolveConfigEntry(
+          this.config.agents as Record<string, AgentEntry>,
+          "default",
+        ).recursionLimit,
       });
 
       // 6. Channels
@@ -177,6 +177,76 @@ export class Gateway extends EventEmitter {
 
     this.setState("stopped");
     logger.info("Gateway stopped");
+  }
+
+  /**
+   * Build the appropriate LangGraph graph based on agents.json:
+   * - If only "default" agent → single-agent ReAct graph
+   * - If multiple agents → orchestrator graph with sub-agents
+   */
+  private buildAgentGraph(allTools: StructuredToolInterface[]) {
+    const agents = this.config!.agents as Record<string, AgentEntry>;
+    const models = this.models!;
+    const checkpointer = this.checkpointer!;
+
+    const subAgentKeys = Object.keys(agents).filter((k) => k !== "default");
+    const defaultEntry = resolveConfigEntry(agents, "default");
+
+    if (subAgentKeys.length === 0) {
+      // Single-agent mode — standard ReAct loop
+      const model = models.get(defaultEntry.modelKey ?? "default");
+      const scopedTools = this.scopeTools(allTools, defaultEntry.tools);
+      logger.info(`Single-agent mode (${scopedTools.length} tools)`);
+
+      return buildSingleAgentGraph({
+        model,
+        tools: scopedTools,
+        systemPrompt: defaultEntry.systemPrompt,
+        checkpointer,
+      });
+    }
+
+    // Multi-agent orchestrator mode
+    const subAgents: SubAgentDef[] = subAgentKeys.map((key) => {
+      const entry = resolveConfigEntry(agents, key);
+      return {
+        name: key,
+        description: entry.description ?? key,
+        model: models.get(entry.modelKey ?? "default"),
+        tools: this.scopeTools(allTools, entry.tools),
+        systemPrompt: entry.systemPrompt,
+      };
+    });
+
+    const orchestratorModel = models.get(defaultEntry.modelKey ?? "default");
+    const orchestratorTools = this.scopeTools(allTools, defaultEntry.tools);
+
+    logger.info(
+      `Multi-agent orchestrator mode: ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
+    );
+
+    return buildOrchestratorGraph({
+      orchestrator: {
+        model: orchestratorModel,
+        systemPrompt: defaultEntry.systemPrompt,
+        tools: orchestratorTools.length > 0 ? orchestratorTools : undefined,
+      },
+      subAgents,
+      checkpointer,
+    });
+  }
+
+  /**
+   * Filter tools by an allow-list of tool names.
+   * If `allowedNames` is empty or undefined, all tools are returned.
+   */
+  private scopeTools(
+    allTools: StructuredToolInterface[],
+    allowedNames?: string[],
+  ): StructuredToolInterface[] {
+    if (!allowedNames?.length) return allTools;
+    const allowed = new Set(allowedNames);
+    return allTools.filter((t) => allowed.has(t.name));
   }
 
   /** Connect to all tool servers declared in tools.json and discover their tools. */

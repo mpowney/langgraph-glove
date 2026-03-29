@@ -1,8 +1,4 @@
-import { HumanMessage, SystemMessage, AIMessage, AIMessageChunk, type BaseMessage } from "@langchain/core/messages";
-import type { StructuredToolInterface } from "@langchain/core/tools";
-import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
-import { StateGraph, MessagesAnnotation, END, START, MemorySaver, type BaseCheckpointSaver } from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
+import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
 import type { Channel, IncomingMessage } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
 
@@ -31,55 +27,52 @@ function formatError(err: unknown): string {
 
 export interface AgentConfig {
   /**
-   * System prompt prepended to every conversation.
-   * Supports multi-turn — the prompt is injected at the `system` role before
-   * each model call and is not stored in the conversation history.
-   */
-  systemPrompt?: string;
-  /**
    * Maximum number of steps (agent + tool calls) before LangGraph throws.
    * Default: `25`.
    */
   recursionLimit?: number;
-  /**
-   * Checkpointer for persisting conversation state across invocations.
-   * Defaults to an in-memory `MemorySaver`.  Pass a `SqliteSaver` for
-   * durable persistence.
-   */
-  checkpointer?: BaseCheckpointSaver;
 }
 
 /**
- * The core LangGraph-powered conversational agent.
+ * The core LangGraph-powered conversational agent runtime.
  *
- * `GloveAgent` owns a compiled `StateGraph` that implements the standard
- * ReAct loop (agent → tools → agent → … → END).  All conversation state is
- * persisted in an in-memory `MemorySaver` keyed by `conversationId`, so each
- * channel conversation has its own independent multi-turn history.
+ * `GloveAgent` manages channel interactions and message dispatch for a
+ * compiled LangGraph `StateGraph`.  The graph itself is constructed by the
+ * builder functions in `./graphs.ts` (`buildSingleAgentGraph` or
+ * `buildOrchestratorGraph`) and passed in at construction time.
+ *
+ * All conversation state is persisted via the graph's checkpointer, keyed by
+ * `conversationId`, so each channel conversation has its own independent
+ * multi-turn history.
  *
  * ## Usage
  * ```ts
- * const agent = new GloveAgent(model, tools, { systemPrompt: "You are helpful." });
+ * import { buildSingleAgentGraph } from "./graphs";
+ *
+ * const graph = buildSingleAgentGraph({ model, tools, systemPrompt, checkpointer });
+ * const agent = new GloveAgent(graph);
  * agent.addChannel(new CliChannel());
  * await agent.start();
  * ```
  */
 export class GloveAgent {
-  private readonly graph: ReturnType<typeof this.buildGraph>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private readonly graph: any;
   private readonly channels: Channel[] = [];
 
+  /**
+   * Create a GloveAgent from a pre-compiled LangGraph state graph.
+   *
+   * @param graph  A compiled `StateGraph` (from `buildSingleAgentGraph` or
+   *               `buildOrchestratorGraph`).
+   * @param config Optional runtime configuration.
+   */
   constructor(
-    private readonly model: BaseChatModel,
-    private readonly tools: StructuredToolInterface[],
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    graph: any,
     private readonly config: AgentConfig = {},
   ) {
-    if (!model.bindTools) {
-      throw new Error(
-        "GloveAgent requires a chat model that supports tool calling (bindTools). " +
-          "Use ChatOpenAI, ChatAnthropic, or another function-calling-capable model.",
-      );
-    }
-    this.graph = this.buildGraph();
+    this.graph = graph;
   }
 
   // ---------------------------------------------------------------------------
@@ -153,14 +146,16 @@ export class GloveAgent {
       },
     );
 
-    for await (const [chunk, metadata] of streamResult as AsyncIterable<
+    for await (const [chunk, _metadata] of streamResult as AsyncIterable<
       [unknown, { langgraph_node?: string }]
     >) {
+      // Yield text content from any node, but skip chunks that are part of
+      // tool-call routing (orchestrator decisions, etc.).
       if (
         chunk instanceof AIMessageChunk &&
-        (metadata as { langgraph_node?: string }).langgraph_node === "agent" &&
         typeof chunk.content === "string" &&
-        chunk.content
+        chunk.content &&
+        !chunk.tool_calls?.length
       ) {
         yield chunk.content;
       }
@@ -213,37 +208,4 @@ export class GloveAgent {
     }
   }
 
-  private buildGraph() {
-    const toolNode = new ToolNode(this.tools);
-    // bindTools existence is validated in the constructor
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-    const modelWithTools = this.model.bindTools!(this.tools);
-    const { systemPrompt } = this.config;
-
-    const callAgent = async (state: typeof MessagesAnnotation.State) => {
-      const messages: BaseMessage[] = systemPrompt
-        ? [new SystemMessage(systemPrompt), ...state.messages]
-        : [...state.messages];
-
-      const response = await modelWithTools.invoke(messages);
-      return { messages: [response] };
-    };
-
-    const routeAfterAgent = (
-      state: typeof MessagesAnnotation.State,
-    ): "tools" | typeof END => {
-      const last = state.messages.at(-1) as AIMessage;
-      return last.tool_calls?.length ? "tools" : END;
-    };
-
-    const checkpointer = this.config.checkpointer ?? new MemorySaver();
-
-    return new StateGraph(MessagesAnnotation)
-      .addNode("agent", callAgent)
-      .addNode("tools", toolNode)
-      .addEdge(START, "agent")
-      .addConditionalEdges("agent", routeAfterAgent)
-      .addEdge("tools", "agent")
-      .compile({ checkpointer });
-  }
 }

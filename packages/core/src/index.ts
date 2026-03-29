@@ -1,6 +1,12 @@
 // Agent
 export { GloveAgent } from "./agent/index";
 export type { AgentConfig } from "./agent/index";
+export { buildSingleAgentGraph, buildOrchestratorGraph } from "./agent/index";
+export type {
+  SingleAgentGraphConfig,
+  SubAgentDef,
+  OrchestratorGraphConfig,
+} from "./agent/index";
 
 // Persistence
 export { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";

@@ -76,6 +76,8 @@ export const AgentEntrySchema = z.object({
   modelKey: z.string().optional(),
   /** System prompt for this agent. */
   systemPrompt: z.string().optional(),
+  /** Short description of what this agent does (used by the orchestrator for routing). */
+  description: z.string().optional(),
   /** Tool names this agent is allowed to use. Empty/missing = all tools. */
   tools: z.array(z.string()).optional(),
   /** Maximum ReAct loop steps before aborting. */

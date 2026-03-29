@@ -21,6 +21,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GloveAgent } from "../agent/Agent";
+import { buildSingleAgentGraph } from "../agent/graphs";
 import { CliChannel } from "../channels/CliChannel";
 import { HttpRpcClient } from "../rpc/HttpRpcClient";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
@@ -101,10 +102,14 @@ const agentEntry = resolveConfigEntry(
 );
 const model = models.get(agentEntry.modelKey);
 
-const agent = new GloveAgent(model, tools, {
+const graph = buildSingleAgentGraph({
+  model,
+  tools,
   systemPrompt: agentEntry.systemPrompt,
-  recursionLimit: agentEntry.recursionLimit,
   checkpointer,
+});
+const agent = new GloveAgent(graph, {
+  recursionLimit: agentEntry.recursionLimit,
 });
 
 agent.addChannel(new CliChannel());
