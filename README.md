@@ -1,52 +1,86 @@
 # langgraph-glove
 
-A TypeScript pnpm monorepo that wraps the [LangGraph](https://github.com/langchain-ai/langgraphjs) library to deliver a structured, channel-based conversational agent — Loosely inspired by the [openclaw](https://github.com/open-claw/openclaw) architecture.
+A TypeScript pnpm monorepo that wraps [LangGraph](https://github.com/langchain-ai/langgraphjs) to deliver a config-driven, multi-agent conversational system with channel-based I/O — loosely inspired by the [OpenClaw](https://github.com/open-claw/openclaw) architecture.
 
-## Usage with Ollama
-```
-# Local Ollama with default model
-LLM_PROVIDER=ollama node dist/examples/cli.js
+Requires **Node.js 22+** (pinned via `.nvmrc`).
 
-# Remote Ollama instance with a specific model
-LLM_PROVIDER=ollama OLLAMA_URL=http://192.168.1.50:11434 OLLAMA_MODEL=qwen2.5:7b node dist/examples/cli.js
-
-# CLI and web channel with Browser UI and web socket: http://localhost:8080 ws://localhost:8080 
-WEB_PORT=8080 WEB_HOST=0.0.0.0 node dist/examples/cli-and-web.js
-
-```
+---
 
 ## Packages
 
 | Package | Description |
 |---|---|
-| `@langgraph-glove/core` | Agent, abstract Channel base class, RPC clients (Unix socket + HTTP), and `RemoteTool` |
-| `@langgraph-glove/tool-server` | Abstract tool server + Unix socket and HTTP server implementations |
-| `@langgraph-glove/tool-example` | A worked example of a remote tool (weather) runnable via either transport |
+| `@langgraph-glove/core` | Agent runtime, graph builders, channel base class, RPC clients, `RemoteTool` |
+| `@langgraph-glove/config` | Config loading, secret management, Zod schemas, `ModelRegistry` |
+| `@langgraph-glove/gateway` | Lifecycle management — config → tools → agent → channels → health → shutdown |
+| `@langgraph-glove/channel-telegram` | Telegram channel (grammY, long polling) |
+| `@langgraph-glove/tool-server` | Abstract tool server + Unix socket / HTTP implementations |
+| `@langgraph-glove/tool-weather-au` | Mock Australian weather tools (HTTP or Unix socket) |
+| `@langgraph-glove/tool-weather-eu` | Mock European weather tools (HTTP or Unix socket) |
+| `@langgraph-glove/tool-weather-us` | Mock US weather tools (HTTP or Unix socket) |
 
 ---
 
 ## Architecture
 
+### Single-Agent Mode
+
+When `agents.json` contains only a `"default"` entry, the gateway creates a standard ReAct loop:
+
 ```
-┌─────────────────────────────────────────────────┐
-│                 GloveAgent (core)               │
-│                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────┐  │
-│  │CliChannel│  │WebChannel│  │BlueBubbles   │  │
-│  │(streaming)│  │(streaming)│  │Channel       │  │
-│  └──────────┘  └──────────┘  └──────────────┘  │
-│                                                 │
-│  ┌──────────────────────────────────────────┐   │
-│  │           LangGraph StateGraph           │   │
-│  │  START → agent → [tools] → agent → END  │   │
-│  └──────────────────────────────────────────┘   │
-│                                                 │
-│  ┌──────────────────────────────────────────┐   │
-│  │  RemoteTool  ←─── RpcClient (abstract)  │   │
-│  │                    │           │          │   │
-│  │         UnixSocket │    HTTP   │          │   │
-│  └────────────────────┼───────────┼──────────┘   │
-└───────────────────────┼───────────┼──────────────┘
+START → agent → [tools] → agent → END
+```
+
+### Multi-Agent Orchestrator Mode
+
+When `agents.json` contains additional entries beyond `"default"`, the gateway automatically builds an orchestrator graph. The `"default"` entry becomes the orchestrator; all other entries become sub-agents:
+
+```
+                          ┌─────────────────┐
+                          │   orchestrator   │
+                     ┌────┤ (default agent)  ├────┐
+                     │    └──┬──────────┬────┘    │
+                     │       │          │         │
+              ┌──────▼──┐ ┌──▼───────┐ ┌▼────────▼──┐
+              │weather-au│ │weather-eu│ │ weather-us  │
+              │(subgraph)│ │(subgraph)│ │ (subgraph)  │
+              └──────┬───┘ └──┬───────┘ └─────┬───────┘
+                     │        │               │
+                     └────────┴───────┬───────┘
+                                      │
+                              back to orchestrator
+```
+
+The orchestrator receives auto-generated `transfer_to_<name>` handoff tools for each sub-agent. It decides when to delegate based on the sub-agent's `description` field. Sub-agents execute their own ReAct loops with scoped tools and return control to the orchestrator.
+
+### Full System
+
+```
+┌──────────────────────────────────────────────────┐
+│                   Gateway                        │
+│                                                  │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │CliChannel│  │WebChannel│  │  Telegram     │   │
+│  │(streaming)│ │(streaming)│  │  Channel      │   │
+│  └──────────┘  └──────────┘  └──────────────┘   │
+│                                                  │
+│  ┌──────────────────────────────────────────┐    │
+│  │      GloveAgent (runtime wrapper)        │    │
+│  │                                          │    │
+│  │  ┌──────────────────────────────────┐    │    │
+│  │  │  LangGraph StateGraph            │    │    │
+│  │  │  (single-agent or orchestrator)  │    │    │
+│  │  └──────────────────────────────────┘    │    │
+│  └──────────────────────────────────────────┘    │
+│                                                  │
+│  ┌──────────────────────────────────────────┐    │
+│  │  RemoteTool  ←─── RpcClient (abstract)   │    │
+│  │                    │           │          │    │
+│  │         UnixSocket │    HTTP   │          │    │
+│  └────────────────────┼───────────┼──────────┘    │
+│                       │           │               │
+│  SQLite persistence   │   Health /health :9090    │
+└───────────────────────┼───────────┼───────────────┘
                         │           │
                ┌────────▼──┐  ┌─────▼──────┐
                │Unix Socket│  │HTTP Server │
@@ -54,29 +88,121 @@ WEB_PORT=8080 WEB_HOST=0.0.0.0 node dist/examples/cli-and-web.js
                └─────┬─────┘  └─────┬──────┘
                      │               │
                ┌─────▼───────────────▼──────┐
-               │     tool-example / any     │
-               │     pnpm tool package      │
+               │  tool-weather-au / eu / us │
+               │  (or any tool package)     │
                └────────────────────────────┘
 ```
 
-### Channels
+---
 
-Channels are the way users interact with the agent. Each channel extends the abstract `Channel` base class.
+## Configuration
 
-| Channel | Transport | Streaming |
-|---|---|---|
-| `CliChannel` | stdin / stdout | ✅ |
-| `WebChannel` | HTTP + WebSocket | ✅ |
-| `BlueBubblesChannel` | BlueBubbles REST API + webhooks | ❌ |
+All configuration lives in the `config/` directory as JSON files. Secrets are stored separately in `secrets/` and referenced via `{SECRET:name}` placeholders.
 
-### Remote Tools & RPC
+### `config/models.json` (required)
 
-Remote tools run in separate pnpm packages (with their own dependencies) and communicate with the agent via RPC. Two transports are implemented and are swappable at runtime:
+Defines LLM provider profiles. Must contain a `"default"` key. Additional keys are named profiles that other agents can reference via `modelKey`.
 
-- **Unix socket** — low-latency, same-machine IPC via NDJSON over a Unix domain socket
-- **HTTP** — simple JSON-RPC over HTTP POST, suitable for tools on remote hosts
+```json
+{
+  "default": {
+    "provider": "openai",
+    "model": "gpt-4o-mini",
+    "apiKey": "{SECRET:openai-key}",
+    "temperature": 0
+  },
+  "powerful": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "apiKey": "{SECRET:anthropic-key}"
+  },
+  "local": {
+    "provider": "ollama",
+    "model": "qwen2.5:7b",
+    "baseUrl": "http://localhost:11434"
+  }
+}
+```
 
-The transport is selected by passing the appropriate `RpcClient` implementation to `RemoteTool`.
+Supported providers: `openai`, `anthropic`, `google`, `ollama`, `openai-compatible`.
+
+### `config/agents.json` (optional)
+
+Defines agents. If only `"default"` is present, the system runs in single-agent mode. Additional entries create sub-agents with an orchestrator.
+
+Each non-default entry inherits from `"default"` (deep-merged), so you only need to specify overrides.
+
+```json
+{
+  "default": {
+    "modelKey": "default",
+    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents.",
+    "description": "Orchestrator that routes requests to specialised agents"
+  },
+  "weather-au": {
+    "description": "Australian weather forecasts and conditions",
+    "systemPrompt": "You are an Australian weather specialist.",
+    "tools": ["weather_au", "rain_forecast_au"]
+  },
+  "weather-eu": {
+    "description": "European weather forecasts and conditions",
+    "tools": ["weather_eu"]
+  }
+}
+```
+
+| Field | Description |
+|---|---|
+| `modelKey` | Key from `models.json` (defaults to `"default"`) |
+| `systemPrompt` | System message prepended to each model call |
+| `description` | Used by the orchestrator to decide when to delegate (required for sub-agents) |
+| `tools` | Tool name allow-list. Empty/missing = all discovered tools |
+| `recursionLimit` | Max ReAct loop steps (default: 25) |
+
+### `config/tools.json` (optional)
+
+Declares remote tool servers to connect to at startup.
+
+```json
+{
+  "weather-au": {
+    "transport": "http",
+    "url": "http://localhost:3001"
+  },
+  "weather-us": {
+    "transport": "unix-socket",
+    "socketName": "weather_us"
+  }
+}
+```
+
+Transports: `http` (JSON-RPC over HTTP POST) or `unix-socket` (NDJSON over Unix domain socket at `/tmp/langgraph-glove-<socketName>.sock`).
+
+Set `"enabled": false` on any entry to skip it.
+
+### `config/gateway.json` (optional)
+
+```json
+{
+  "healthPort": 9090,
+  "healthHost": "0.0.0.0",
+  "dbPath": "data/checkpoints.sqlite"
+}
+```
+
+### `secrets/` directory
+
+Place JSON files containing secrets here. All keys from all files are merged into a flat namespace.
+
+```json
+// secrets/api-keys.json
+{
+  "openai-key": "sk-...",
+  "anthropic-key": "sk-ant-..."
+}
+```
+
+Secret values are automatically redacted from all log output.
 
 ---
 
@@ -88,39 +214,124 @@ pnpm install
 
 # Build all packages
 pnpm build
+```
 
-# Start the example weather tool server (HTTP mode)
-cd packages/tool-example
+### Running via the Gateway (recommended)
+
+The gateway handles the full lifecycle: config loading, tool discovery, agent creation, and graceful shutdown.
+
+```bash
+# Start tool servers first (each in its own terminal)
+cd packages/tool-weather-au && RPC_MODE=http PORT=3001 node dist/main.js
+cd packages/tool-weather-eu && RPC_MODE=http PORT=3002 node dist/main.js
+cd packages/tool-weather-us && node dist/main.js   # Unix socket mode
+
+# Start the gateway
+node packages/gateway/dist/main.js
+```
+
+Environment variables for the gateway:
+
+| Variable | Description | Default |
+|---|---|---|
+| `GLOVE_CONFIG_DIR` | Path to config directory | `./config` |
+| `GLOVE_SECRETS_DIR` | Path to secrets directory | `./secrets` |
+| `LOG_LEVEL` | `DEBUG`, `INFO`, `WARN`, `ERROR` | `INFO` |
+| `LOG_FILE` | Path to log file (enables file logging) | — |
+
+### Running via Docker
+
+```bash
+# Make sure config/ and secrets/ directories are populated
+docker compose up --build
+```
+
+The Docker image exposes port 9090 for the health endpoint and mounts `config/`, `secrets/`, and a `data/` volume for SQLite persistence.
+
+---
+
+## Development & Debugging
+
+### Debug environment for tools
+
+Start tool servers individually to test and debug them in isolation:
+
+```bash
+# Build everything first
+pnpm build
+
+# Terminal 1 — Australian weather tool (HTTP on port 3001)
+cd packages/tool-weather-au
 RPC_MODE=http PORT=3001 node dist/main.js
 
-# In another terminal, run the agent using the CLI channel
+# Terminal 2 — European weather tool (HTTP on port 3002)
+cd packages/tool-weather-eu
+RPC_MODE=http PORT=3002 node dist/main.js
+
+# Terminal 3 — US weather tool (Unix socket)
+cd packages/tool-weather-us
+node dist/main.js
+# Listens on /tmp/langgraph-glove-weather_us.sock
+```
+
+You can test tool servers directly with curl:
+
+```bash
+# List available tools
+curl -s http://localhost:3001 -d '{"method":"listTools","params":{}}'
+
+# Call a specific tool
+curl -s http://localhost:3001 -d '{"method":"callTool","params":{"name":"weather_au","input":{"location":"Sydney"}}}'
+```
+
+### Running the examples
+
+The `core` package includes standalone examples that wire up tools and agent manually (useful for development without the full gateway):
+
+```bash
+# CLI only — interactive terminal chat
 cd packages/core
-OPENAI_API_KEY=sk-... node dist/examples/cli.js
+node dist/examples/cli.js
+
+# CLI + Web UI — terminal chat + browser at http://localhost:8080
+cd packages/core
+WEB_PORT=8080 node dist/examples/cli-and-web.js
 ```
 
-### Switching RPC transport
+These examples load config from `config/` and secrets from `secrets/` relative to the project root. Tool server URLs can be overridden:
 
-```typescript
-import { UnixSocketRpcClient, HttpRpcClient, RemoteTool } from "@langgraph-glove/core";
-import { z } from "zod";
-
-// Choose transport at runtime
-const rpcClient =
-  process.env.RPC_MODE === "unix"
-    ? new UnixSocketRpcClient(process.env.SOCKET_PATH ?? "/tmp/weather.sock")
-    : new HttpRpcClient(`http://localhost:${process.env.TOOL_PORT ?? 3001}`);
-
-await rpcClient.connect();
-
-const weatherTool = new RemoteTool(rpcClient, {
-  name: "weather",
-  description: "Get the current weather for a location",
-  schema: z.object({
-    location: z.string().describe("City name or coordinates"),
-    unit: z.enum(["celsius", "fahrenheit"]).optional(),
-  }),
-});
+```bash
+WEATHER_AU_URL=http://192.168.1.50:3001 node dist/examples/cli.js
 ```
+
+> **Note:** The examples use `buildSingleAgentGraph` directly with the `"default"` agent entry. To use the multi-agent orchestrator, run via the gateway instead.
+
+### Using Ollama (local models)
+
+Add a `"local"` profile to `config/models.json`:
+
+```json
+{
+  "local": {
+    "provider": "ollama",
+    "model": "qwen2.5:7b",
+    "baseUrl": "http://localhost:11434"
+  }
+}
+```
+
+Then set `"modelKey": "local"` on any agent in `agents.json`, or set it on the `"default"` entry to use it everywhere.
+
+---
+
+## Channels
+
+| Channel | Transport | Streaming | Package |
+|---|---|---|---|
+| `CliChannel` | stdin / stdout | ✅ | `@langgraph-glove/core` |
+| `WebChannel` | HTTP + WebSocket | ✅ | `@langgraph-glove/core` |
+| `BlueBubblesChannel` | REST API + webhooks | ❌ | `@langgraph-glove/core` |
+| `TelegramChannel` | grammY (long polling) | ❌ | `@langgraph-glove/channel-telegram` |
 
 ### Adding a new Channel
 
@@ -143,11 +354,12 @@ export class MyChannel extends Channel {
 }
 ```
 
-### Adding a new remote tool package
+---
+
+## Adding a Remote Tool Package
 
 ```bash
-mkdir packages/my-tool
-cd packages/my-tool
+mkdir packages/my-tool && cd packages/my-tool
 pnpm init
 pnpm add @langgraph-glove/tool-server
 ```
@@ -156,7 +368,7 @@ pnpm add @langgraph-glove/tool-server
 // src/main.ts
 import { HttpToolServer } from "@langgraph-glove/tool-server";
 
-const server = new HttpToolServer(3002);
+const server = new HttpToolServer(3003);
 
 server.register(
   { name: "my_tool", description: "Does something useful", parameters: {} },
@@ -166,22 +378,41 @@ server.register(
 await server.start();
 ```
 
+Then add it to `config/tools.json`:
+
+```json
+{
+  "my-tool": {
+    "transport": "http",
+    "url": "http://localhost:3003"
+  }
+}
+```
+
+And optionally scope it to a specific agent in `config/agents.json`:
+
+```json
+{
+  "my-agent": {
+    "tools": ["my_tool"],
+    "description": "Handles my-tool requests"
+  }
+}
+```
+
 ---
 
 ## Environment Variables
 
 | Variable | Used by | Description |
 |---|---|---|
-| `LLM_PROVIDER` | all agent examples | `openai` or `ollama` (default: `openai`) |
-| `OPENAI_API_KEY` | agent examples (OpenAI) | OpenAI API key |
-| `OPENAI_MODEL` | agent examples (OpenAI) | Model name (default: `gpt-4o-mini`) |
-| `OLLAMA_URL` | agent examples (Ollama) | Ollama server URL (default: `http://localhost:11434`) |
-| `OLLAMA_MODEL` | agent examples (Ollama) | Ollama model name (default: `llama3.2`) |
-| `RPC_MODE` | tool-example, agent | `unix` or `http` (default: `http`) |
-| `SOCKET_PATH` | Unix socket transport | Path to Unix domain socket |
-| `PORT` | tool-example | HTTP tool server port (default: `3001`) |
-| `TOOL_SERVER_URL` | agent examples | URL of the HTTP tool server |
-| `BLUEBUBBLES_URL` | BlueBubblesChannel | BlueBubbles server URL |
-| `BLUEBUBBLES_PASSWORD` | BlueBubblesChannel | BlueBubbles server password |
-| `BLUEBUBBLES_WEBHOOK_PORT` | BlueBubblesChannel | Local port to receive webhooks |
-| `WEB_PORT` | WebChannel | Port for the web UI (default: `8080`) |
+| `GLOVE_CONFIG_DIR` | gateway | Path to config directory (default: `./config`) |
+| `GLOVE_SECRETS_DIR` | gateway | Path to secrets directory (default: `./secrets`) |
+| `LOG_LEVEL` | gateway | `DEBUG` / `INFO` / `WARN` / `ERROR` (default: `INFO`) |
+| `LOG_FILE` | gateway, examples | Path to log file (enables file logging) |
+| `WEATHER_AU_URL` | examples | Override AU tool server URL |
+| `WEATHER_EU_URL` | examples | Override EU tool server URL |
+| `WEB_PORT` | cli-and-web example | Web UI port (default: `8080`) |
+| `WEB_HOST` | cli-and-web example | Web UI bind host (default: `0.0.0.0`) |
+| `RPC_MODE` | tool servers | `http` or `unix` (default: `http`) |
+| `PORT` | tool servers | HTTP tool server port |
