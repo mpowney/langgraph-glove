@@ -8,13 +8,28 @@
  *   GLOVE_CONFIG_DIR   — path to config directory  (default: ./config)
  *   GLOVE_SECRETS_DIR  — path to secrets directory  (default: ./secrets)
  *
+ * Flags:
+ *   --web              — also start the WebChannel (browser UI)
+ *   --web-port <n>     — port for the WebChannel  (default: 8080)
+ *   --no-cli           — disable the CLI channel
+ *
  * Usage:
- *   node dist/main.js
+ *   node dist/main.js [--web] [--web-port 3000] [--no-cli]
  */
 
 import path from "node:path";
 import { Gateway } from "./Gateway.js";
-import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel, CliChannel } from "@langgraph-glove/core";
+import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel, CliChannel, WebChannel } from "@langgraph-glove/core";
+
+// ---------------------------------------------------------------------------
+// CLI args
+// ---------------------------------------------------------------------------
+
+const args = process.argv.slice(2);
+const useWeb = args.includes("--web");
+const noCli = args.includes("--no-cli");
+const webPortIndex = args.indexOf("--web-port");
+const webPort = webPortIndex !== -1 ? parseInt(args[webPortIndex + 1] ?? "8080", 10) : 8080;
 
 // ---------------------------------------------------------------------------
 // Logging — set up before anything else
@@ -23,10 +38,8 @@ import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel, CliChannel } f
 const logLevel = (process.env["LOG_LEVEL"] ?? "INFO").toUpperCase();
 const level = LogLevel[logLevel as keyof typeof LogLevel] ?? LogLevel.INFO;
 
-LogService.subscribe(new ConsoleSubscriber(level));
-
 if (process.env["LOG_FILE"]) {
-  LogService.subscribe(new FileSubscriber(LogLevel.DEBUG));
+  LogService.subscribe(new FileSubscriber(level));
 }
 
 // ---------------------------------------------------------------------------
@@ -40,10 +53,14 @@ const secretsDir = path.resolve(process.env["GLOVE_SECRETS_DIR"] ?? "secrets");
 // Gateway
 // ---------------------------------------------------------------------------
 
+const channels = [];
+if (!noCli) channels.push(new CliChannel());
+if (useWeb) channels.push(new WebChannel({ port: webPort, receiveAll: true }));
+
 const gateway = new Gateway({
   configDir,
   secretsDir,
-  channels: [new CliChannel()],
+  channels,
 });
 
 await gateway.start();

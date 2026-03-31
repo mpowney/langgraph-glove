@@ -1,6 +1,7 @@
 import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
-import type { Channel, IncomingMessage } from "../channels/Channel";
-import { Logger } from "../logging/Logger";
+import type { Channel, IncomingMessage } from "../channels/Channel.js";
+import { Logger } from "../logging/Logger.js";
+import { LlmCallbackHandler } from "../logging/LlmCallbackHandler.js";
 
 const logger = new Logger("Agent.ts");
 
@@ -118,12 +119,17 @@ export class GloveAgent {
    * Invoke the graph synchronously (waits for the full response).
    * Useful for non-streaming channels or programmatic use.
    */
-  async invoke(text: string, conversationId: string): Promise<string> {
+  async invoke(
+    text: string,
+    conversationId: string,
+    callbacks: LlmCallbackHandler[] = [new LlmCallbackHandler()],
+  ): Promise<string> {
     const result = await this.graph.invoke(
       { messages: [new HumanMessage(text)] },
       {
         configurable: { thread_id: conversationId },
         recursionLimit: this.config.recursionLimit ?? 25,
+        callbacks,
       },
     );
 
@@ -136,13 +142,18 @@ export class GloveAgent {
    * Stream the agent's response token-by-token.
    * Yields only the text chunks produced by the agent node (not tool output).
    */
-  async *stream(text: string, conversationId: string): AsyncGenerator<string> {
+  async *stream(
+    text: string,
+    conversationId: string,
+    callbacks: LlmCallbackHandler[] = [new LlmCallbackHandler()],
+  ): AsyncGenerator<string> {
     const streamResult = await this.graph.stream(
       { messages: [new HumanMessage(text)] },
       {
         configurable: { thread_id: conversationId },
         streamMode: "messages",
         recursionLimit: this.config.recursionLimit ?? 25,
+        callbacks,
       },
     );
 
@@ -176,9 +187,22 @@ export class GloveAgent {
         .catch((e: unknown) => logger.error(`Failed to forward user message to channel "${ch.name}"`, e));
     }
 
+    // Build a per-dispatch callback handler that logs prompts and also forwards
+    // them to any observer channels so they can be inspected in real time.
+    const sendPrompt = observers.length
+      ? (formatted: string): void => {
+          for (const ch of observers) {
+            ch
+              .sendMessage({ conversationId: message.conversationId, text: formatted, role: "prompt" })
+              .catch((e: unknown) => logger.error(`Failed to send prompt to channel "${ch.name}"`, e));
+          }
+        }
+      : undefined;
+    const handler = new LlmCallbackHandler(sendPrompt);
+
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
-      const baseStream = this.stream(message.text, message.conversationId);
+      const baseStream = this.stream(message.text, message.conversationId, [handler]);
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
@@ -197,7 +221,7 @@ export class GloveAgent {
           .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
       }
     } else {
-      const response = await this.invoke(message.text, message.conversationId);
+      const response = await this.invoke(message.text, message.conversationId, [handler]);
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
       for (const ch of observers) {

@@ -14,7 +14,7 @@ interface ClientMessage {
 
 /** Messages sent from server → browser client. */
 type ServerMessage =
-  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" }
+  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" | "prompt" }
   | { type: "done"; conversationId: string }
   | { type: "error"; message: string; conversationId: string };
 

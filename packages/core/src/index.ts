@@ -22,6 +22,7 @@ export { LogLevel } from "./logging/LogLevel";
 export { ConsoleSubscriber } from "./logging/ConsoleSubscriber";
 export { FileSubscriber } from "./logging/FileSubscriber";
 export { LogSubscriber } from "./logging/LogSubscriber";
+export { LlmCallbackHandler } from "./logging/LlmCallbackHandler";
 export type { LogEntry } from "./logging/LogEntry";
 
 // Channels

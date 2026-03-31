@@ -22,9 +22,11 @@ export interface OutgoingMessage {
   text: string;
   /**
    * Who produced this message.  `"user"` is used when mirroring an incoming
-   * message from another channel; `"agent"` (default) is the model's reply.
+   * message from another channel; `"agent"` (default) is the model's reply;
+   * `"prompt"` is the full prompt array sent to the model (emitted to
+   * `receiveAll` channels for observability).
    */
-  role?: "user" | "agent";
+  role?: "user" | "agent" | "prompt";
 }
 
 /** Callback invoked by the channel for every incoming message. */

@@ -272,6 +272,19 @@ node packages/tool-weather-eu/dist/main.js
 node packages/tool-weather-us/dist/main.js
 ```
 
+
+Or start them all as background tasks
+
+```bash
+node packages/tool-weather-au/dist/main.js &
+node packages/tool-weather-au/dist/main.js &
+node packages/tool-weather-us/dist/main.js & 
+node packages/tool-search/dist/main.js &   
+node packages/tool-browse/dist/main.js &
+node packages/tool-browse-session/dist/main.js &
+
+```
+
 You can test tool servers directly with curl:
 
 ```bash
