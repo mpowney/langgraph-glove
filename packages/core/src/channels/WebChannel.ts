@@ -1,9 +1,11 @@
 import http from "node:http";
+import { join } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
-import { Channel } from "./Channel";
-import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import { distPath } from "@langgraph-glove/ui-web";
+import { Channel } from "./Channel.js";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel.js";
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {
@@ -18,159 +20,26 @@ type ServerMessage =
   | { type: "done"; conversationId: string }
   | { type: "error"; message: string; conversationId: string };
 
-const WEB_UI_HTML = /* html */ `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LangGraph Glove</title>
-  <style>
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #f5f5f5;
-      display: flex;
-      flex-direction: column;
-      height: 100dvh;
-    }
-    header {
-      background: #1a1a2e;
-      color: #fff;
-      padding: 12px 20px;
-      font-size: 18px;
-      font-weight: 600;
-    }
-    #chat {
-      flex: 1;
-      overflow-y: auto;
-      padding: 16px 20px;
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
-    }
-    .message {
-      max-width: 72%;
-      padding: 10px 14px;
-      border-radius: 12px;
-      line-height: 1.5;
-      white-space: pre-wrap;
-      word-break: break-word;
-    }
-    .user { align-self: flex-end; background: #0078d4; color: #fff; border-bottom-right-radius: 2px; }
-    .agent { align-self: flex-start; background: #fff; color: #1a1a2e; border-bottom-left-radius: 2px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-    .agent.streaming::after { content: "▌"; animation: blink .7s step-end infinite; }
-    @keyframes blink { 50% { opacity: 0; } }
-    #input-bar {
-      display: flex;
-      gap: 8px;
-      padding: 12px 20px;
-      background: #fff;
-      border-top: 1px solid #e0e0e0;
-    }
-    #input {
-      flex: 1;
-      padding: 10px 14px;
-      border: 1px solid #d0d0d0;
-      border-radius: 8px;
-      font-size: 15px;
-      outline: none;
-    }
-    #input:focus { border-color: #0078d4; }
-    button {
-      padding: 10px 20px;
-      background: #0078d4;
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      font-size: 15px;
-      cursor: pointer;
-    }
-    button:disabled { background: #999; cursor: default; }
-  </style>
-</head>
-<body>
-  <header>LangGraph Glove</header>
-  <div id="chat"></div>
-  <div id="input-bar">
-    <input id="input" type="text" placeholder="Type a message…" autocomplete="off" />
-    <button id="send-btn" onclick="sendMessage()">Send</button>
-  </div>
-  <script>
-    const conversationId = crypto.randomUUID();
-    const chat = document.getElementById('chat');
-    const input = document.getElementById('input');
-    const sendBtn = document.getElementById('send-btn');
-
-    const ws = new WebSocket(\`ws://\${location.host}\`);
-
-    ws.onmessage = ({ data }) => {
-      const msg = JSON.parse(data);
-      if (msg.type === 'chunk') {
-        let el = document.getElementById('streaming-response');
-        if (!el) {
-          el = document.createElement('div');
-          el.id = 'streaming-response';
-          el.className = 'message ' + (msg.role || 'agent') + ' streaming';
-          chat.appendChild(el);
-        }
-        el.textContent += msg.text;
-        chat.scrollTop = chat.scrollHeight;
-      } else if (msg.type === 'done') {
-        const el = document.getElementById('streaming-response');
-        if (el) {
-          el.id = '';
-          el.classList.remove('streaming');
-        }
-        sendBtn.disabled = false;
-        input.focus();
-      } else if (msg.type === 'error') {
-        const el = document.getElementById('streaming-response');
-        if (el) el.remove();
-        appendMessage('agent', '⚠ ' + msg.message);
-        sendBtn.disabled = false;
-        input.focus();
-      }
-    };
-
-    ws.onclose = () => appendMessage('agent', '⚠ Connection closed. Refresh the page to reconnect.');
-
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-    });
-
-    function appendMessage(role, text) {
-      const div = document.createElement('div');
-      div.className = 'message ' + role;
-      div.textContent = text;
-      chat.appendChild(div);
-      chat.scrollTop = chat.scrollHeight;
-      return div;
-    }
-
-    function sendMessage() {
-      const text = input.value.trim();
-      if (!text || ws.readyState !== WebSocket.OPEN) return;
-      appendMessage('user', text);
-      input.value = '';
-      sendBtn.disabled = true;
-      ws.send(JSON.stringify({ type: 'message', text, conversationId }));
-    }
-  </script>
-</body>
-</html>`;
-
 export interface WebChannelConfig extends ChannelConfig {
   /** Port for the HTTP + WebSocket server. Default: `8080`. */
   port?: number;
   /** Hostname to bind. Default: `"0.0.0.0"`. */
   host?: string;
+  /** Optional metadata surfaced to the React SPA via `GET /api/info`. */
+  appInfo?: {
+    /** App name shown in the header. Defaults to "LangGraph Glove". */
+    name?: string;
+    /** Short description of the active agent, shown beneath the app name. */
+    agentDescription?: string;
+  };
 }
 
 /**
  * A streaming channel that serves a browser-based chat UI over HTTP and
  * communicates in real-time via WebSocket.
  *
- * - HTTP `GET /` serves the embedded single-page application.
+ * - HTTP static files are served from the compiled `@langgraph-glove/ui-web` SPA.
+ * - `GET /api/info` returns app metadata consumed by the React UI.
  * - WebSocket upgrade on the same port handles message exchange.
  * - Each browser tab creates its own `conversationId` (UUID), which is used
  *   as the LangGraph thread ID — giving each tab its own conversation history.
@@ -185,13 +54,35 @@ export class WebChannel extends Channel {
   private wss?: WebSocketServer;
   private readonly port: number;
   private readonly host: string;
+  private readonly appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
 
   constructor(config: WebChannelConfig = {}) {
     super(config);
     this.port = config.port ?? 8080;
     this.host = config.host ?? "0.0.0.0";
+    this.appInfo = {
+      name: config.appInfo?.name ?? "LangGraph Glove",
+      agentDescription: config.appInfo?.agentDescription ?? "",
+    };
     this.app = express();
-    this.app.get("/", (_req, res) => res.send(WEB_UI_HTML));
+
+    // Serve the compiled React SPA
+    this.app.use(express.static(distPath));
+
+    // Expose app metadata to the SPA
+    this.app.get("/api/info", (_req, res) => {
+      res.json({
+        name: this.appInfo.name,
+        ...(this.appInfo.agentDescription && {
+          agentDescription: this.appInfo.agentDescription,
+        }),
+      });
+    });
+
+    // SPA fallback — serve index.html for any unmatched GET
+    this.app.get("*", (_req, res) => {
+      res.sendFile(join(distPath, "index.html"));
+    });
   }
 
   async start(): Promise<void> {

@@ -13,6 +13,7 @@ Requires **Node.js 22+** (pinned via `.nvmrc`).
 | `@langgraph-glove/core` | Agent runtime, graph builders, channel base class, RPC clients, `RemoteTool` |
 | `@langgraph-glove/config` | Config loading, secret management, Zod schemas, `ModelRegistry` |
 | `@langgraph-glove/gateway` | Lifecycle management — config → tools → agent → channels → health → shutdown |
+| `@langgraph-glove/ui-web` | React + Fluent UI v9 chat SPA served by `WebChannel` |
 | `@langgraph-glove/channel-telegram` | Telegram channel (grammY, long polling) |
 | `@langgraph-glove/tool-server` | Abstract tool server + Unix socket / HTTP implementations |
 | `@langgraph-glove/tool-weather-au` | Mock Australian weather tools (HTTP or Unix socket) |
@@ -220,6 +221,8 @@ pnpm build
 
 The gateway handles the full lifecycle: config loading, tool discovery, agent creation, and graceful shutdown.
 
+> **Important:** All gateway commands must be run from the **workspace root** (`/path/to/langgraph-glove`). The gateway resolves `config/`, `secrets/`, and `data/` relative to the current working directory. Running from a subdirectory will cause it to look in the wrong place.
+
 ```bash
 # Start tool servers first (each in its own terminal)
 # Transport and port are read from config/tools.json
@@ -227,8 +230,24 @@ node packages/tool-weather-au/dist/main.js
 node packages/tool-weather-eu/dist/main.js
 node packages/tool-weather-us/dist/main.js
 
-# Start the gateway
-node packages/gateway/dist/main.js
+# Start the gateway (CLI only)
+pnpm start
+
+# Start the gateway with the web UI on http://localhost:8080
+pnpm start:web
+
+# Start the gateway with the web UI only (no CLI input)
+pnpm start:web-only
+
+# Or invoke node directly (equivalent to pnpm start:web)
+node packages/gateway/dist/main.js --web
+node packages/gateway/dist/main.js --web --web-port 3000
+```
+
+To override the config or data directories:
+
+```bash
+GLOWE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/gateway/dist/main.js --web
 ```
 
 Environment variables for the gateway:
@@ -296,6 +315,88 @@ curl -s http://localhost:3001/rpc -H 'Content-Type: application/json' \
 curl -s http://localhost:3001/rpc -H 'Content-Type: application/json' \
   -d '{"id":"2","method":"weather_au","params":{"location":"Sydney"}}'
 ```
+
+### Debugging the gateway (TypeScript source)
+
+The `debug:*` scripts run the gateway directly from TypeScript source using `tsx` — no build step required. They must be run from the **workspace root** so that `config/`, `secrets/`, and `data/` resolve correctly.
+
+```bash
+# From the workspace root:
+
+# CLI only — debugger listens on ws://127.0.0.1:9229
+pnpm debug
+
+# CLI + Web UI on http://localhost:8080
+pnpm debug:web
+
+# Web UI only (no CLI) — useful for browser-only testing
+pnpm debug:web-only
+```
+
+To override config or data paths:
+
+```bash
+GLOWE_CONFIG_DIR=/custom/config pnpm debug:web
+```
+
+To attach VS Code, add a launch configuration in `.vscode/launch.json`:
+
+```json
+{
+  "type": "node",
+  "request": "attach",
+  "name": "Attach to gateway",
+  "port": 9229,
+  "skipFiles": ["<node_internals>/**"]
+}
+```
+
+Then run one of the `debug:*` scripts and use **Run → Attach to Node Process** (or the launch config above) to connect. Breakpoints set in any `.ts` source file — including `Gateway.ts`, `main.ts`, and all `@langgraph-glove/*` packages — will be hit directly.
+
+> **Note:** `tsx` is a `devDependency` of `@langgraph-glove/gateway` and is resolved through the pnpm workspace — no global install required.
+
+---
+
+### Web UI (ui-web)
+
+The `WebChannel` serves a compiled React/Fluent UI v9 SPA from `packages/ui-web/dist/app/`. The package must be built before the web channel can start:
+
+```bash
+# One-off: build everything (ui-web is built first due to the workspace dep)
+pnpm build
+```
+
+Open `http://localhost:8080` (or whichever port `WebChannel` is configured to use) once the gateway or an example is running.
+
+#### Configuring app metadata in the header
+
+Pass `appInfo` to `WebChannel` to show the app name and agent description:
+
+```typescript
+new WebChannel({
+  port: 8080,
+  appInfo: {
+    name: "My Assistant",
+    agentDescription: "Orchestrator that routes requests to specialised agents",
+  },
+})
+```
+
+#### Developing the UI with Vite hot-reload
+
+Run the backend (gateway or example) and the Vite dev server in separate terminals:
+
+```bash
+# Terminal 1 — backend with WebChannel on port 8080
+node packages/gateway/dist/main.js
+
+# Terminal 2 — Vite dev server (hot-reload) on port 5173
+VITE_WS_URL=ws://localhost:8080 pnpm --filter @langgraph-glove/ui-web dev
+```
+
+Then open `http://localhost:5173`. `VITE_WS_URL` tells the SPA where to connect its WebSocket; in production the SPA uses `ws://${location.host}` automatically.
+
+---
 
 ### Running the examples
 
@@ -429,4 +530,5 @@ The launcher reads transport, port, and host from `tools.json` automatically. Op
 | `WEATHER_EU_URL` | examples | Override EU tool server URL |
 | `WEB_PORT` | cli-and-web example | Web UI port (default: `8080`) |
 | `WEB_HOST` | cli-and-web example | Web UI bind host (default: `0.0.0.0`) |
+| `VITE_WS_URL` | ui-web dev server | WebSocket URL for the Vite dev server (e.g. `ws://localhost:8080`). Omit in production — the SPA defaults to `ws://${location.host}` |
 

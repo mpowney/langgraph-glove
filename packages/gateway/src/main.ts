@@ -19,6 +19,7 @@
 
 import path from "node:path";
 import { Gateway } from "./Gateway.js";
+import { ConfigLoader } from "@langgraph-glove/config";
 import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel, CliChannel, WebChannel } from "@langgraph-glove/core";
 
 // ---------------------------------------------------------------------------
@@ -50,12 +51,35 @@ const configDir = path.resolve(process.env["GLOVE_CONFIG_DIR"] ?? "config");
 const secretsDir = path.resolve(process.env["GLOVE_SECRETS_DIR"] ?? "secrets");
 
 // ---------------------------------------------------------------------------
+// Pre-read config for WebChannel appInfo (synchronous, lightweight)
+// ---------------------------------------------------------------------------
+
+let defaultAgentDescription: string | undefined;
+try {
+  const earlyConfig = new ConfigLoader(configDir, secretsDir).load();
+  defaultAgentDescription = earlyConfig.agents["default"]?.description;
+} catch {
+  // Config will be validated properly inside Gateway.start() — ignore here
+}
+
+// ---------------------------------------------------------------------------
 // Gateway
 // ---------------------------------------------------------------------------
 
 const channels = [];
 if (!noCli) channels.push(new CliChannel());
-if (useWeb) channels.push(new WebChannel({ port: webPort, receiveAll: true }));
+if (useWeb) {
+  channels.push(
+    new WebChannel({
+      port: webPort,
+      receiveAll: true,
+      appInfo: {
+        name: "LangGraph Glove",
+        agentDescription: defaultAgentDescription,
+      },
+    }),
+  );
+}
 
 const gateway = new Gateway({
   configDir,

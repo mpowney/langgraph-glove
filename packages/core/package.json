@@ -25,6 +25,7 @@
     "@langchain/ollama": "^1.2.6",
     "@langchain/openai": "^1.3.1",
     "@langgraph-glove/config": "workspace:*",
+    "@langgraph-glove/ui-web": "workspace:*",
     "express": "^4.21.0",
     "uuid": "^10.0.0",
     "ws": "^8.18.0",
