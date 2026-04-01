@@ -9,7 +9,6 @@ import {
   Button,
   makeStyles,
   tokens,
-  mergeClasses,
 } from "@fluentui/react-components";
 import {
   MoreVertical20Regular,
@@ -33,23 +32,25 @@ const useStyles = makeStyles({
     alignItems: "center",
     gap: "2px",
     verticalAlign: "middle",
+    padding: `2px ${tokens.spacingHorizontalXS} 2px ${tokens.spacingHorizontalS}`,
+    borderRadius: tokens.borderRadiusMedium,
+    backgroundColor: tokens.colorBrandBackground2,
+    border: `1px solid ${tokens.colorBrandStroke2}`,
+    ":hover": {
+      backgroundColor: tokens.colorBrandBackground2Hover,
+    },
   },
   link: {
     display: "inline-block",
-    maxWidth: "140px",
+    maxWidth: "300px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
-    padding: `2px ${tokens.spacingHorizontalS}`,
-    borderRadius: tokens.borderRadiusMedium,
-    backgroundColor: tokens.colorBrandBackground2,
     color: tokens.colorBrandForeground2,
     textDecoration: "none",
     fontSize: tokens.fontSizeBase200,
     fontWeight: tokens.fontWeightSemibold,
-    border: `1px solid ${tokens.colorBrandStroke2}`,
     ":hover": {
-      backgroundColor: tokens.colorBrandBackground2Hover,
       textDecoration: "underline",
     },
   },
@@ -58,6 +59,7 @@ const useStyles = makeStyles({
     width: "20px",
     height: "20px",
     padding: 0,
+    color: tokens.colorBrandForeground2,
   },
   unsafeLink: {
     color: tokens.colorNeutralForeground3,
@@ -83,8 +85,8 @@ export function LinkPill({ href, children }: LinkPillProps) {
   const copyLink = () => navigator.clipboard.writeText(href);
 
   return (
-    <span className={styles.pill}>
-      <Tooltip content={href} relationship="label" withArrow>
+    <Tooltip content={href} relationship="label" withArrow>
+      <span className={styles.pill}>
         <a
           href={href}
           target="_blank"
@@ -94,10 +96,8 @@ export function LinkPill({ href, children }: LinkPillProps) {
         >
           {children}
         </a>
-      </Tooltip>
-      <Menu>
-        <MenuTrigger disableButtonEnhancement>
-          <Tooltip content="Link options" relationship="label">
+        <Menu>
+          <MenuTrigger disableButtonEnhancement>
             <Button
               size="small"
               appearance="subtle"
@@ -105,19 +105,19 @@ export function LinkPill({ href, children }: LinkPillProps) {
               className={styles.menuButton}
               aria-label="Link options"
             />
-          </Tooltip>
-        </MenuTrigger>
-        <MenuPopover>
-          <MenuList>
-            <MenuItem icon={<Open20Regular />} onClick={openInNewTab}>
-              Open in new tab
-            </MenuItem>
-            <MenuItem icon={<Copy20Regular />} onClick={copyLink}>
-              Copy link URL
-            </MenuItem>
-          </MenuList>
-        </MenuPopover>
-      </Menu>
-    </span>
+          </MenuTrigger>
+          <MenuPopover>
+            <MenuList>
+              <MenuItem icon={<Open20Regular />} onClick={openInNewTab}>
+                Open in new tab
+              </MenuItem>
+              <MenuItem icon={<Copy20Regular />} onClick={copyLink}>
+                Copy link URL
+              </MenuItem>
+            </MenuList>
+          </MenuPopover>
+        </Menu>
+      </span>
+    </Tooltip>
   );
 }
