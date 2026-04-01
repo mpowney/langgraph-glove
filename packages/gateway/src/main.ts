@@ -69,15 +69,16 @@ try {
 const channels = [];
 if (!noCli) channels.push(new CliChannel());
 if (useWeb) {
-  const dbPath = path.resolve(process.env["GLOVE_DB_PATH"] ?? "data/checkpoints.sqlite");
+  const apiPort = parseInt(process.env["GLOVE_API_PORT"] ?? "8081", 10);
+  const apiHost = process.env["GLOVE_API_HOST"] ?? "localhost";
   channels.push(
     new WebChannel({
       port: webPort,
       receiveAll: true,
-      dbPath,
       appInfo: {
         name: "LangGraph Glove",
         agentDescription: defaultAgentDescription,
+        apiUrl: `http://${apiHost}:${apiPort}`,
       },
     }),
   );

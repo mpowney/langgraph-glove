@@ -1,5 +1,7 @@
 {
   "healthPort": 9090,
   "healthHost": "0.0.0.0",
-  "dbPath": "./data/checkpoints.sqlite"
+  "dbPath": "./data/checkpoints.sqlite",
+  "apiPort": 8081,
+  "apiHost": "0.0.0.0"
 }

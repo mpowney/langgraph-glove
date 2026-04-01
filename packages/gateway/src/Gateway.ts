@@ -17,6 +17,7 @@ import {
   HttpRpcClient,
   UnixSocketRpcClient,
   RemoteTool,
+  AdminApi,
   buildSingleAgentGraph,
   buildOrchestratorGraph,
   type RpcClient,
@@ -65,6 +66,7 @@ export class Gateway extends EventEmitter {
   private configLoader: ConfigLoader | null = null;
   private models: ModelRegistry | null = null;
   private healthServer: HealthServer | null = null;
+  private adminApi: AdminApi | null = null;
   private shutdownHandlers: (() => void)[] = [];
 
   constructor(private readonly options: GatewayOptions) {
@@ -134,6 +136,17 @@ export class Gateway extends EventEmitter {
       await this.healthServer.listen(healthPort, healthHost);
       logger.info(`Health endpoint: http://${healthHost}:${healthPort}/health`);
 
+      // 8. Admin API
+      const apiPort = this.config.gateway.apiPort ?? 8081;
+      const apiHost = this.config.gateway.apiHost ?? "0.0.0.0";
+      this.adminApi = new AdminApi({
+        port: apiPort,
+        host: apiHost,
+        dbPath: this.config.gateway.dbPath,
+      });
+      await this.adminApi.listen();
+      logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
+
       // 8. Signal handlers
       this.installSignalHandlers();
 
@@ -159,6 +172,12 @@ export class Gateway extends EventEmitter {
     if (this.healthServer) {
       await this.healthServer.close();
       this.healthServer = null;
+    }
+
+    // Stop admin API
+    if (this.adminApi) {
+      await this.adminApi.close();
+      this.adminApi = null;
     }
 
     // Stop agent + channels

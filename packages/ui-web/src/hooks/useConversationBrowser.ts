@@ -3,12 +3,7 @@ import type { ConversationSummary, BrowserMessage } from "../types";
 
 type LoadingState = "idle" | "loading" | "error";
 
-// In production the API is on the same origin. In dev, VITE_WS_URL points to
-// the backend (e.g. ws://localhost:8080) and Vite proxies /api/ there, so we
-// can always use a relative path.
-const API_BASE = "";
-
-export function useConversationBrowser() {
+export function useConversationBrowser(apiBaseUrl = "") {
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [messages, setMessages] = useState<BrowserMessage[]>([]);
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
@@ -21,7 +16,7 @@ export function useConversationBrowser() {
     setListState("loading");
     setListError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/conversations`);
+      const res = await fetch(`${apiBaseUrl}/api/conversations`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as ConversationSummary[];
       setConversations(data);
@@ -30,7 +25,7 @@ export function useConversationBrowser() {
       setListError(err instanceof Error ? err.message : String(err));
       setListState("error");
     }
-  }, []);
+  }, [apiBaseUrl]);
 
   const loadMessages = useCallback(async (threadId: string) => {
     setSelectedThreadId(threadId);
@@ -38,7 +33,7 @@ export function useConversationBrowser() {
     setMessagesError(null);
     setMessages([]);
     try {
-      const res = await fetch(`${API_BASE}/api/conversations/${encodeURIComponent(threadId)}`);
+      const res = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(threadId)}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as BrowserMessage[];
       setMessages(data);
@@ -47,7 +42,7 @@ export function useConversationBrowser() {
       setMessagesError(err instanceof Error ? err.message : String(err));
       setMessagesState("error");
     }
-  }, []);
+  }, [apiBaseUrl]);
 
   const clearSelection = useCallback(() => {
     setSelectedThreadId(null);

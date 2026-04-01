@@ -30,7 +30,11 @@ export { Channel } from "./channels/Channel";
 export type { IncomingMessage, OutgoingMessage, MessageHandler, ChannelConfig } from "./channels/Channel";
 export { CliChannel } from "./channels/CliChannel";
 export { WebChannel } from "./channels/WebChannel";
-export type { WebChannelConfig, BrowserMessage, ConversationSummary } from "./channels/WebChannel";
+export type { WebChannelConfig } from "./channels/WebChannel";
+
+// Admin API
+export { AdminApi } from "./api/AdminApi";
+export type { AdminApiConfig, BrowserMessage, ConversationSummary } from "./api/AdminApi";
 export { BlueBubblesChannel } from "./channels/BlueBubblesChannel";
 export type { BlueBubblesChannelConfig } from "./channels/BlueBubblesChannel";
 

@@ -15,6 +15,8 @@ export interface ClientMessage {
 export interface AppInfo {
   name: string;
   agentDescription?: string;
+  /** Base URL of the AdminApi server. When absent, the SPA uses the same origin. */
+  apiUrl?: string;
 }
 
 /** A single entry in the chat history. */

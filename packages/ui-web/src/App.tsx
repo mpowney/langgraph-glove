@@ -51,7 +51,7 @@ function App() {
         <AppHeader appInfo={appInfo} status={status} showAll={showAll} onToggleShowAll={setShowAllPersisted} onOpenBrowser={() => setBrowserOpen(true)} />
         <ChatArea messages={visibleMessages} myConversationId={myConversationId} showAll={showAll} />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
-        <ConversationBrowser open={browserOpen} onClose={() => setBrowserOpen(false)} />
+        <ConversationBrowser open={browserOpen} onClose={() => setBrowserOpen(false)} apiBaseUrl={appInfo?.apiUrl} />
       </div>
     </FluentProvider>
   );

@@ -131,5 +131,9 @@ export const GatewayConfigSchema = z.object({
   healthHost: z.string().optional(),
   /** Path to the SQLite database for checkpoint persistence. */
   dbPath: z.string().optional(),
+  /** Port for the AdminApi REST server. Defaults to 8081. */
+  apiPort: z.number().int().positive().optional(),
+  /** Host to bind the AdminApi server to. Defaults to "0.0.0.0". */
+  apiHost: z.string().optional(),
 });
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;

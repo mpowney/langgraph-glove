@@ -1,7 +1,7 @@
-export { Channel } from "./Channel";
-export type { IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
-export { CliChannel } from "./CliChannel";
-export { WebChannel } from "./WebChannel";
-export type { WebChannelConfig } from "./WebChannel";
-export { BlueBubblesChannel } from "./BlueBubblesChannel";
-export type { BlueBubblesChannelConfig } from "./BlueBubblesChannel";
+export { Channel } from "./Channel.js";
+export type { IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel.js";
+export { CliChannel } from "./CliChannel.js";
+export { WebChannel } from "./WebChannel.js";
+export type { WebChannelConfig } from "./WebChannel.js";
+export { BlueBubblesChannel } from "./BlueBubblesChannel.js";
+export type { BlueBubblesChannelConfig } from "./BlueBubblesChannel.js";

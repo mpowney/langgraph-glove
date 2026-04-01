@@ -172,9 +172,11 @@ function MessageView({ message }: MessageViewProps) {
 export interface ConversationBrowserProps {
   open: boolean;
   onClose: () => void;
+  /** Base URL of the AdminApi server. Defaults to same origin when absent. */
+  apiBaseUrl?: string;
 }
 
-export function ConversationBrowser({ open, onClose }: ConversationBrowserProps) {
+export function ConversationBrowser({ open, onClose, apiBaseUrl = "" }: ConversationBrowserProps) {
   const styles = useStyles();
   const {
     conversations,
@@ -187,7 +189,7 @@ export function ConversationBrowser({ open, onClose }: ConversationBrowserProps)
     loadConversations,
     loadMessages,
     clearSelection,
-  } = useConversationBrowser();
+  } = useConversationBrowser(apiBaseUrl);
 
   // Reload conversation list whenever the drawer opens
   useEffect(() => {
