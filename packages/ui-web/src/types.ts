@@ -27,3 +27,21 @@ export interface ChatEntry {
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
+
+// ---------------------------------------------------------------------------
+// Conversation browser API types (mirrors server BrowserMessage / ConversationSummary)
+// ---------------------------------------------------------------------------
+
+export interface ConversationSummary {
+  threadId: string;
+  messageCount: number;
+  latestCheckpointId: string;
+}
+
+export interface BrowserMessage {
+  id: string;
+  role: "human" | "ai" | "tool" | "system";
+  content: string;
+  tool_calls?: Array<{ name: string; id: string; args: unknown }>;
+  tool_call_id?: string;
+}

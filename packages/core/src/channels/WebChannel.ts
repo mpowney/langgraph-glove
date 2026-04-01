@@ -3,9 +3,90 @@ import { join } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
+import Database from "better-sqlite3";
 import { distPath } from "@langgraph-glove/ui-web";
 import { Channel } from "./Channel.js";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel.js";
+
+// ---------------------------------------------------------------------------
+// Types shared with the browser API
+// ---------------------------------------------------------------------------
+
+interface LcMessage {
+  lc: number;
+  type: string;
+  id: string[];
+  kwargs: {
+    content: unknown;
+    additional_kwargs?: Record<string, unknown>;
+    response_metadata?: Record<string, unknown>;
+    id?: string;
+    tool_calls?: unknown[];
+    tool_call_id?: string;
+  };
+}
+
+interface CheckpointRow {
+  thread_id: string;
+  checkpoint_id: string;
+  checkpoint: string;
+}
+
+interface ConversationRow {
+  thread_id: string;
+  checkpoint_count: number;
+  latest_checkpoint_id: string;
+}
+
+/** A single decoded message in a conversation. */
+export interface BrowserMessage {
+  id: string;
+  role: "human" | "ai" | "tool" | "system";
+  content: string;
+  tool_calls?: Array<{ name: string; id: string; args: unknown }>;
+  tool_call_id?: string;
+}
+
+/** Summary row returned by GET /api/conversations. */
+export interface ConversationSummary {
+  threadId: string;
+  messageCount: number;
+  latestCheckpointId: string;
+}
+
+function lcIdToRole(id: string[]): BrowserMessage["role"] {
+  const cls = id.at(-1) ?? "";
+  if (cls.startsWith("Human")) return "human";
+  if (cls.startsWith("AI") || cls.startsWith("Ai")) return "ai";
+  if (cls.startsWith("Tool")) return "tool";
+  return "system";
+}
+
+function extractMessages(checkpointJson: string): BrowserMessage[] {
+  try {
+    const cp = JSON.parse(checkpointJson) as { channel_values?: { messages?: LcMessage[] } };
+    const raw = cp.channel_values?.messages ?? [];
+    return raw.map((m) => {
+      const role = lcIdToRole(m.id);
+      const content =
+        typeof m.kwargs.content === "string"
+          ? m.kwargs.content
+          : JSON.stringify(m.kwargs.content);
+      const tool_calls = m.kwargs.tool_calls?.length
+        ? (m.kwargs.tool_calls as Array<{ name: string; id: string; args: unknown }>)
+        : undefined;
+      return {
+        id: m.kwargs.id ?? uuidv4(),
+        role,
+        content,
+        ...(tool_calls ? { tool_calls } : {}),
+        ...(m.kwargs.tool_call_id ? { tool_call_id: m.kwargs.tool_call_id } : {}),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {
@@ -25,6 +106,13 @@ export interface WebChannelConfig extends ChannelConfig {
   port?: number;
   /** Hostname to bind. Default: `"0.0.0.0"`. */
   host?: string;
+  /**
+   * Path to the SQLite checkpoint database.  When provided, the channel
+   * exposes a read-only REST API for browsing conversation history:
+   *  - `GET /api/conversations`           → ConversationSummary[]
+   *  - `GET /api/conversations/:threadId` → BrowserMessage[]
+   */
+  dbPath?: string;
   /** Optional metadata surfaced to the React SPA via `GET /api/info`. */
   appInfo?: {
     /** App name shown in the header. Defaults to "LangGraph Glove". */
@@ -55,11 +143,13 @@ export class WebChannel extends Channel {
   private readonly port: number;
   private readonly host: string;
   private readonly appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
+  private readonly dbPath?: string;
 
   constructor(config: WebChannelConfig = {}) {
     super(config);
     this.port = config.port ?? 8080;
     this.host = config.host ?? "0.0.0.0";
+    this.dbPath = config.dbPath;
     this.appInfo = {
       name: config.appInfo?.name ?? "LangGraph Glove",
       agentDescription: config.appInfo?.agentDescription ?? "",
@@ -78,6 +168,60 @@ export class WebChannel extends Channel {
         }),
       });
     });
+
+    // Conversation browser API — only registered when a dbPath is configured
+    if (this.dbPath) {
+      const dbPath = this.dbPath;
+
+      this.app.get("/api/conversations", (_req, res) => {
+        try {
+          const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+          const rows = db.prepare<[], ConversationRow>(`
+            SELECT
+              thread_id,
+              COUNT(*) AS checkpoint_count,
+              MAX(checkpoint_id) AS latest_checkpoint_id
+            FROM checkpoints
+            WHERE checkpoint_ns = ''
+            GROUP BY thread_id
+            ORDER BY MAX(checkpoint_id) DESC
+          `).all();
+          db.close();
+
+          const summaries: ConversationSummary[] = rows.map((r) => ({
+            threadId: r.thread_id,
+            messageCount: r.checkpoint_count,
+            latestCheckpointId: r.latest_checkpoint_id,
+          }));
+          res.json(summaries);
+        } catch (err) {
+          res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+
+      this.app.get("/api/conversations/:threadId", (req, res) => {
+        const { threadId } = req.params;
+        try {
+          const db = new Database(dbPath, { readonly: true, fileMustExist: true });
+          const row = db.prepare<[string], CheckpointRow>(`
+            SELECT thread_id, checkpoint_id, checkpoint
+            FROM checkpoints
+            WHERE thread_id = ? AND checkpoint_ns = ''
+            ORDER BY checkpoint_id DESC
+            LIMIT 1
+          `).get(threadId);
+          db.close();
+
+          if (!row) {
+            res.status(404).json({ error: "Conversation not found" });
+            return;
+          }
+          res.json(extractMessages(row.checkpoint as unknown as string));
+        } catch (err) {
+          res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+    }
 
     // SPA fallback — serve index.html for any unmatched GET
     this.app.get("*", (_req, res) => {

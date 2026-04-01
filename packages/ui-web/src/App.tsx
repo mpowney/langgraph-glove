@@ -6,6 +6,7 @@ import { useTheme } from "./hooks/useTheme";
 import { AppHeader } from "./components/AppHeader";
 import { ChatArea } from "./components/ChatArea";
 import { InputBar } from "./components/InputBar";
+import { ConversationBrowser } from "./components/ConversationBrowser";
 
 const conversationId = crypto.randomUUID();
 
@@ -26,6 +27,7 @@ function App() {
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
   );
+  const [browserOpen, setBrowserOpen] = useState(false);
 
   const setShowAllPersisted = useCallback((value: boolean) => {
     localStorage.setItem("showAll", String(value));
@@ -46,9 +48,10 @@ function App() {
   return (
     <FluentProvider theme={theme}>
       <div className={styles.shell}>
-        <AppHeader appInfo={appInfo} status={status} showAll={showAll} onToggleShowAll={setShowAllPersisted} />
+        <AppHeader appInfo={appInfo} status={status} showAll={showAll} onToggleShowAll={setShowAllPersisted} onOpenBrowser={() => setBrowserOpen(true)} />
         <ChatArea messages={visibleMessages} myConversationId={myConversationId} showAll={showAll} />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
+        <ConversationBrowser open={browserOpen} onClose={() => setBrowserOpen(false)} />
       </div>
     </FluentProvider>
   );

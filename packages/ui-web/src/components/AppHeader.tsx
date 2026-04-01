@@ -4,7 +4,10 @@ import {
   tokens,
   Text,
   Switch,
+  Button,
+  Tooltip,
 } from "@fluentui/react-components";
+import { DatabaseSearch24Regular } from "@fluentui/react-icons";
 import type { AppInfo, ConnectionStatus } from "../types";
 
 const useStyles = makeStyles({
@@ -76,9 +79,10 @@ interface AppHeaderProps {
   status: ConnectionStatus;
   showAll: boolean;
   onToggleShowAll: (value: boolean) => void;
+  onOpenBrowser: () => void;
 }
 
-export function AppHeader({ appInfo, status, showAll, onToggleShowAll }: AppHeaderProps) {
+export function AppHeader({ appInfo, status, showAll, onToggleShowAll, onOpenBrowser }: AppHeaderProps) {
   const styles = useStyles();
 
   const dotClass =
@@ -106,6 +110,15 @@ export function AppHeader({ appInfo, status, showAll, onToggleShowAll }: AppHead
           onChange={(_, data) => onToggleShowAll(data.checked)}
           label={<Text size={100} className={styles.switchLabel}>All conversations</Text>}
         />
+        <Tooltip content="Browse conversation history" relationship="label">
+          <Button
+            appearance="subtle"
+            icon={<DatabaseSearch24Regular />}
+            onClick={onOpenBrowser}
+            style={{ color: tokens.colorNeutralForegroundOnBrand }}
+            aria-label="Browse conversation history"
+          />
+        </Tooltip>
         <span className={`${styles.statusDot} ${dotClass}`} aria-hidden />
         <Text size={100} className={styles.statusLabel}>
           {STATUS_LABELS[status]}
