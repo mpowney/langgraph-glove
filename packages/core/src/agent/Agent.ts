@@ -1,4 +1,4 @@
-import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
+import { HumanMessage, AIMessageChunk, ToolMessage } from "@langchain/core/messages";
 import type { Channel, IncomingMessage } from "../channels/Channel.js";
 import { Logger } from "../logging/Logger.js";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler.js";
@@ -140,12 +140,18 @@ export class GloveAgent {
 
   /**
    * Stream the agent's response token-by-token.
-   * Yields only the text chunks produced by the agent node (not tool output).
+   * Yields text chunks produced by the agent node.  When `onToolEvent` is
+   * provided, it is also called (synchronously, fire-and-forget) whenever a
+   * completed tool call or tool result is encountered in the stream.
+   *
+   * @param onToolEvent - Optional callback invoked with role `"tool-call"` or
+   *   `"tool-result"` and a JSON-serialised payload for each tool interaction.
    */
   async *stream(
     text: string,
     conversationId: string,
     callbacks: LlmCallbackHandler[] = [new LlmCallbackHandler()],
+    onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string) => void,
   ): AsyncGenerator<string> {
     const streamResult = await this.graph.stream(
       { messages: [new HumanMessage(text)] },
@@ -160,15 +166,33 @@ export class GloveAgent {
     for await (const [chunk, _metadata] of streamResult as AsyncIterable<
       [unknown, { langgraph_node?: string }]
     >) {
-      // Yield text content from any node, but skip chunks that are part of
-      // tool-call routing (orchestrator decisions, etc.).
-      if (
-        chunk instanceof AIMessageChunk &&
-        typeof chunk.content === "string" &&
-        chunk.content &&
-        !chunk.tool_calls?.length
-      ) {
-        yield chunk.content;
+      if (chunk instanceof AIMessageChunk) {
+        if (chunk.tool_calls?.length) {
+          // Completed tool-call decisions — fire event, don't yield text.
+          if (onToolEvent) {
+            for (const tc of chunk.tool_calls) {
+              if (tc.name.startsWith("transfer_to_")) {
+                // Orchestrator handoff to a sub-agent
+                const targetAgent = tc.name.replace(/^transfer_to_/, "");
+                const request =
+                  typeof tc.args === "object" && tc.args !== null && "request" in tc.args
+                    ? String((tc.args as { request: string }).request)
+                    : "";
+                onToolEvent("agent-transfer", JSON.stringify({ agent: targetAgent, request }));
+              } else {
+                onToolEvent("tool-call", JSON.stringify({ name: tc.name, args: tc.args }));
+              }
+            }
+          }
+        } else if (typeof chunk.content === "string" && chunk.content) {
+          yield chunk.content;
+        }
+      } else if (chunk instanceof ToolMessage && onToolEvent) {
+        const content =
+          typeof chunk.content === "string"
+            ? chunk.content
+            : JSON.stringify(chunk.content);
+        onToolEvent("tool-result", JSON.stringify({ name: chunk.name ?? undefined, content }));
       }
     }
   }
@@ -178,20 +202,24 @@ export class GloveAgent {
   // ---------------------------------------------------------------------------
 
   private async dispatchMessage(message: IncomingMessage, sourceChannel: Channel): Promise<void> {
-    const observers = this.channels.filter((ch) => ch !== sourceChannel && ch.receiveAll);
+    const receiveAllChannels = this.channels.filter((ch) => ch.receiveAll);
+    const mirrorTargets = receiveAllChannels.filter((ch) => ch !== sourceChannel);
+    const observabilityTargets = receiveAllChannels;
 
-    // Mirror the user's message to observers before the agent replies.
-    for (const ch of observers) {
+    // Mirror the user's message to other receiveAll channels before the agent replies.
+    // Do not mirror back to the source channel; UI channels already render their own local input.
+    for (const ch of mirrorTargets) {
       await ch
         .sendMessage({ conversationId: message.conversationId, text: message.text, role: "user" })
         .catch((e: unknown) => logger.error(`Failed to forward user message to channel "${ch.name}"`, e));
     }
 
     // Build a per-dispatch callback handler that logs prompts and also forwards
-    // them to any observer channels so they can be inspected in real time.
-    const sendPrompt = observers.length
+    // them to receiveAll channels so they can be inspected in real time.
+    // This includes the source channel when it is configured with receiveAll=true.
+    const sendPrompt = observabilityTargets.length
       ? (formatted: string): void => {
-          for (const ch of observers) {
+          for (const ch of observabilityTargets) {
             ch
               .sendMessage({ conversationId: message.conversationId, text: formatted, role: "prompt" })
               .catch((e: unknown) => logger.error(`Failed to send prompt to channel "${ch.name}"`, e));
@@ -200,9 +228,20 @@ export class GloveAgent {
       : undefined;
     const handler = new LlmCallbackHandler(sendPrompt);
 
+    // Forward tool calls, results, and agent transfers to receiveAll channels.
+    const onToolEvent = observabilityTargets.length
+      ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string): void => {
+          for (const ch of observabilityTargets) {
+            ch
+              .sendMessage({ conversationId: message.conversationId, text, role })
+              .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
+          }
+        }
+      : undefined;
+
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
-      const baseStream = this.stream(message.text, message.conversationId, [handler]);
+      const baseStream = this.stream(message.text, message.conversationId, [handler], onToolEvent);
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
@@ -215,7 +254,7 @@ export class GloveAgent {
 
       await sourceChannel.sendStream(message.conversationId, teedStream());
 
-      for (const ch of observers) {
+      for (const ch of mirrorTargets) {
         await ch
           .sendMessage({ conversationId: message.conversationId, text: fullText, role: "agent" })
           .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
@@ -224,7 +263,7 @@ export class GloveAgent {
       const response = await this.invoke(message.text, message.conversationId, [handler]);
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
-      for (const ch of observers) {
+      for (const ch of mirrorTargets) {
         await ch
           .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
           .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));

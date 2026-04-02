@@ -1,6 +1,7 @@
 /** Messages sent from server → browser client. */
 export type ServerMessage =
   | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" | "prompt" }
+  | { type: "tool_event"; role: "tool-call" | "tool-result" | "agent-transfer"; text: string; conversationId: string }
   | { type: "done"; conversationId: string }
   | { type: "error"; message: string; conversationId: string };
 
@@ -23,7 +24,7 @@ export interface AppInfo {
 export interface ChatEntry {
   id: string;
   conversationId: string;
-  role: "user" | "agent" | "prompt";
+  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer";
   content: string;
   isStreaming?: boolean;
 }

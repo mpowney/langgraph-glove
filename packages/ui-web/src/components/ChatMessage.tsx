@@ -184,6 +184,39 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     color: tokens.colorNeutralForeground3,
   },
+
+  // ── Tool call / result accordions ─────────────────────────────────────────
+  toolCallAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
+    backgroundColor: tokens.colorPaletteYellowBackground1,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
+  toolResultAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorPaletteGreenBorder1}`,
+    backgroundColor: tokens.colorPaletteGreenBackground1,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
+  agentTransferAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorPaletteBerryBorder1}`,
+    backgroundColor: tokens.colorPaletteBerryBackground1,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
+  toolPanel: {
+    maxHeight: "300px",
+    overflowY: "auto",
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalXXL} ${tokens.spacingHorizontalM}`,
+    fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground2,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-all",
+  },
 });
 
 interface ChatMessageProps {
@@ -227,6 +260,100 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
             </AccordionPanel>
           </AccordionItem>
         </Accordion>
+        </div>
+      </div>
+    );
+  }
+        
+
+  if (entry.role === "tool-call") {
+    let toolName = "tool";
+    let toolArgs = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as { name?: string; args?: unknown };
+      toolName = parsed.name ?? toolName;
+      toolArgs = JSON.stringify(parsed.args, null, 2);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {sessionLabel && (
+            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
+          )}
+          <Accordion className={styles.toolCallAccordion} collapsible>
+            <AccordionItem value="tool-call">
+              <AccordionHeader size="small">Tool call: {toolName}</AccordionHeader>
+              <AccordionPanel>
+                <div className={styles.toolPanel}>{toolArgs}</div>
+              </AccordionPanel>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.role === "tool-result") {
+    let toolName: string | undefined;
+    let toolContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as { name?: string; content?: string };
+      toolName = parsed.name;
+      toolContent = parsed.content ?? toolContent;
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {sessionLabel && (
+            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
+          )}
+          <Accordion className={styles.toolResultAccordion} collapsible>
+            <AccordionItem value="tool-result">
+              <AccordionHeader size="small">
+                Tool result{toolName ? `: ${toolName}` : ""}
+              </AccordionHeader>
+              <AccordionPanel>
+                <div className={styles.toolPanel}>{toolContent}</div>
+              </AccordionPanel>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.role === "agent-transfer") {
+    let targetAgent = "sub-agent";
+    let request: string | undefined;
+    try {
+      const parsed = JSON.parse(entry.content) as { agent?: string; request?: string };
+      targetAgent = parsed.agent ?? targetAgent;
+      request = parsed.request;
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {sessionLabel && (
+            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
+          )}
+          <Accordion className={styles.agentTransferAccordion} collapsible>
+            <AccordionItem value="agent-transfer">
+              <AccordionHeader size="small">
+                → Transferring to: {targetAgent}
+              </AccordionHeader>
+              {request && (
+                <AccordionPanel>
+                  <div className={styles.toolPanel}>{request}</div>
+                </AccordionPanel>
+              )}
+            </AccordionItem>
+          </Accordion>
         </div>
       </div>
     );

@@ -24,9 +24,12 @@ export interface OutgoingMessage {
    * Who produced this message.  `"user"` is used when mirroring an incoming
    * message from another channel; `"agent"` (default) is the model's reply;
    * `"prompt"` is the full prompt array sent to the model (emitted to
-   * `receiveAll` channels for observability).
+   * `receiveAll` channels for observability); `"tool-call"` is a tool
+   * invocation emitted to `receiveAll` channels; `"tool-result"` is the
+   * corresponding tool output; `"agent-transfer"` is a handoff from the
+   * orchestrator to a sub-agent.
    */
-  role?: "user" | "agent" | "prompt";
+  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer";
 }
 
 /** Callback invoked by the channel for every incoming message. */

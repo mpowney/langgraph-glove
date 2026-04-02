@@ -76,6 +76,17 @@ export function useWebSocket(conversationId: string) {
             ),
           );
         }
+      } else if (msg.type === "tool_event") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            conversationId: msg.conversationId,
+            role: msg.role,
+            content: msg.text,
+            isStreaming: false,
+          },
+        ]);
       } else if (msg.type === "error") {
         // Remove any in-progress streaming entry and add an error message
         if (streamingIdRef.current) {

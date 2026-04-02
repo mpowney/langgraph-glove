@@ -100,6 +100,19 @@ The orchestrator receives auto-generated `transfer_to_<name>` handoff tools for 
 
 All configuration lives in the `config/` directory as JSON files. Secrets are stored separately in `secrets/` and referenced via `{SECRET:name}` placeholders.
 
+### secrets/secrets.json 
+
+Defines the secrets used in other config files.  Note - all files in the secrets folder are parsed for secret key values.
+
+```json
+{
+    "ollama-host": "http://localhost:11434",
+    "anthropic-key": "sk-xxx",
+    "openai-key": "sk-xxx"
+}
+```
+
+
 ### `config/models.json` (required)
 
 Defines LLM provider profiles. Must contain a `"default"` key. Additional keys are named profiles that other agents can reference via `modelKey`.
@@ -210,6 +223,8 @@ Secret values are automatically redacted from all log output.
 ## Quick Start
 
 ```bash
+npm i -g pnpm
+
 # Install dependencies
 pnpm install
 
@@ -247,7 +262,7 @@ node packages/gateway/dist/main.js --web --web-port 3000
 To override the config or data directories:
 
 ```bash
-GLOWE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/gateway/dist/main.js --web
+GLOVE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/gateway/dist/main.js --web
 ```
 
 Environment variables for the gateway:
@@ -336,7 +351,7 @@ pnpm debug:web-only
 To override config or data paths:
 
 ```bash
-GLOWE_CONFIG_DIR=/custom/config pnpm debug:web
+GLOVE_CONFIG_DIR=/custom/config pnpm debug:web
 ```
 
 To attach VS Code, add a launch configuration in `.vscode/launch.json`:
