@@ -39,7 +39,7 @@ export async function searchLocation(location: string): Promise<BomLocation> {
 export const weatherToolMetadata: ToolMetadata = {
   name: "weather_au",
   description:
-    "Get the current weather conditions for a given location within Australia using the " +
+    "Use {name} to get the current weather conditions for a given location within Australia using the " +
     "Bureau of Meteorology (BOM) live API. Returns temperature, feels-like temperature, " +
     "humidity, wind speed/direction, and rain since 9 am.",
   parameters: {

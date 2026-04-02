@@ -1,32 +1,20 @@
 {
   "default": {
     "modelKey": "default",
-    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. Delegate weather-related questions to the appropriate regional weather agent. For web research, browsing, or form interactions, use the web tools directly or delegate to the researcher agent. For general questions, answer directly.",
+    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. To find information, web research, browsing, or form interactions, delegate to the researcher agent. Delegate weather-related questions to the weather agent. For general questions, answer directly.",
     "description": "Orchestrator that routes requests to specialised agents",
-    "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search"]
+    "tools": []
   },
   "researcher": {
     "modelKey": "local",
-    "systemPrompt": "You are a web research specialist. Use web_search to find information on any topic, then browse pages with browse_open and web_get_content to extract details. Use browse_get_fields and browse_submit_form for interactive pages. Use web_screenshot to capture visual page state. Always cite your sources with URLs. Close browser sessions when done.",
-    "description": "Web research, finding information, browsing, and form interaction",
+    "systemPrompt": "You are a web research specialist.\n {tool-descriptions}\n Always cite your sources with URLs. Close browser sessions when done.",
+    "description": "Web research, finding information, browsing, websites and form interaction",
     "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search"]
   },
-  "weather-au": {
+  "weather": {
     "modelKey": "default",
-    "systemPrompt": "You are an Australian weather specialist. Use the weather_au tools to answer questions about Australian weather. Always include units (°C) and location details.",
-    "description": "Australian weather forecasts and conditions",
-    "tools": ["weather_au", "rain_forecast_au"]
-  },
-  "weather-eu": {
-    "modelKey": "default",
-    "systemPrompt": "You are a European weather specialist. Use the weather_eu tools to answer questions about European weather. Always include units (°C) and location details.",
-    "description": "European weather forecasts and conditions",
-    "tools": ["weather_eu"]
-  },
-  "weather-us": {
-    "modelKey": "default",
-    "systemPrompt": "You are a US weather specialist. Use the weather_us tools to answer questions about US weather. Always include units (°F) and location details.",
-    "description": "United States weather forecasts and conditions",
-    "tools": ["weather_us"]
+    "systemPrompt": "You are a global weather specialist. {tool-descriptions}. Always include units and location details.",
+    "description": "Global weather forecasts and conditions",
+    "tools": ["weather_au", "weather_eu", "weather_us", "rain_forecast_au"]
   }
 }

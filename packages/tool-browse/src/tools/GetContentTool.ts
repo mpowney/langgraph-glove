@@ -4,7 +4,7 @@ import { getBrowser } from "../browser.js";
 export const getContentToolMetadata: ToolMetadata = {
   name: "web_get_content",
   description:
-    "Fetch a web page and return its text content. By default returns the text of the " +
+    "Use {name} to fetch a web page and return its text content. By default returns the text of the " +
     "entire page body. If a CSS selector is provided, returns the text of the first " +
     "matching element only.",
   parameters: {

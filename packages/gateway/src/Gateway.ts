@@ -220,7 +220,7 @@ export class Gateway extends EventEmitter {
       return buildSingleAgentGraph({
         model,
         tools: scopedTools,
-        systemPrompt: defaultEntry.systemPrompt,
+        systemPrompt: this.resolveSystemPrompt(defaultEntry.systemPrompt, scopedTools),
         checkpointer,
       });
     }
@@ -228,12 +228,13 @@ export class Gateway extends EventEmitter {
     // Multi-agent orchestrator mode
     const subAgents: SubAgentDef[] = subAgentKeys.map((key) => {
       const entry = resolveConfigEntry(agents, key);
+      const scopedTools = this.scopeTools(allTools, entry.tools);
       return {
         name: key,
         description: entry.description ?? key,
         model: models.get(entry.modelKey ?? "default"),
-        tools: this.scopeTools(allTools, entry.tools),
-        systemPrompt: entry.systemPrompt,
+        tools: scopedTools,
+        systemPrompt: this.resolveSystemPrompt(entry.systemPrompt, scopedTools),
       };
     });
 
@@ -247,12 +248,32 @@ export class Gateway extends EventEmitter {
     return buildOrchestratorGraph({
       orchestrator: {
         model: orchestratorModel,
-        systemPrompt: defaultEntry.systemPrompt,
+        systemPrompt: this.resolveSystemPrompt(defaultEntry.systemPrompt, orchestratorTools),
         tools: orchestratorTools.length > 0 ? orchestratorTools : undefined,
       },
       subAgents,
       checkpointer,
     });
+  }
+
+  /**
+   * Resolve the `{tool-descriptions}` placeholder in a system prompt.
+   *
+   * Each tool line is formatted as `"- <name>: <description>"` where any
+   * `{name}` token inside the tool's own description is first replaced with
+   * the tool's name.  If the placeholder is absent the prompt is returned
+   * unchanged.
+   */
+  private resolveSystemPrompt(
+    systemPrompt: string | undefined,
+    tools: StructuredToolInterface[],
+  ): string | undefined {
+    if (!systemPrompt?.includes("{tool-descriptions}")) return systemPrompt;
+    const lines = tools.map((t) => {
+      const desc = t.description.replaceAll("{name}", t.name);
+      return `- ${t.name}: ${desc}`;
+    });
+    return systemPrompt.replace("{tool-descriptions}", lines.join("\n"));
   }
 
   /**

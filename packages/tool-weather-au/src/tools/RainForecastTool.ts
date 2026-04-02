@@ -10,7 +10,7 @@ const BOM_API_BASE = "https://api.weather.bom.gov.au/v1";
 export const rainForecastToolMetadata: ToolMetadata = {
   name: "rain_forecast_au",
   description:
-    "Get the forecast amount of rain expected to fall in the next 24 hours for a given " +
+    "Use {name} to get the forecast amount of rain expected to fall in the next 24 hours for a given " +
     "location within Australia, using the Bureau of Meteorology (BOM) live API. " +
     "Returns the expected rainfall range (mm), maximum chance of rain, and an hour-by-hour summary.",
   parameters: {

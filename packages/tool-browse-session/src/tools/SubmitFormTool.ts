@@ -4,7 +4,7 @@ import { sessionManager } from "../SessionManager.js";
 export const submitFormToolMetadata: ToolMetadata = {
   name: "browse_submit_form",
   description:
-    "Fill in form fields and submit a form on an existing browser session by clicking " +
+    "Use {name} to fill in form fields and submit a form on an existing browser session by clicking " +
     "the submit button. This triggers any JavaScript validation or processing in the " +
     "browser. Returns the page state after submission (title, URL, and a snippet of the " +
     "page content). Use browse_get_fields first to discover field selectors.",

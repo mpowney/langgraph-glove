@@ -4,7 +4,7 @@ import { sessionManager } from "../SessionManager.js";
 export const closeToolMetadata: ToolMetadata = {
   name: "browse_close",
   description:
-    "Close an existing browser session, freeing its resources. Always close sessions " +
+    "Use {name} to close an existing browser session, freeing its resources. Always close sessions " +
     "when you are done with them.",
   parameters: {
     type: "object",

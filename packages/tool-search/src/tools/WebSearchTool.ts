@@ -3,7 +3,7 @@ import type { ToolMetadata } from "@langgraph-glove/tool-server";
 export const webSearchToolMetadata: ToolMetadata = {
   name: "web_search",
   description:
-    "Search the web using SearXNG. Returns a list of results with title, URL, and " +
+    "Use {name} to search the web using SearXNG. Returns a list of results with title, URL, and " +
     "content snippet. Supports optional category filtering and pagination.",
   parameters: {
     type: "object",

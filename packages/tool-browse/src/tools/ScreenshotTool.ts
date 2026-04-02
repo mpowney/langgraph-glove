@@ -4,7 +4,7 @@ import { getBrowser } from "../browser.js";
 export const screenshotToolMetadata: ToolMetadata = {
   name: "web_screenshot",
   description:
-    "Take a screenshot of a web page at the given URL. Returns the screenshot as a " +
+    "Use {name} to take a screenshot of a web page at the given URL. Returns the screenshot as a " +
     "base64-encoded PNG string. Useful for visually inspecting a page or capturing its " +
     "current state.",
   parameters: {

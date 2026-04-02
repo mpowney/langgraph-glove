@@ -4,7 +4,7 @@ import { sessionManager } from "../SessionManager.js";
 export const openToolMetadata: ToolMetadata = {
   name: "browse_open",
   description:
-    "Open a new browser session by navigating to the given URL. Returns a session ID " +
+    "Use {name} to open a new browser session by navigating to the given URL. Returns a session ID " +
     "that must be used with other browse_* tools. Sessions automatically expire after " +
     "5 minutes of inactivity. Close sessions when done using browse_close.",
   parameters: {

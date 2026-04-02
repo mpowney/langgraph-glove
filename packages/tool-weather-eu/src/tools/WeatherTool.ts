@@ -4,7 +4,7 @@ import type { ToolMetadata } from "@langgraph-glove/tool-server";
 export const weatherToolMetadata: ToolMetadata = {
   name: "weather_eu",
   description:
-    "Get the current weather conditions for a given location within Europe. Only locations in Europe are supported. " +
+    "Use {name} to get the current weather conditions for a given location within Europe. Only locations in Europe are supported. " +
     "Returns temperature, conditions, humidity and wind speed.",
   parameters: {
     type: "object",

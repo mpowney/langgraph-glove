@@ -4,7 +4,7 @@ import { sessionManager } from "../SessionManager.js";
 export const getFieldsToolMetadata: ToolMetadata = {
   name: "browse_get_fields",
   description:
-    "Return all form fields on the current page of an existing browser session. " +
+    "Use {name} to return all form fields on the current page of an existing browser session. " +
     "For each field, returns its CSS selector, type, name, label, current value, " +
     "and options (for select elements). Use the selectors with browse_submit_form " +
     "to fill and submit the form.",
