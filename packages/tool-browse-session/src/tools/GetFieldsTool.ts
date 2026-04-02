@@ -12,11 +12,11 @@ export const getFieldsToolMetadata: ToolMetadata = {
     type: "object",
     properties: {
       sessionId: {
-        type: "string",
-        description: "The session ID returned by browse_open.",
+        type: ["string", "null"],
+        description:
+          "Optional session ID returned by browse_open. If null or omitted, the tool reuses the latest active session or creates a new one.",
       },
     },
-    required: ["sessionId"],
   },
 };
 
@@ -31,15 +31,11 @@ interface FieldInfo {
 
 export async function handleGetFields(
   params: Record<string, unknown>,
-): Promise<FieldInfo[]> {
-  const sessionId = params["sessionId"] as string;
-  if (!sessionId || typeof sessionId !== "string") {
-    throw new Error("browse_get_fields: 'sessionId' parameter is required");
-  }
-
+): Promise<{ sessionId: string; fields: FieldInfo[] }> {
+  const sessionId = await sessionManager.resolveSessionId(params["sessionId"]);
   const page = sessionManager.getPage(sessionId);
 
-  return page.evaluate(() => {
+  const fields = await page.evaluate(() => {
     const fields: {
       selector: string;
       type: string;
@@ -121,4 +117,6 @@ export async function handleGetFields(
 
     return fields;
   });
+
+  return { sessionId, fields };
 }

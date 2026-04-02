@@ -228,9 +228,20 @@ npm i -g pnpm
 # Install dependencies
 pnpm install
 
+# First-time setup for the browser tools
+cd packages/tool-browse-session
+npx playwright install
+cd ../..
+
+cd packages/tool-browse
+npx playwright install
+cd ../..
+
 # Build all packages
 pnpm build
 ```
+
+`packages/tool-browse-session` uses Playwright and needs its browser binaries installed once on first setup before you run `tool-browse-session`.
 
 ### Running via the Gateway (recommended)
 

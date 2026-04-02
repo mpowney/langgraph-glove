@@ -16,6 +16,7 @@ interface Session {
 export class SessionManager {
   private browser: Browser | null = null;
   private readonly sessions = new Map<string, Session>();
+  private latestSessionId: string | null = null;
 
   private async ensureBrowser(): Promise<Browser> {
     if (!this.browser || !this.browser.isConnected()) {
@@ -46,6 +47,7 @@ export class SessionManager {
     }, SESSION_TIMEOUT_MS);
 
     this.sessions.set(sessionId, { context, page, timer });
+    this.latestSessionId = sessionId;
 
     return {
       sessionId,
@@ -61,7 +63,33 @@ export class SessionManager {
       throw new Error(`No session found with id "${sessionId}". It may have expired.`);
     }
     this.resetTimer(sessionId);
+    this.latestSessionId = sessionId;
     return session.page;
+  }
+
+  /**
+   * Resolve a session ID from user input.
+   * - If a valid string is provided, returns it (and validates it exists).
+   * - If omitted/null, reuses the latest active session when available.
+   * - If no sessions exist, creates a new about:blank session and returns its ID.
+   */
+  async resolveSessionId(input: unknown): Promise<string> {
+    if (typeof input === "string" && input.trim()) {
+      this.getPage(input);
+      return input;
+    }
+
+    const fallbackId =
+      this.latestSessionId && this.sessions.has(this.latestSessionId)
+        ? this.latestSessionId
+        : this.sessions.keys().next().value;
+    if (fallbackId) {
+      this.getPage(fallbackId);
+      return fallbackId;
+    }
+
+    const opened = await this.open("about:blank");
+    return opened.sessionId;
   }
 
   /** Close a specific session. */
@@ -70,6 +98,9 @@ export class SessionManager {
     if (!session) return;
     clearTimeout(session.timer);
     this.sessions.delete(sessionId);
+    if (this.latestSessionId === sessionId) {
+      this.latestSessionId = this.sessions.keys().next().value ?? null;
+    }
     await session.context.close().catch(() => {});
   }
 
@@ -82,6 +113,7 @@ export class SessionManager {
       await this.browser.close();
       this.browser = null;
     }
+    this.latestSessionId = null;
   }
 }
 

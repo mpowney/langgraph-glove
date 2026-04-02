@@ -12,8 +12,9 @@ export const submitFormToolMetadata: ToolMetadata = {
     type: "object",
     properties: {
       sessionId: {
-        type: "string",
-        description: "The session ID returned by browse_open.",
+        type: ["string", "null"],
+        description:
+          "Optional session ID returned by browse_open. If null or omitted, the tool reuses the latest active session or creates a new one.",
       },
       fields: {
         type: "array",
@@ -43,7 +44,7 @@ export const submitFormToolMetadata: ToolMetadata = {
           "or the last button in the form).",
       },
     },
-    required: ["sessionId", "fields"],
+    required: ["fields"],
   },
 };
 
@@ -54,14 +55,11 @@ interface FieldEntry {
 
 export async function handleSubmitForm(
   params: Record<string, unknown>,
-): Promise<{ success: boolean; title: string; url: string; content: string }> {
-  const sessionId = params["sessionId"] as string;
+): Promise<{ sessionId: string; success: boolean; title: string; url: string; content: string }> {
+  const sessionId = await sessionManager.resolveSessionId(params["sessionId"]);
   const fields = params["fields"] as FieldEntry[];
   const submitSelector = params["submitSelector"] as string | undefined;
 
-  if (!sessionId || typeof sessionId !== "string") {
-    throw new Error("browse_submit_form: 'sessionId' parameter is required");
-  }
   if (!Array.isArray(fields)) {
     throw new Error("browse_submit_form: 'fields' parameter must be an array");
   }
@@ -122,5 +120,5 @@ export async function handleSubmitForm(
     return body.length > 2000 ? body.slice(0, 2000) + "…" : body;
   });
 
-  return { success: true, title, url, content };
+  return { sessionId, success: true, title, url, content };
 }

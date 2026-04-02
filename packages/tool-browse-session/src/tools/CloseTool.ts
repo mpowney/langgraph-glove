@@ -10,21 +10,18 @@ export const closeToolMetadata: ToolMetadata = {
     type: "object",
     properties: {
       sessionId: {
-        type: "string",
-        description: "The session ID returned by browse_open.",
+        type: ["string", "null"],
+        description:
+          "Optional session ID returned by browse_open. If null or omitted, the tool reuses the latest active session or creates a new one.",
       },
     },
-    required: ["sessionId"],
   },
 };
 
 export async function handleClose(
   params: Record<string, unknown>,
-): Promise<{ closed: boolean }> {
-  const sessionId = params["sessionId"] as string;
-  if (!sessionId || typeof sessionId !== "string") {
-    throw new Error("browse_close: 'sessionId' parameter is required");
-  }
+): Promise<{ sessionId: string; closed: boolean }> {
+  const sessionId = await sessionManager.resolveSessionId(params["sessionId"]);
   await sessionManager.close(sessionId);
-  return { closed: true };
+  return { sessionId, closed: true };
 }
