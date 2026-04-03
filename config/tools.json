@@ -27,5 +27,11 @@
     "transport": "unix-socket",
     "url": "http://localhost:3012",
     "socketName": "search"
+  },
+  "memory": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3013",
+    "socketName": "memory",
+    "enabled": true
   }
 }

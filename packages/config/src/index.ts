@@ -7,6 +7,7 @@ export { SecretStore } from "./SecretStore.js";
 
 // Model registry
 export { ModelRegistry } from "./ModelRegistry.js";
+export { EmbeddingRegistry } from "./EmbeddingRegistry.js";
 
 // Zod schemas & types
 export {
@@ -17,6 +18,13 @@ export {
   ChannelsConfigSchema,
   AgentEntrySchema,
   AgentsConfigSchema,
+  MemoryStorageModeSchema,
+  MemoryRetentionTierSchema,
+  MemoryChunkingConfigSchema,
+  MemoryRetrievalConfigSchema,
+  MemoryTierConfigSchema,
+  MemoryEntrySchema,
+  MemoriesConfigSchema,
   ToolTransportSchema,
   ToolServerEntrySchema,
   ToolsConfigSchema,
@@ -31,6 +39,13 @@ export type {
   ChannelsConfig,
   AgentEntry,
   AgentsConfig,
+  MemoryStorageMode,
+  MemoryRetentionTier,
+  MemoryChunkingConfig,
+  MemoryRetrievalConfig,
+  MemoryTierConfig,
+  MemoryEntry,
+  MemoriesConfig,
   ToolTransport,
   ToolServerEntry,
   ToolsConfig,

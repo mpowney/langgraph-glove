@@ -1,9 +1,15 @@
 {
   "default": {
     "modelKey": "default",
-    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. To find information, web research, browsing, or form interactions, delegate to the researcher agent. Delegate weather-related questions to the weather agent. For general questions, answer directly.",
+    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. To remember information provided by the human or other agents, delegate memory storage, recall, updates, and memory search to the memory agent. To find information, web research, browsing, or form interactions, delegate to the researcher agent. Delegate weather-related questions to the weather agent. For general questions, answer directly.",
     "description": "Orchestrator that routes requests to specialised agents",
     "tools": []
+  },
+  "memory": {
+    "modelKey": "default",
+    "systemPrompt": "You are a memory specialist. {tool-descriptions}. Prefer precise tags and scopes.",
+    "description": "Long-term memory storage, recall, indexing, and memory maintenance",
+    "tools": ["memory_create", "memory_append", "memory_update", "memory_get", "memory_list", "memory_search", "memory_reindex", "memory_config"]
   },
   "researcher": {
     "modelKey": "local",

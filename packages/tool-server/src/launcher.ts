@@ -57,10 +57,6 @@ export async function launchToolServer(options: LaunchOptions): Promise<ToolServ
     );
   }
 
-  if (entry.enabled === false) {
-    throw new Error(`Tool "${options.toolKey}" is disabled in tools.json.`);
-  }
-
   let server: ToolServer;
 
   switch (entry.transport) {
@@ -86,6 +82,13 @@ export async function launchToolServer(options: LaunchOptions): Promise<ToolServ
   options.register(server);
 
   await server.start();
+
+  if (entry.enabled === false) {
+    console.warn(
+      `Tool server "${options.toolKey}" is marked disabled in tools.json; ` +
+      `the server started, but the gateway will skip discovery until enabled.`,
+    );
+  }
 
   const label = entry.transport === "http" ? entry.url! : `unix-socket (${entry.socketName ?? options.toolKey})`;
   console.log(`Tool server "${options.toolKey}" running on ${label}. Press Ctrl-C to stop.`);

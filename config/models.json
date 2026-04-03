@@ -9,6 +9,11 @@
     "model": "qwen3:14b",
     "baseUrl": "{SECRET:ollama-host}"
   },
+  "memory-embed": {
+    "provider": "ollama",
+    "model": "mxbai-embed-large:latest",
+    "baseUrl": "{SECRET:ollama-host}"
+  },
   "powerful": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-20250514",

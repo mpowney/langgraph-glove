@@ -273,7 +273,7 @@ export class Gateway extends EventEmitter {
       const desc = t.description.replaceAll("{name}", t.name);
       return `- ${t.name}: ${desc}`;
     });
-    return systemPrompt.replace("{tool-descriptions}", lines.join("\n"));
+    return systemPrompt.replace("{tool-descriptions}", `\n${lines.join("\n")}`);
   }
 
   /**
@@ -284,7 +284,8 @@ export class Gateway extends EventEmitter {
     allTools: StructuredToolInterface[],
     allowedNames?: string[],
   ): StructuredToolInterface[] {
-    if (!allowedNames?.length) return allTools;
+    if (allowedNames === undefined) return allTools;
+    if (allowedNames.length === 0) return [];
     const allowed = new Set(allowedNames);
     return allTools.filter((t) => allowed.has(t.name));
   }

@@ -353,7 +353,7 @@ The `debug:*` scripts run the gateway directly from TypeScript source using `tsx
 pnpm debug
 
 # CLI + Web UI on http://localhost:8080
-pnpm debug:web
+LOG_FILE=logs/output.log LOG_LEVEL=VERBOSE pnpm debug:web
 
 # Web UI only (no CLI) — useful for browser-only testing
 pnpm debug:web-only
