@@ -51,3 +51,5 @@ export type { RemoteToolConfig } from "./tools/RemoteTool";
 // Gateway runtime
 export { Gateway, HealthServer } from "./gateway/Gateway";
 export type { GatewayOptions, GatewayState } from "./gateway/Gateway";
+export { ModelHealthChecker } from "@langgraph-glove/config";
+export type { ModelHealthResult } from "@langgraph-glove/config";

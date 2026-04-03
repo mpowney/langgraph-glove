@@ -8,6 +8,8 @@ export { SecretStore } from "./SecretStore.js";
 // Model registry
 export { ModelRegistry } from "./ModelRegistry.js";
 export { EmbeddingRegistry } from "./EmbeddingRegistry.js";
+export { ModelHealthChecker } from "./ModelHealthChecker.js";
+export type { ModelHealthResult } from "./ModelHealthChecker.js";
 
 // Zod schemas & types
 export {

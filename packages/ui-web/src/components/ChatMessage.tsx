@@ -320,6 +320,8 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
           parsed.arguments,
           fn?.arguments,
           parsed.body,
+          parsed.call,
+          parsed.raw,
         ];
         const firstNonEmpty = candidates.find((candidate) => !isEmptyPayload(candidate));
         if (firstNonEmpty != null) {

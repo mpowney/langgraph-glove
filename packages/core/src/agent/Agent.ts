@@ -1,4 +1,5 @@
 import { HumanMessage, AIMessageChunk, ToolMessage } from "@langchain/core/messages";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Channel, IncomingMessage } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
@@ -50,6 +51,54 @@ function parseJsonMaybe(value: unknown): unknown {
   }
 }
 
+function mergeArgumentFragment(existing: string | undefined, incoming: string): string {
+  if (!existing) return incoming;
+  if (!incoming) return existing;
+  // Some providers stream cumulative argument strings; others stream deltas.
+  if (incoming.startsWith(existing)) return incoming;
+  if (existing.startsWith(incoming)) return existing;
+  return `${existing}${incoming}`;
+}
+
+function isGenericToolName(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.length === 0 || ["tool", "structuredtool", "dynamictool", "remotetool"].includes(normalized);
+}
+
+function toolNameFromToolCallId(toolCallId?: string): string | undefined {
+  if (!toolCallId) return undefined;
+  // Example: "functions.web_search:5" -> "web_search"
+  const match = toolCallId.match(/(?:^|\.)([a-zA-Z0-9_-]+)(?::\d+)?$/);
+  if (!match) return undefined;
+  const candidate = match[1];
+  return isGenericToolName(candidate) ? undefined : candidate;
+}
+
+function resolveToolName(
+  runName: string | undefined,
+  tool: unknown,
+  toolCallId: string | undefined,
+): string {
+  if (typeof runName === "string" && !isGenericToolName(runName)) {
+    return runName;
+  }
+
+  const fromCallId = toolNameFromToolCallId(toolCallId);
+  if (fromCallId) return fromCallId;
+
+  if (isObject(tool)) {
+    if (typeof tool.name === "string" && !isGenericToolName(tool.name)) {
+      return tool.name;
+    }
+    const kwargs = isObject(tool.kwargs) ? tool.kwargs : undefined;
+    if (kwargs && typeof kwargs.name === "string" && !isGenericToolName(kwargs.name)) {
+      return kwargs.name;
+    }
+  }
+
+  return "tool";
+}
+
 function extractArgsFromRawToolCall(rawCall: unknown): unknown {
   if (!isObject(rawCall)) return undefined;
   const rawFunction = isObject(rawCall.function) ? rawCall.function : undefined;
@@ -65,35 +114,49 @@ function extractArgsFromRawToolCall(rawCall: unknown): unknown {
   return undefined;
 }
 
-function recoverToolArgs(
+function findRawToolCall(
   chunk: unknown,
-  toolCall: { id?: string; name?: string; args?: unknown },
+  toolCall: { id?: string; name?: string },
   index: number,
 ): unknown {
-  if (!isEmptyToolArgs(toolCall.args)) return toolCall.args;
-  if (!isObject(chunk)) return toolCall.args;
-
+  if (!isObject(chunk)) return undefined;
   const additional = isObject(chunk.additional_kwargs) ? chunk.additional_kwargs : undefined;
   const rawToolCalls = Array.isArray(additional?.tool_calls)
     ? (additional.tool_calls as unknown[])
     : undefined;
-  if (rawToolCalls?.length) {
-    const byId = toolCall.id
-      ? rawToolCalls.find((candidate) => isObject(candidate) && candidate.id === toolCall.id)
-      : undefined;
-    const byName = toolCall.name
-      ? rawToolCalls.find((candidate) => {
-          if (!isObject(candidate)) return false;
-          const fn = isObject(candidate.function) ? candidate.function : undefined;
-          return fn?.name === toolCall.name || candidate.name === toolCall.name;
-        })
-      : undefined;
-    const byIndex = rawToolCalls[index];
+  if (!rawToolCalls?.length) return undefined;
 
-    for (const candidate of [byId, byName, byIndex]) {
-      const extracted = extractArgsFromRawToolCall(candidate);
-      if (!isEmptyToolArgs(extracted)) return extracted;
-    }
+  const byId = toolCall.id
+    ? rawToolCalls.find((candidate) => isObject(candidate) && candidate.id === toolCall.id)
+    : undefined;
+  if (byId) return byId;
+
+  const byName = toolCall.name
+    ? rawToolCalls.find((candidate) => {
+        if (!isObject(candidate)) return false;
+        const fn = isObject(candidate.function) ? candidate.function : undefined;
+        return fn?.name === toolCall.name || candidate.name === toolCall.name;
+      })
+    : undefined;
+  if (byName) return byName;
+
+  return rawToolCalls[index];
+}
+
+function recoverToolArgs(
+  chunk: unknown,
+  toolCall: { id?: string; name?: string; args?: unknown },
+  index: number,
+  bufferedArgs?: unknown,
+): unknown {
+  if (!isEmptyToolArgs(toolCall.args)) return toolCall.args;
+  if (!isEmptyToolArgs(bufferedArgs)) return bufferedArgs;
+  if (!isObject(chunk)) return toolCall.args;
+
+  const rawCall = findRawToolCall(chunk, toolCall, index);
+  const extractedFromRaw = extractArgsFromRawToolCall(rawCall);
+  if (!isEmptyToolArgs(extractedFromRaw)) {
+    return extractedFromRaw;
   }
 
   const toolCallChunks = Array.isArray(chunk.tool_call_chunks)
@@ -215,7 +278,7 @@ export class GloveAgent {
   async invoke(
     text: string,
     conversationId: string,
-    callbacks: LlmCallbackHandler[] = [new LlmCallbackHandler()],
+    callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
   ): Promise<string> {
     const result = await this.graph.invoke(
       { messages: [new HumanMessage(text)] },
@@ -243,9 +306,84 @@ export class GloveAgent {
   async *stream(
     text: string,
     conversationId: string,
-    callbacks: LlmCallbackHandler[] = [new LlmCallbackHandler()],
+    callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string) => void,
   ): AsyncGenerator<string> {
+    const streamedToolArgsByKey = new Map<string, string>();
+
+    const toolCallKey = (tool: { id?: string; name?: string }, toolIndex: number): string => {
+      if (typeof tool.id === "string" && tool.id.trim().length > 0) {
+        return `id:${tool.id}`;
+      }
+      if (typeof tool.name === "string" && tool.name.trim().length > 0) {
+        return `name:${tool.name}:${toolIndex}`;
+      }
+      return `index:${toolIndex}`;
+    };
+
+    const appendToolArgChunk = (tool: { id?: string; name?: string }, toolIndex: number, argsChunk: string): void => {
+      if (!argsChunk) return;
+      const key = toolCallKey(tool, toolIndex);
+      const current = streamedToolArgsByKey.get(key);
+      streamedToolArgsByKey.set(key, mergeArgumentFragment(current, argsChunk));
+    };
+
+    const appendToolArgsFromAdditionalKwargs = (chunk: unknown): void => {
+      if (!isObject(chunk)) return;
+      const additional = isObject(chunk.additional_kwargs) ? chunk.additional_kwargs : undefined;
+      if (!additional) return;
+
+      const singleFunctionCall = isObject(additional.function_call)
+        ? additional.function_call
+        : undefined;
+      if (singleFunctionCall && typeof singleFunctionCall.arguments === "string") {
+        appendToolArgChunk(
+          {
+            name: typeof singleFunctionCall.name === "string" ? singleFunctionCall.name : undefined,
+          },
+          0,
+          singleFunctionCall.arguments,
+        );
+      }
+
+      const toolCalls = Array.isArray(additional.tool_calls)
+        ? (additional.tool_calls as unknown[])
+        : undefined;
+      if (!toolCalls?.length) return;
+
+      for (const [candidateIndex, candidate] of toolCalls.entries()) {
+        if (!isObject(candidate)) continue;
+        const fn = isObject(candidate.function) ? candidate.function : undefined;
+        const candidateId = typeof candidate.id === "string" ? candidate.id : undefined;
+        const candidateName =
+          typeof fn?.name === "string"
+            ? fn.name
+            : (typeof candidate.name === "string" ? candidate.name : undefined);
+        const candidateArgs =
+          typeof fn?.arguments === "string"
+            ? fn.arguments
+            : (typeof candidate.arguments === "string" ? candidate.arguments : undefined);
+        const candidatePosition =
+          typeof candidate.index === "number" ? candidate.index : candidateIndex;
+
+        if (candidateArgs) {
+          appendToolArgChunk(
+            { id: candidateId, name: candidateName },
+            candidatePosition,
+            candidateArgs,
+          );
+        }
+      }
+    };
+
+    const consumeBufferedToolArgs = (tool: { id?: string; name?: string }, toolIndex: number): unknown => {
+      const key = toolCallKey(tool, toolIndex);
+      const combined = streamedToolArgsByKey.get(key);
+      if (!combined) return undefined;
+      streamedToolArgsByKey.delete(key);
+      return parseJsonMaybe(combined);
+    };
+
     const streamResult = await this.graph.stream(
       { messages: [new HumanMessage(text)] },
       {
@@ -260,14 +398,40 @@ export class GloveAgent {
       [unknown, { langgraph_node?: string }]
     >) {
       if (chunk instanceof AIMessageChunk) {
+        appendToolArgsFromAdditionalKwargs(chunk);
+
+        if (isObject(chunk) && Array.isArray(chunk.tool_call_chunks)) {
+          for (const [chunkIndex, chunkCall] of chunk.tool_call_chunks.entries()) {
+            if (!isObject(chunkCall) || typeof chunkCall.args !== "string") continue;
+            const candidateId = typeof chunkCall.id === "string" ? chunkCall.id : undefined;
+            const candidateName = typeof chunkCall.name === "string" ? chunkCall.name : undefined;
+            const candidateIndex = typeof chunkCall.index === "number" ? chunkCall.index : chunkIndex;
+            appendToolArgChunk(
+              { id: candidateId, name: candidateName },
+              candidateIndex,
+              chunkCall.args,
+            );
+          }
+        }
+
         if (chunk.tool_calls?.length) {
           // Completed tool-call decisions — fire event, don't yield text.
           if (onToolEvent) {
             for (const [toolIndex, tc] of chunk.tool_calls.entries()) {
+              const bufferedArgs = consumeBufferedToolArgs(
+                { id: tc.id, name: tc.name },
+                toolIndex,
+              );
+              const rawCall = findRawToolCall(
+                chunk,
+                { id: tc.id, name: tc.name },
+                toolIndex,
+              );
               const resolvedArgs = recoverToolArgs(
                 chunk,
                 tc as { id?: string; name?: string; args?: unknown },
                 toolIndex,
+                bufferedArgs,
               );
               if (tc.name.startsWith("transfer_to_")) {
                 // Orchestrator handoff to a sub-agent
@@ -286,8 +450,6 @@ export class GloveAgent {
                       })()
                     : "";
                 onToolEvent("agent-transfer", JSON.stringify({ agent: targetAgent, request }));
-              } else {
-                onToolEvent("tool-call", JSON.stringify({ name: tc.name, args: resolvedArgs }));
               }
             }
           }
@@ -346,9 +508,46 @@ export class GloveAgent {
         }
       : undefined;
 
+    // Emit tool-call events from actual tool execution input so the UI shows
+    // the exact arguments that were invoked, independent of provider-specific
+    // model chunk formats.
+    const toolStartCallback = onToolEvent
+      ? BaseCallbackHandler.fromMethods({
+          handleToolStart: (
+            tool,
+            input,
+            _runId,
+            _parentRunId,
+            _tags,
+            _metadata,
+            runName,
+            toolCallId,
+          ): void => {
+            const toolName = resolveToolName(
+              typeof runName === "string" ? runName : undefined,
+              tool,
+              typeof toolCallId === "string" ? toolCallId : undefined,
+            );
+            const args = parseJsonMaybe(input);
+            onToolEvent(
+              "tool-call",
+              JSON.stringify({
+                name: toolName,
+                args,
+                ...(toolCallId ? { id: toolCallId } : {}),
+                type: "tool_call",
+              }),
+            );
+          },
+        })
+      : undefined;
+    const callbacks: BaseCallbackHandler[] = toolStartCallback
+      ? [handler, toolStartCallback]
+      : [handler];
+
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
-      const baseStream = this.stream(message.text, message.conversationId, [handler], onToolEvent);
+      const baseStream = this.stream(message.text, message.conversationId, callbacks, onToolEvent);
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
@@ -367,7 +566,7 @@ export class GloveAgent {
           .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
       }
     } else {
-      const response = await this.invoke(message.text, message.conversationId, [handler]);
+      const response = await this.invoke(message.text, message.conversationId, callbacks);
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
       for (const ch of mirrorTargets) {

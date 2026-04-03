@@ -7,6 +7,7 @@ import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import {
   ConfigLoader,
   ModelRegistry,
+  ModelHealthChecker,
   resolveConfigEntry,
   type GloveConfig,
   type AgentEntry,
@@ -101,16 +102,19 @@ export class Gateway extends EventEmitter {
       // 2. Model registry
       this.models = new ModelRegistry(this.config.models);
 
-      // 3. Persistence
+      // 3. Model health checks — probe only models used by configured agents
+      await this.checkModelHealth(this.models, this.config);
+
+      // 4. Persistence
       const dbPath = this.config.gateway.dbPath ?? "data/checkpoints.sqlite";
       this.checkpointer = SqliteSaver.fromConnString(dbPath);
       logger.info(`SQLite persistence: ${dbPath}`);
 
-      // 4. Tool discovery
+      // 5. Tool discovery
       const tools = await this.discoverTools(this.config.tools);
       logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
 
-      // 5. Build agent graph (single-agent or multi-agent orchestrator)
+      // 6. Build agent graph (single-agent or multi-agent orchestrator)
       const graph = this.buildAgentGraph(tools);
 
       this.agent = new GloveAgent(graph, {
@@ -120,21 +124,21 @@ export class Gateway extends EventEmitter {
         ).recursionLimit,
       });
 
-      // 6. Channels
+      // 7. Channels
       for (const channel of this.options.channels ?? []) {
         this.agent.addChannel(channel);
       }
       await this.agent.start();
       logger.info("Agent and channels started");
 
-      // 7. Health server
+      // 8. Health server
       const healthPort = this.config.gateway.healthPort ?? 9090;
       const healthHost = this.config.gateway.healthHost ?? "0.0.0.0";
       this.healthServer = new HealthServer(this);
       await this.healthServer.listen(healthPort, healthHost);
       logger.info(`Health endpoint: http://${healthHost}:${healthPort}/health`);
 
-      // 8. Admin API
+      // 9. Admin API
       const apiPort = this.config.gateway.apiPort ?? 8081;
       const apiHost = this.config.gateway.apiHost ?? "0.0.0.0";
       this.adminApi = new AdminApi({
@@ -145,7 +149,7 @@ export class Gateway extends EventEmitter {
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
 
-      // 9. Signal handlers
+      // 10. Signal handlers
       this.installSignalHandlers();
 
       this.setState("running");
@@ -194,6 +198,36 @@ export class Gateway extends EventEmitter {
 
     this.setState("stopped");
     logger.info("Gateway stopped");
+  }
+
+  /**
+   * Probe the subset of models referenced by agents.json.
+   *
+   * Unknown / unused model keys are silently skipped.  A failed probe logs a
+   * warning but does NOT abort startup — the intent is to surface problems
+   * early, not to gate the whole system on a transient provider outage.
+   */
+  private async checkModelHealth(models: ModelRegistry, config: GloveConfig): Promise<void> {
+    const agents = config.agents as Record<string, AgentEntry>;
+    const usedKeys = new Set(
+      Object.values(agents)
+        .map((a) => a.modelKey ?? "default")
+        .filter((k) => models.keys().includes(k)),
+    );
+
+    if (usedKeys.size === 0) return;
+
+    logger.info(`Model health checks: probing [${[...usedKeys].join(", ")}]…`);
+    const checker = new ModelHealthChecker(models);
+    const results = await checker.checkKeys([...usedKeys]);
+
+    for (const result of results) {
+      if (result.ok) {
+        logger.info(`  ✓ ${result.key} (${result.latencyMs}ms)`);
+      } else {
+        logger.warn(`  ✗ ${result.key} — ${result.error ?? "unknown error"} (${result.latencyMs}ms)`);
+      }
+    }
   }
 
   /**
