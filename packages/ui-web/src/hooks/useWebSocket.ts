@@ -66,6 +66,17 @@ export function useWebSocket(conversationId: string) {
           // Start a new streaming entry
           return [...prev, { id: streamId, conversationId: msg.conversationId, role, content: msg.text, isStreaming: true }];
         });
+      } else if (msg.type === "prompt") {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            conversationId: msg.conversationId,
+            role: "prompt",
+            content: msg.text,
+            isStreaming: false,
+          },
+        ]);
       } else if (msg.type === "done") {
         if (streamingIdRef.current) {
           const finishedId = streamingIdRef.current;

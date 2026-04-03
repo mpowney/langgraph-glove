@@ -1,6 +1,7 @@
 /** Messages sent from server → browser client. */
 export type ServerMessage =
-  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" | "prompt" }
+  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" }
+  | { type: "prompt"; text: string; conversationId: string }
   | { type: "tool_event"; role: "tool-call" | "tool-result" | "agent-transfer"; text: string; conversationId: string }
   | { type: "done"; conversationId: string }
   | { type: "error"; message: string; conversationId: string };

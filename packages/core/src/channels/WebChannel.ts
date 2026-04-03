@@ -16,7 +16,8 @@ interface ClientMessage {
 
 /** Messages sent from server → browser client. */
 type ServerMessage =
-  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" | "prompt" }
+  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" }
+  | { type: "prompt"; text: string; conversationId: string }
   | { type: "tool_event"; role: "tool-call" | "tool-result" | "agent-transfer"; text: string; conversationId: string }
   | { type: "done"; conversationId: string }
   | { type: "error"; message: string; conversationId: string };
@@ -126,6 +127,16 @@ export class WebChannel extends Channel {
 
   /** Sends a complete message to all WebSocket clients that share the conversationId. */
   async sendMessage(message: OutgoingMessage): Promise<void> {
+    if (message.role === "prompt") {
+      const payload: ServerMessage = {
+        type: "prompt",
+        text: message.text,
+        conversationId: message.conversationId,
+      };
+      this.broadcast(message.conversationId, payload);
+      return;
+    }
+
     if (message.role === "tool-call" || message.role === "tool-result" || message.role === "agent-transfer") {
       const payload: ServerMessage = {
         type: "tool_event",
