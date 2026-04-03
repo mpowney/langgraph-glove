@@ -15,7 +15,6 @@ COPY packages/tool-search/package.json packages/tool-search/
 
 # Stub out other workspace packages so pnpm lockfile resolves
 COPY packages/core/package.json packages/core/
-COPY packages/gateway/package.json packages/gateway/
 COPY packages/channel-telegram/package.json packages/channel-telegram/
 COPY packages/tool-weather-au/package.json packages/tool-weather-au/
 COPY packages/tool-weather-eu/package.json packages/tool-weather-eu/

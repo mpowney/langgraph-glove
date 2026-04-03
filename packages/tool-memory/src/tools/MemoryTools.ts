@@ -1,5 +1,5 @@
 import type { ToolHandler, ToolMetadata } from "@langgraph-glove/tool-server";
-import { MemoryService } from "../MemoryService.js";
+import { MemoryService } from "../MemoryService";
 
 export interface MemoryToolDefinition {
   metadata: ToolMetadata;

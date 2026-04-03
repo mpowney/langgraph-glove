@@ -26,14 +26,14 @@
 
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { GloveAgent } from "../agent/Agent.js";
-import { buildSingleAgentGraph } from "../agent/graphs.js";
-import { CliChannel } from "../channels/CliChannel.js";
-import { WebChannel } from "../channels/WebChannel.js";
-import { HttpRpcClient } from "../rpc/HttpRpcClient.js";
-import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient.js";
-import { RemoteTool } from "../tools/RemoteTool.js";
-import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel } from "../logging/index.js";
+import { GloveAgent } from "../agent/Agent";
+import { buildSingleAgentGraph } from "../agent/graphs";
+import { CliChannel } from "../channels/CliChannel";
+import { WebChannel } from "../channels/WebChannel";
+import { HttpRpcClient } from "../rpc/HttpRpcClient";
+import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
+import { RemoteTool } from "../tools/RemoteTool";
+import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel } from "../logging/index";
 import { ConfigLoader, ModelRegistry, resolveConfigEntry } from "@langgraph-glove/config";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import type { AgentEntry } from "@langgraph-glove/config";

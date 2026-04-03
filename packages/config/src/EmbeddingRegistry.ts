@@ -1,8 +1,8 @@
 import type { Embeddings } from "@langchain/core/embeddings";
 import { OpenAIEmbeddings } from "@langchain/openai";
 import { OllamaEmbeddings } from "@langchain/ollama";
-import { resolveConfigEntry } from "./ConfigLoader.js";
-import type { ModelEntry, ModelProvider, ModelsConfig } from "./schemas.js";
+import { resolveConfigEntry } from "./ConfigLoader";
+import type { ModelEntry, ModelProvider, ModelsConfig } from "./schemas";
 
 /**
  * Creates LangChain embedding models from the centralised `models.json` config.

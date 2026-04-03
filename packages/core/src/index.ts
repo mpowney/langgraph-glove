@@ -47,3 +47,7 @@ export type { RpcRequest, RpcResponse, ToolMetadata } from "./rpc/RpcProtocol";
 // Tools
 export { RemoteTool } from "./tools/RemoteTool";
 export type { RemoteToolConfig } from "./tools/RemoteTool";
+
+// Gateway runtime
+export { Gateway, HealthServer } from "./gateway/Gateway";
+export type { GatewayOptions, GatewayState } from "./gateway/Gateway";

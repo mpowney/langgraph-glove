@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { webSearchToolMetadata, createWebSearchHandler } from "./tools/WebSearchTool.js";
+import { webSearchToolMetadata, createWebSearchHandler } from "./tools/WebSearchTool";
 
 // Resolve SearXNG URL from secrets/urls.json
 const secretsDir = path.resolve(process.env["GLOVE_SECRETS_DIR"] ?? "secrets");

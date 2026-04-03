@@ -1,7 +1,7 @@
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Serialized } from "@langchain/core/load/serializable";
 import { AIMessage, type BaseMessage } from "@langchain/core/messages";
-import { Logger } from "./Logger.js";
+import { Logger } from "./Logger";
 
 const logger = new Logger("LlmCallbackHandler.ts");
 

@@ -134,7 +134,7 @@ const useStyles = makeStyles({
     lineHeight: "1.5",
   },
   agentBubble: {
-    maxWidth: "80%",
+    width: "80vw",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusXLarge,
     borderBottomLeftRadius: tokens.borderRadiusSmall,

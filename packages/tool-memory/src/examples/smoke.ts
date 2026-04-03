@@ -1,5 +1,5 @@
 import path from "node:path";
-import { MemoryService } from "../MemoryService.js";
+import { MemoryService } from "../MemoryService";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);

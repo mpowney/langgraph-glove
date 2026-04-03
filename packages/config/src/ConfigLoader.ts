@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { ZodType } from "zod";
-import { SecretStore } from "./SecretStore.js";
+import { SecretStore } from "./SecretStore";
 import {
   ModelsConfigSchema,
   ChannelsConfigSchema,

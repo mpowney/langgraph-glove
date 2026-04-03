@@ -1,5 +1,5 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { getBrowser } from "../browser.js";
+import { getBrowser } from "../browser";
 
 export const screenshotToolMetadata: ToolMetadata = {
   name: "web_screenshot",

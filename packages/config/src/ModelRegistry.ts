@@ -3,8 +3,8 @@ import { ChatOpenAI } from "@langchain/openai";
 import { ChatAnthropic } from "@langchain/anthropic";
 import { ChatGoogleGenerativeAI } from "@langchain/google-genai";
 import { ChatOllama } from "@langchain/ollama";
-import { resolveConfigEntry } from "./ConfigLoader.js";
-import type { ModelsConfig, ModelEntry, ModelProvider } from "./schemas.js";
+import { resolveConfigEntry } from "./ConfigLoader";
+import type { ModelsConfig, ModelEntry, ModelProvider } from "./schemas";
 
 /**
  * Creates LangChain chat models from the centralised `models.json` config.

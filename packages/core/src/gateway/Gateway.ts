@@ -1,4 +1,6 @@
 import { EventEmitter } from "node:events";
+import express from "express";
+import type { Server } from "node:http";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
@@ -10,20 +12,16 @@ import {
   type AgentEntry,
   type ToolServerEntry,
 } from "@langgraph-glove/config";
-import {
-  GloveAgent,
-  Logger,
-  LogService,
-  HttpRpcClient,
-  UnixSocketRpcClient,
-  RemoteTool,
-  AdminApi,
-  buildSingleAgentGraph,
-  buildOrchestratorGraph,
-  type RpcClient,
-  type Channel,
-  type SubAgentDef,
-} from "@langgraph-glove/core";
+import { GloveAgent } from "../agent/Agent";
+import { buildSingleAgentGraph, buildOrchestratorGraph, type SubAgentDef } from "../agent/graphs";
+import { Logger } from "../logging/Logger";
+import { LogService } from "../logging/LogService";
+import { HttpRpcClient } from "../rpc/HttpRpcClient";
+import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
+import type { RpcClient } from "../rpc/RpcClient";
+import { RemoteTool } from "../tools/RemoteTool";
+import { AdminApi } from "../api/AdminApi";
+import type { Channel } from "../channels/Channel";
 
 const logger = new Logger("Gateway");
 
@@ -91,7 +89,7 @@ export class Gateway extends EventEmitter {
 
     try {
       // 1. Config + secrets
-      logger.info("Loading configuration…");
+      logger.info("Loading configuration...");
       this.configLoader = new ConfigLoader(
         this.options.configDir,
         this.options.secretsDir,
@@ -147,7 +145,7 @@ export class Gateway extends EventEmitter {
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
 
-      // 8. Signal handlers
+      // 9. Signal handlers
       this.installSignalHandlers();
 
       this.setState("running");
@@ -162,7 +160,7 @@ export class Gateway extends EventEmitter {
   async stop(): Promise<void> {
     if (this._state !== "running") return;
     this.setState("stopping");
-    logger.info("Gateway shutting down…");
+    logger.info("Gateway shutting down...");
 
     // Remove signal handlers
     for (const cleanup of this.shutdownHandlers) cleanup();
@@ -261,7 +259,7 @@ export class Gateway extends EventEmitter {
    *
    * Each tool line is formatted as `"- <name>: <description>"` where any
    * `{name}` token inside the tool's own description is first replaced with
-   * the tool's name.  If the placeholder is absent the prompt is returned
+   * the tool's name. If the placeholder is absent the prompt is returned
    * unchanged.
    */
   private resolveSystemPrompt(
@@ -303,12 +301,12 @@ export class Gateway extends EventEmitter {
     await Promise.all(
       entries.map(async ([name, entry]): Promise<void> => {
         try {
-          logger.debug(`Tool server "${name}": creating client…`);
+          logger.debug(`Tool server "${name}": creating client...`);
           const client = this.createRpcClient(name, entry);
           this.rpcClients.push(client);
-          logger.debug(`Tool server "${name}": connecting…`);
+          logger.debug(`Tool server "${name}": connecting...`);
           await client.connect();
-          logger.debug(`Tool server "${name}": connected, discovering tools…`);
+          logger.debug(`Tool server "${name}": connected, discovering tools...`);
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
@@ -361,9 +359,6 @@ export class Gateway extends EventEmitter {
 // ---------------------------------------------------------------------------
 // Health HTTP server
 // ---------------------------------------------------------------------------
-
-import express from "express";
-import type { Server } from "node:http";
 
 export class HealthServer {
   private server: Server | null = null;
