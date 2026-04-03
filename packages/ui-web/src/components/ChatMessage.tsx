@@ -225,6 +225,42 @@ interface ChatMessageProps {
   sessionLabel?: string;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function toDisplayJson(value: unknown, fallback: string): string {
+  if (typeof value === "string") return value;
+  try {
+    return JSON.stringify(value, null, 2) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function isEmptyPayload(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  if (isObject(value)) return Object.keys(value).length === 0;
+  return false;
+}
+
+function tryFormatJsonString(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  const startsLikeJson =
+    trimmed.startsWith("{") ||
+    trimmed.startsWith("[") ||
+    trimmed.startsWith('"');
+  if (!startsLikeJson) return value;
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch {
+    return value;
+  }
+}
+
 export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
   const styles = useStyles();
 
@@ -270,9 +306,32 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
     let toolName = "tool";
     let toolArgs = entry.content;
     try {
-      const parsed = JSON.parse(entry.content) as { name?: string; args?: unknown };
-      toolName = parsed.name ?? toolName;
-      toolArgs = JSON.stringify(parsed.args, null, 2);
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed)) {
+        const fn = isObject(parsed.function) ? parsed.function : undefined;
+        if (typeof parsed.name === "string") {
+          toolName = parsed.name;
+        } else if (fn && typeof fn.name === "string") {
+          toolName = fn.name;
+        }
+
+        const candidates: unknown[] = [
+          parsed.args,
+          parsed.arguments,
+          fn?.arguments,
+          parsed.body,
+        ];
+        const firstNonEmpty = candidates.find((candidate) => !isEmptyPayload(candidate));
+        if (firstNonEmpty != null) {
+          toolArgs = typeof firstNonEmpty === "string"
+            ? tryFormatJsonString(firstNonEmpty)
+            : toDisplayJson(firstNonEmpty, entry.content);
+        } else {
+          toolArgs = toDisplayJson(parsed, entry.content);
+        }
+      } else {
+        toolArgs = toDisplayJson(parsed, entry.content);
+      }
     } catch {
       // leave raw content as-is
     }

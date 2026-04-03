@@ -36,6 +36,8 @@ export const ModelEntrySchema = z.object({
   baseUrl: z.string().url().optional(),
   /** Sampling temperature (0–2). */
   temperature: z.number().min(0).max(2).optional(),
+  /** API version passed as ?api-version=<value> (required for Azure Foundry endpoints). */
+  apiVersion: z.string().optional(),
 });
 export type ModelEntry = z.infer<typeof ModelEntrySchema>;
 

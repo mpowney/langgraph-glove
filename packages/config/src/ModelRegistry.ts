@@ -51,7 +51,7 @@ export class ModelRegistry {
   }
 
   private createModel(entry: ModelEntry): BaseChatModel {
-    const { provider, model, apiKey, baseUrl, temperature } = entry;
+    const { provider, model, apiKey, baseUrl, temperature, apiVersion } = entry;
     const temp = temperature ?? 0;
 
     const factory = MODEL_FACTORIES[provider];
@@ -61,7 +61,7 @@ export class ModelRegistry {
           `Supported: ${Object.keys(MODEL_FACTORIES).join(", ")}`,
       );
     }
-    return factory(model, temp, apiKey, baseUrl);
+    return factory(model, temp, apiKey, baseUrl, apiVersion);
   }
 }
 
@@ -74,6 +74,7 @@ type ModelFactory = (
   temperature: number,
   apiKey?: string,
   baseUrl?: string,
+  apiVersion?: string,
 ) => BaseChatModel;
 
 const MODEL_FACTORIES: Record<ModelProvider, ModelFactory> = {
@@ -106,15 +107,13 @@ const MODEL_FACTORIES: Record<ModelProvider, ModelFactory> = {
     });
   },
 
-  "openai-compatible": (model, temperature, apiKey, baseUrl) => {
+  "openai-compatible": (model, temperature, apiKey, baseUrl, apiVersion) => {
     if (!baseUrl) {
       throw new Error('Provider "openai-compatible" requires a baseUrl');
     }
-    const opts: Record<string, unknown> = {
-      model,
-      temperature,
-      configuration: { baseURL: baseUrl },
-    };
+    const configuration: Record<string, unknown> = { baseURL: baseUrl };
+    if (apiVersion) configuration.defaultQuery = { "api-version": apiVersion };
+    const opts: Record<string, unknown> = { model, temperature, configuration };
     if (apiKey) opts.apiKey = apiKey;
     return new ChatOpenAI(opts);
   },

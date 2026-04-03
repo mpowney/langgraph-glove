@@ -1,6 +1,24 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatEntry, ClientMessage, ConnectionStatus, ServerMessage } from "../types";
 
+function updateMessageToEnd(
+  messages: ChatEntry[],
+  messageId: string,
+  update: (message: ChatEntry) => ChatEntry,
+): ChatEntry[] {
+  const messageIndex = messages.findIndex((message) => message.id === messageId);
+  if (messageIndex === -1) {
+    return messages;
+  }
+
+  const updatedMessage = update(messages[messageIndex]);
+  return [
+    ...messages.slice(0, messageIndex),
+    ...messages.slice(messageIndex + 1),
+    updatedMessage,
+  ];
+}
+
 function buildWsUrl(): string {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
   if (envUrl) return envUrl;
@@ -57,10 +75,10 @@ export function useWebSocket(conversationId: string) {
         setMessages((prev) => {
           if (prev.some((e) => e.id === streamId)) {
             // Append to the existing streaming entry
-            return prev.map((e) =>
-              e.id === streamId
-                ? { ...e, content: e.content + msg.text }
-                : e,
+            return updateMessageToEnd(
+              prev,
+              streamId,
+              (message) => ({ ...message, content: message.content + msg.text }),
             );
           }
           // Start a new streaming entry
@@ -82,8 +100,10 @@ export function useWebSocket(conversationId: string) {
           const finishedId = streamingIdRef.current;
           streamingIdRef.current = null;
           setMessages((prev) =>
-            prev.map((e) =>
-              e.id === finishedId ? { ...e, isStreaming: false } : e,
+            updateMessageToEnd(
+              prev,
+              finishedId,
+              (message) => ({ ...message, isStreaming: false }),
             ),
           );
         }
@@ -130,7 +150,11 @@ export function useWebSocket(conversationId: string) {
         const id = streamingIdRef.current;
         streamingIdRef.current = null;
         setMessages((prev) =>
-          prev.map((e) => (e.id === id ? { ...e, isStreaming: false } : e)),
+          updateMessageToEnd(
+            prev,
+            id,
+            (message) => ({ ...message, isStreaming: false }),
+          ),
         );
       }
       setMessages((prev) => [

@@ -26,6 +26,99 @@ function formatError(err: unknown): string {
   return parts.join(" → ");
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isEmptyToolArgs(value: unknown): boolean {
+  if (value == null) return true;
+  if (typeof value === "string") return value.trim().length === 0;
+  if (Array.isArray(value)) return value.length === 0;
+  if (isObject(value)) return Object.keys(value).length === 0;
+  return false;
+}
+
+function parseJsonMaybe(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return value;
+  if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return value;
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function extractArgsFromRawToolCall(rawCall: unknown): unknown {
+  if (!isObject(rawCall)) return undefined;
+  const rawFunction = isObject(rawCall.function) ? rawCall.function : undefined;
+  if (rawFunction && Object.prototype.hasOwnProperty.call(rawFunction, "arguments")) {
+    return parseJsonMaybe(rawFunction.arguments);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawCall, "arguments")) {
+    return parseJsonMaybe(rawCall.arguments);
+  }
+  if (Object.prototype.hasOwnProperty.call(rawCall, "args")) {
+    return parseJsonMaybe(rawCall.args);
+  }
+  return undefined;
+}
+
+function recoverToolArgs(
+  chunk: unknown,
+  toolCall: { id?: string; name?: string; args?: unknown },
+  index: number,
+): unknown {
+  if (!isEmptyToolArgs(toolCall.args)) return toolCall.args;
+  if (!isObject(chunk)) return toolCall.args;
+
+  const additional = isObject(chunk.additional_kwargs) ? chunk.additional_kwargs : undefined;
+  const rawToolCalls = Array.isArray(additional?.tool_calls)
+    ? (additional.tool_calls as unknown[])
+    : undefined;
+  if (rawToolCalls?.length) {
+    const byId = toolCall.id
+      ? rawToolCalls.find((candidate) => isObject(candidate) && candidate.id === toolCall.id)
+      : undefined;
+    const byName = toolCall.name
+      ? rawToolCalls.find((candidate) => {
+          if (!isObject(candidate)) return false;
+          const fn = isObject(candidate.function) ? candidate.function : undefined;
+          return fn?.name === toolCall.name || candidate.name === toolCall.name;
+        })
+      : undefined;
+    const byIndex = rawToolCalls[index];
+
+    for (const candidate of [byId, byName, byIndex]) {
+      const extracted = extractArgsFromRawToolCall(candidate);
+      if (!isEmptyToolArgs(extracted)) return extracted;
+    }
+  }
+
+  const toolCallChunks = Array.isArray(chunk.tool_call_chunks)
+    ? (chunk.tool_call_chunks as unknown[])
+    : undefined;
+  if (toolCallChunks?.length) {
+    const mergedArgs = toolCallChunks
+      .filter((candidate, candidateIndex) => {
+        if (!isObject(candidate)) return false;
+        if (toolCall.id && typeof candidate.id === "string") return candidate.id === toolCall.id;
+        if (toolCall.name && typeof candidate.name === "string") return candidate.name === toolCall.name;
+        return candidateIndex === index;
+      })
+      .map((candidate) => (isObject(candidate) && typeof candidate.args === "string" ? candidate.args : ""))
+      .join("");
+
+    if (mergedArgs.trim().length > 0) {
+      const parsed = parseJsonMaybe(mergedArgs);
+      if (!isEmptyToolArgs(parsed)) return parsed;
+    }
+  }
+
+  return toolCall.args;
+}
+
 export interface AgentConfig {
   /**
    * Maximum number of steps (agent + tool calls) before LangGraph throws.
@@ -170,14 +263,19 @@ export class GloveAgent {
         if (chunk.tool_calls?.length) {
           // Completed tool-call decisions — fire event, don't yield text.
           if (onToolEvent) {
-            for (const tc of chunk.tool_calls) {
+            for (const [toolIndex, tc] of chunk.tool_calls.entries()) {
+              const resolvedArgs = recoverToolArgs(
+                chunk,
+                tc as { id?: string; name?: string; args?: unknown },
+                toolIndex,
+              );
               if (tc.name.startsWith("transfer_to_")) {
                 // Orchestrator handoff to a sub-agent
                 const targetAgent = tc.name.replace(/^transfer_to_/, "");
                 const request =
-                  typeof tc.args === "object" && tc.args !== null && "request" in tc.args
+                  typeof resolvedArgs === "object" && resolvedArgs !== null && "request" in resolvedArgs
                     ? (() => {
-                        const value = (tc.args as { request?: unknown }).request;
+                        const value = (resolvedArgs as { request?: unknown }).request;
                         if (typeof value === "string") return value;
                         if (value == null) return "";
                         try {
@@ -189,7 +287,7 @@ export class GloveAgent {
                     : "";
                 onToolEvent("agent-transfer", JSON.stringify({ agent: targetAgent, request }));
               } else {
-                onToolEvent("tool-call", JSON.stringify({ name: tc.name, args: tc.args }));
+                onToolEvent("tool-call", JSON.stringify({ name: tc.name, args: resolvedArgs }));
               }
             }
           }

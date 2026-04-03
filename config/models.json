@@ -24,5 +24,12 @@
     "model": "gpt-4o-mini",
     "apiKey": "{SECRET:openai-key}",
     "temperature": 0
+  },
+  "azure-kimi": {
+    "provider": "openai-compatible",
+    "model": "Kimi-K2.5",
+    "apiKey": "{SECRET:azure-key}",
+    "baseUrl": "{SECRET:azure-endpoint}",
+    "apiVersion": "2024-05-01-preview"
   }
 }
