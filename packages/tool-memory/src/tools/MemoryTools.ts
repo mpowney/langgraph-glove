@@ -187,6 +187,26 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
     },
     {
       metadata: {
+        name: "memory_delete",
+        description:
+          "Use {name} to permanently delete a memory markdown file and all indexed rows by id, slug, or storage path.",
+        parameters: {
+          type: "object",
+          properties: {
+            memoryId: { type: "string", description: "Stable memory id." },
+            slug: { type: "string", description: "Slug derived from the title." },
+            storagePath: { type: "string", description: "Absolute path to the markdown file." },
+          },
+        },
+      },
+      handler: async (params: Record<string, unknown>) => memoryService.deleteMemory({
+        memoryId: params["memoryId"] as string | undefined,
+        slug: params["slug"] as string | undefined,
+        storagePath: params["storagePath"] as string | undefined,
+      }),
+    },
+    {
+      metadata: {
         name: "memory_config",
         description:
           "Use {name} to inspect the active memory configuration, including chunking, retrieval, and embedding model settings.",

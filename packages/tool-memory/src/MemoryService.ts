@@ -81,6 +81,14 @@ export interface SearchMemoriesInput {
 
 export interface ReindexMemoryInput extends MemoryReference {}
 
+export interface DeleteMemoryInput extends MemoryReference {}
+
+export interface DeleteMemoryResult {
+  deleted: boolean;
+  memoryId: string;
+  storagePath: string;
+}
+
 export interface ReindexResult {
   reindexed: number;
   chunkCount: number;
@@ -435,6 +443,24 @@ export class MemoryService {
       chunkCount,
       embeddingStatus,
       embeddingModelKey: this.settings.embeddingModelKey,
+    };
+  }
+
+  deleteMemory(input: DeleteMemoryInput): DeleteMemoryResult {
+    const row = this.resolveMemoryRow(input);
+
+    this.db.prepare("DELETE FROM memories WHERE id = ?").run(row.id);
+
+    try {
+      fs.rmSync(row.storage_path, { force: true });
+    } catch {
+      // Ignore filesystem cleanup errors — DB deletion is authoritative.
+    }
+
+    return {
+      deleted: true,
+      memoryId: row.id,
+      storagePath: row.storage_path,
     };
   }
 

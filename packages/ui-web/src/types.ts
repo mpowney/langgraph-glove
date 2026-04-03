@@ -49,3 +49,48 @@ export interface BrowserMessage {
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Memory admin API types
+// ---------------------------------------------------------------------------
+
+export interface MemoryToolHealth {
+  available: boolean;
+  reason?: string;
+  tools?: string[];
+}
+
+export type MemoryRetentionTier = "hot" | "warm" | "cold";
+
+export interface MemorySummary {
+  id: string;
+  slug: string;
+  title: string;
+  scope: string;
+  tags: string[];
+  status: string;
+  retentionTier: MemoryRetentionTier;
+  storagePath: string;
+  createdAt: string;
+  updatedAt: string;
+  revision: number;
+  lastIndexedAt?: string;
+}
+
+export interface MemoryDocument extends MemorySummary {
+  content: string;
+}
+
+export interface MemorySearchResultItem {
+  memory: MemorySummary;
+  score: number;
+  excerpts: string[];
+}
+
+export interface MemorySearchResult {
+  query: string;
+  retrievalMode: "vector-hybrid" | "lexical-fallback";
+  embeddingModelKey: string;
+  indexingStrategy: "immediate" | "deferred";
+  results: MemorySearchResultItem[];
+}
