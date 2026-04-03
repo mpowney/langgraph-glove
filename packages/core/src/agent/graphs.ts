@@ -8,6 +8,7 @@ import {
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { tool } from "@langchain/core/tools";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { randomUUID } from "node:crypto";
 import {
   StateGraph,
   MessagesAnnotation,
@@ -32,6 +33,63 @@ export interface SingleAgentGraphConfig {
   checkpointer?: BaseCheckpointSaver;
 }
 
+interface ParsedTextToolCall {
+  name: string;
+  args: Record<string, unknown>;
+}
+
+function stripCodeFence(text: string): string {
+  const trimmed = text.trim();
+  const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  return fenced ? fenced[1].trim() : trimmed;
+}
+
+function normalizeToolArgs(args: unknown): Record<string, unknown> {
+  if (!args) return {};
+  if (typeof args === "object" && !Array.isArray(args)) {
+    return args as Record<string, unknown>;
+  }
+  if (typeof args === "string") {
+    const text = stripCodeFence(args);
+    try {
+      const parsed = JSON.parse(text) as unknown;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // Not JSON; keep raw string under a conventional key.
+    }
+    return { input: args };
+  }
+  return { input: args };
+}
+
+function extractTextToolCall(
+  content: unknown,
+  allowedToolNames: Set<string>,
+): ParsedTextToolCall | null {
+  if (typeof content !== "string") return null;
+  const text = stripCodeFence(content);
+
+  try {
+    const parsed = JSON.parse(text) as {
+      name?: unknown;
+      args?: unknown;
+      arguments?: unknown;
+      parameters?: unknown;
+    };
+    const name = typeof parsed.name === "string" ? parsed.name.trim() : "";
+    if (!name || !allowedToolNames.has(name)) return null;
+
+    return {
+      name,
+      args: normalizeToolArgs(parsed.args ?? parsed.arguments ?? parsed.parameters),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Build a standard ReAct agent graph: agent → tools → agent → … → END.
  *
@@ -50,12 +108,32 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
 
   const toolNode = new ToolNode(tools);
   const modelWithTools = model.bindTools(tools);
+  const toolNames = new Set(tools.map((t) => t.name));
 
   const callAgent = async (state: typeof MessagesAnnotation.State) => {
     const messages: BaseMessage[] = systemPrompt
       ? [new SystemMessage(systemPrompt), ...state.messages]
       : [...state.messages];
     const response = await modelWithTools.invoke(messages);
+
+    // Some local models emit JSON tool intents as plain text instead of native
+    // tool_call metadata (e.g. {"name":"memory_create","arguments":{...}}).
+    // Recover those intents so the ReAct loop can execute the tool.
+    if (!response.tool_calls?.length) {
+      const textToolCall = extractTextToolCall(response.content, toolNames);
+      if (textToolCall) {
+        (response as AIMessage & {
+          tool_calls?: Array<{ id: string; name: string; args: Record<string, unknown> }>;
+        }).tool_calls = [
+          {
+            id: `text_tool_${randomUUID()}`,
+            name: textToolCall.name,
+            args: textToolCall.args,
+          },
+        ];
+      }
+    }
+
     return { messages: [response] };
   };
 

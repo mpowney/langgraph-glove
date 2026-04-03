@@ -19,6 +19,20 @@ function resolveApiTarget(): string {
   }
 }
 
+function resolveMemoryToolTarget(): string | null {
+  const memoryToolUrl = process.env["VITE_MEMORY_TOOL_URL"];
+  if (!memoryToolUrl) return null;
+
+  try {
+    const url = new URL(memoryToolUrl);
+    return url.toString();
+  } catch {
+    return memoryToolUrl.replace("localhost", "127.0.0.1");
+  }
+}
+
+const memoryToolTarget = resolveMemoryToolTarget();
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -35,6 +49,15 @@ export default defineConfig({
         target: resolveApiTarget(),
         changeOrigin: true,
       },
+      ...(memoryToolTarget
+        ? {
+            "/_memory_tool": {
+              target: memoryToolTarget,
+              changeOrigin: true,
+              rewrite: (path: string) => path.replace(/^\/_memory_tool/, ""),
+            },
+          }
+        : {}),
     },
   },
 });

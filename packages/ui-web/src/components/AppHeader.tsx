@@ -7,7 +7,7 @@ import {
   Button,
   Tooltip,
 } from "@fluentui/react-components";
-import { DatabaseSearch24Regular } from "@fluentui/react-icons";
+import { Brain24Regular, Chat24Regular } from "@fluentui/react-icons";
 import type { AppInfo, ConnectionStatus } from "../types";
 
 const useStyles = makeStyles({
@@ -79,10 +79,20 @@ interface AppHeaderProps {
   status: ConnectionStatus;
   showAll: boolean;
   onToggleShowAll: (value: boolean) => void;
+  memoryAdminEnabled: boolean;
+  onOpenMemoryAdmin: () => void;
   onOpenBrowser: () => void;
 }
 
-export function AppHeader({ appInfo, status, showAll, onToggleShowAll, onOpenBrowser }: AppHeaderProps) {
+export function AppHeader({
+  appInfo,
+  status,
+  showAll,
+  onToggleShowAll,
+  memoryAdminEnabled,
+  onOpenMemoryAdmin,
+  onOpenBrowser,
+}: AppHeaderProps) {
   const styles = useStyles();
 
   const dotClass =
@@ -113,10 +123,25 @@ export function AppHeader({ appInfo, status, showAll, onToggleShowAll, onOpenBro
         <Tooltip content="Browse conversation history" relationship="label">
           <Button
             appearance="subtle"
-            icon={<DatabaseSearch24Regular />}
+            icon={<Chat24Regular />}
             onClick={onOpenBrowser}
             style={{ color: tokens.colorNeutralForegroundOnBrand }}
             aria-label="Browse conversation history"
+          />
+        </Tooltip>
+        <Tooltip
+          content={memoryAdminEnabled
+            ? "Open memory admin"
+            : "Memory tool unavailable"}
+          relationship="label"
+        >
+          <Button
+            appearance="subtle"
+            icon={<Brain24Regular />}
+            onClick={onOpenMemoryAdmin}
+            disabled={!memoryAdminEnabled}
+            style={{ color: tokens.colorNeutralForegroundOnBrand }}
+            aria-label="Open memory admin"
           />
         </Tooltip>
         <span className={`${styles.statusDot} ${dotClass}`} aria-hidden />
