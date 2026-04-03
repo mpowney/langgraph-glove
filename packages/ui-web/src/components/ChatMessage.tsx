@@ -3,12 +3,9 @@ import {
   makeStyles,
   tokens,
   Text,
-  Accordion,
-  AccordionHeader,
-  AccordionItem,
-  AccordionPanel,
 } from "@fluentui/react-components";
 import { MarkdownContent } from "./MarkdownContent";
+import { MessageAccordion } from "./MessageAccordion";
 import type { ChatEntry } from "../types";
 
 // Base64 prefixes that uniquely identify common image formats.
@@ -286,16 +283,17 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
           {sessionLabel && (
             <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
           )}
-          <Accordion className={styles.promptAccordion} collapsible>
-          <AccordionItem value="prompt">
-            <AccordionHeader size="small">Prompt context</AccordionHeader>
-            <AccordionPanel>
-              <div className={styles.promptPanel}>
-                <InlineContent content={entry.content} />
-              </div>
-            </AccordionPanel>
-          </AccordionItem>
-        </Accordion>
+          <MessageAccordion
+            className={styles.promptAccordion}
+            itemValue="prompt"
+            headerText="Prompt context"
+            panelClassName={styles.promptPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            <InlineContent content={entry.content} />
+          </MessageAccordion>
         </div>
       </div>
     );
@@ -343,14 +341,17 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
           {sessionLabel && (
             <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
           )}
-          <Accordion className={styles.toolCallAccordion} collapsible>
-            <AccordionItem value="tool-call">
-              <AccordionHeader size="small">Tool call: {toolName}</AccordionHeader>
-              <AccordionPanel>
-                <div className={styles.toolPanel}>{toolArgs}</div>
-              </AccordionPanel>
-            </AccordionItem>
-          </Accordion>
+          <MessageAccordion
+            className={styles.toolCallAccordion}
+            itemValue="tool-call"
+            headerText={`Tool call: ${toolName}`}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {toolArgs}
+          </MessageAccordion>
         </div>
       </div>
     );
@@ -372,16 +373,17 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
           {sessionLabel && (
             <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
           )}
-          <Accordion className={styles.toolResultAccordion} collapsible>
-            <AccordionItem value="tool-result">
-              <AccordionHeader size="small">
-                Tool result{toolName ? `: ${toolName}` : ""}
-              </AccordionHeader>
-              <AccordionPanel>
-                <div className={styles.toolPanel}>{toolContent}</div>
-              </AccordionPanel>
-            </AccordionItem>
-          </Accordion>
+          <MessageAccordion
+            className={styles.toolResultAccordion}
+            itemValue="tool-result"
+            headerText={`Tool result${toolName ? `: ${toolName}` : ""}`}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {toolContent}
+          </MessageAccordion>
         </div>
       </div>
     );
@@ -403,18 +405,17 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
           {sessionLabel && (
             <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
           )}
-          <Accordion className={styles.agentTransferAccordion} collapsible>
-            <AccordionItem value="agent-transfer">
-              <AccordionHeader size="small">
-                → Transferring to: {targetAgent}
-              </AccordionHeader>
-              {request && (
-                <AccordionPanel>
-                  <div className={styles.toolPanel}>{request}</div>
-                </AccordionPanel>
-              )}
-            </AccordionItem>
-          </Accordion>
+          <MessageAccordion
+            className={styles.agentTransferAccordion}
+            itemValue="agent-transfer"
+            headerText={`-> Transferring to: ${targetAgent}`}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {request ?? ""}
+          </MessageAccordion>
         </div>
       </div>
     );

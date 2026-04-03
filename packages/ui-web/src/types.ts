@@ -1,10 +1,27 @@
 /** Messages sent from server → browser client. */
+export interface CheckpointMetadata {
+  id: string;
+  timestamp?: string;
+}
+
 export type ServerMessage =
-  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" }
-  | { type: "prompt"; text: string; conversationId: string }
-  | { type: "tool_event"; role: "tool-call" | "tool-result" | "agent-transfer"; text: string; conversationId: string }
-  | { type: "done"; conversationId: string }
-  | { type: "error"; message: string; conversationId: string };
+  | {
+      type: "chunk";
+      text: string;
+      conversationId: string;
+      role?: "user" | "agent";
+      checkpoint?: CheckpointMetadata;
+    }
+  | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
+  | {
+      type: "tool_event";
+      role: "tool-call" | "tool-result" | "agent-transfer";
+      text: string;
+      conversationId: string;
+      checkpoint?: CheckpointMetadata;
+    }
+  | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
+  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
 
 /** Messages sent from browser client → server. */
 export interface ClientMessage {
@@ -28,6 +45,10 @@ export interface ChatEntry {
   role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer";
   content: string;
   isStreaming?: boolean;
+  /** ISO timestamp of when the payload was received/created by the browser. */
+  receivedAt?: string;
+  /** Checkpoint metadata sent by server when available. */
+  checkpoint?: CheckpointMetadata;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";

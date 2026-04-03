@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
+import Database from "better-sqlite3";
 import { distPath } from "@langgraph-glove/ui-web";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
@@ -15,12 +16,38 @@ interface ClientMessage {
 }
 
 /** Messages sent from server → browser client. */
+interface CheckpointMetadata {
+  id: string;
+  timestamp?: string;
+}
+
 type ServerMessage =
-  | { type: "chunk"; text: string; conversationId: string; role?: "user" | "agent" }
-  | { type: "prompt"; text: string; conversationId: string }
-  | { type: "tool_event"; role: "tool-call" | "tool-result" | "agent-transfer"; text: string; conversationId: string }
-  | { type: "done"; conversationId: string }
-  | { type: "error"; message: string; conversationId: string };
+  | {
+      type: "chunk";
+      text: string;
+      conversationId: string;
+      role?: "user" | "agent";
+      checkpoint?: CheckpointMetadata;
+    }
+  | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
+  | {
+      type: "tool_event";
+      role: "tool-call" | "tool-result" | "agent-transfer";
+      text: string;
+      conversationId: string;
+      checkpoint?: CheckpointMetadata;
+    }
+  | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
+  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
+
+interface CheckpointRow {
+  checkpoint_id: string;
+  checkpoint: string;
+}
+
+interface CheckpointEnvelope {
+  ts?: unknown;
+}
 
 export interface WebChannelConfig extends ChannelConfig {
   /** Port for the HTTP + WebSocket server. Default: `8080`. */
@@ -40,6 +67,8 @@ export interface WebChannelConfig extends ChannelConfig {
      */
     apiUrl?: string;
   };
+  /** Optional path to the SQLite checkpointer database for checkpoint metadata. */
+  checkpointDbPath?: string;
 }
 
 /**
@@ -66,6 +95,8 @@ export class WebChannel extends Channel {
   private readonly port: number;
   private readonly host: string;
   private readonly appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
+  private readonly checkpointDbPath?: string;
+  private checkpointDb?: Database.Database;
 
   constructor(config: WebChannelConfig = {}) {
     super(config);
@@ -76,6 +107,20 @@ export class WebChannel extends Channel {
       agentDescription: config.appInfo?.agentDescription ?? "",
       apiUrl: config.appInfo?.apiUrl ?? "",
     };
+    this.checkpointDbPath = config.checkpointDbPath;
+
+    if (this.checkpointDbPath) {
+      try {
+        this.checkpointDb = new Database(this.checkpointDbPath, {
+          readonly: true,
+          fileMustExist: true,
+        });
+      } catch {
+        // Checkpoint metadata enrichment is optional for websocket payloads.
+        this.checkpointDb = undefined;
+      }
+    }
+
     this.app = express();
 
     // Serve the compiled React SPA
@@ -117,6 +162,7 @@ export class WebChannel extends Channel {
   async stop(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.wss?.close();
+      this.checkpointDb?.close();
       this.httpServer?.close((err) => (err ? reject(err) : resolve()));
     });
   }
@@ -132,6 +178,7 @@ export class WebChannel extends Channel {
         type: "prompt",
         text: message.text,
         conversationId: message.conversationId,
+        checkpoint: this.lookupCheckpointMetadata(message.conversationId),
       };
       this.broadcast(message.conversationId, payload);
       return;
@@ -143,6 +190,7 @@ export class WebChannel extends Channel {
         role: message.role,
         text: message.text,
         conversationId: message.conversationId,
+        checkpoint: this.lookupCheckpointMetadata(message.conversationId),
       };
       this.broadcast(message.conversationId, payload);
       return;
@@ -152,9 +200,14 @@ export class WebChannel extends Channel {
       text: message.text,
       conversationId: message.conversationId,
       role: message.role,
+      checkpoint: this.lookupCheckpointMetadata(message.conversationId),
     };
     this.broadcast(message.conversationId, payload);
-    this.broadcast(message.conversationId, { type: "done", conversationId: message.conversationId });
+    this.broadcast(message.conversationId, {
+      type: "done",
+      conversationId: message.conversationId,
+      checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+    });
   }
 
   /**
@@ -167,9 +220,18 @@ export class WebChannel extends Channel {
     stream: AsyncIterable<string>,
   ): Promise<void> {
     for await (const chunk of stream) {
-      this.broadcast(conversationId, { type: "chunk", text: chunk, conversationId });
+      this.broadcast(conversationId, {
+        type: "chunk",
+        text: chunk,
+        conversationId,
+        checkpoint: this.lookupCheckpointMetadata(conversationId),
+      });
     }
-    this.broadcast(conversationId, { type: "done", conversationId });
+    this.broadcast(conversationId, {
+      type: "done",
+      conversationId,
+      checkpoint: this.lookupCheckpointMetadata(conversationId),
+    });
   }
 
   private handleConnection(ws: WebSocket): void {
@@ -201,6 +263,7 @@ export class WebChannel extends Channel {
           type: "error",
           message: err instanceof Error ? err.message : "An unknown error occurred",
           conversationId: parsed.conversationId,
+          checkpoint: this.lookupCheckpointMetadata(parsed.conversationId),
         };
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify(errorMsg));
@@ -218,6 +281,41 @@ export class WebChannel extends Channel {
         client.send(payload);
       }
     });
+  }
+
+  private lookupCheckpointMetadata(conversationId: string): CheckpointMetadata | undefined {
+    if (!this.checkpointDb) return undefined;
+
+    try {
+      const row = this.checkpointDb
+        .prepare<[string], CheckpointRow>(`
+          SELECT checkpoint_id, checkpoint
+          FROM checkpoints
+          WHERE thread_id = ? AND checkpoint_ns = ''
+          ORDER BY checkpoint_id DESC
+          LIMIT 1
+        `)
+        .get(conversationId);
+
+      if (!row) return undefined;
+
+      let timestamp: string | undefined;
+      try {
+        const parsed = JSON.parse(row.checkpoint) as CheckpointEnvelope;
+        if (typeof parsed.ts === "string") {
+          timestamp = parsed.ts;
+        }
+      } catch {
+        // Keep checkpoint id even if checkpoint blob cannot be parsed.
+      }
+
+      return {
+        id: row.checkpoint_id,
+        ...(timestamp ? { timestamp } : {}),
+      };
+    } catch {
+      return undefined;
+    }
   }
 }
 

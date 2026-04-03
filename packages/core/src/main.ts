@@ -59,9 +59,11 @@ const secretsDir = path.resolve(process.env["GLOVE_SECRETS_DIR"] ?? "secrets");
 // ---------------------------------------------------------------------------
 
 let defaultAgentDescription: string | undefined;
+let checkpointDbPath: string | undefined;
 try {
   const earlyConfig = new ConfigLoader(configDir, secretsDir).load();
   defaultAgentDescription = earlyConfig.agents["default"]?.description;
+  checkpointDbPath = path.resolve(earlyConfig.gateway.dbPath ?? "data/checkpoints.sqlite");
 } catch {
   // Config will be validated properly inside Gateway.start() - ignore here
 }
@@ -84,6 +86,7 @@ if (useWeb) {
         agentDescription: defaultAgentDescription,
         apiUrl: `http://${apiHost}:${apiPort}`,
       },
+      checkpointDbPath,
     }),
   );
 }

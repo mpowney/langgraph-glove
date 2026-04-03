@@ -55,6 +55,7 @@ export function useWebSocket(conversationId: string) {
     };
 
     ws.onmessage = ({ data }: MessageEvent<string>) => {
+      const receivedAt = new Date().toISOString();
       let msg: ServerMessage;
       try {
         msg = JSON.parse(data) as ServerMessage;
@@ -78,11 +79,26 @@ export function useWebSocket(conversationId: string) {
             return updateMessageToEnd(
               prev,
               streamId,
-              (message) => ({ ...message, content: message.content + msg.text }),
+              (message) => ({
+                ...message,
+                content: message.content + msg.text,
+                checkpoint: msg.checkpoint ?? message.checkpoint,
+              }),
             );
           }
           // Start a new streaming entry
-          return [...prev, { id: streamId, conversationId: msg.conversationId, role, content: msg.text, isStreaming: true }];
+          return [
+            ...prev,
+            {
+              id: streamId,
+              conversationId: msg.conversationId,
+              role,
+              content: msg.text,
+              isStreaming: true,
+              receivedAt,
+              checkpoint: msg.checkpoint,
+            },
+          ];
         });
       } else if (msg.type === "prompt") {
         setMessages((prev) => [
@@ -93,6 +109,8 @@ export function useWebSocket(conversationId: string) {
             role: "prompt",
             content: msg.text,
             isStreaming: false,
+            receivedAt,
+            checkpoint: msg.checkpoint,
           },
         ]);
       } else if (msg.type === "done") {
@@ -103,7 +121,11 @@ export function useWebSocket(conversationId: string) {
             updateMessageToEnd(
               prev,
               finishedId,
-              (message) => ({ ...message, isStreaming: false }),
+              (message) => ({
+                ...message,
+                isStreaming: false,
+                checkpoint: msg.checkpoint ?? message.checkpoint,
+              }),
             ),
           );
         }
@@ -116,6 +138,8 @@ export function useWebSocket(conversationId: string) {
             role: msg.role,
             content: msg.text,
             isStreaming: false,
+            receivedAt,
+            checkpoint: msg.checkpoint,
           },
         ]);
       } else if (msg.type === "error") {
@@ -133,6 +157,8 @@ export function useWebSocket(conversationId: string) {
             role: "agent",
             content: `⚠ ${msg.message}`,
             isStreaming: false,
+            receivedAt,
+            checkpoint: msg.checkpoint,
           },
         ]);
       }
@@ -165,6 +191,7 @@ export function useWebSocket(conversationId: string) {
           role: "agent",
           content: "⚠ Connection closed. Refresh the page to reconnect.",
           isStreaming: false,
+          receivedAt: new Date().toISOString(),
         },
       ]);
     };
@@ -190,6 +217,7 @@ export function useWebSocket(conversationId: string) {
         conversationId,
         role: "user",
         content: text,
+        receivedAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, userEntry]);
       const payload: ClientMessage = { type: "message", text, conversationId };
