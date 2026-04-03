@@ -1,5 +1,5 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { sessionManager } from "../SessionManager.js";
+import { sessionManager } from "../SessionManager";
 
 export const submitFormToolMetadata: ToolMetadata = {
   name: "browse_submit_form",

@@ -101,6 +101,49 @@ export interface OrchestratorGraphConfig {
   checkpointer?: BaseCheckpointSaver;
 }
 
+interface ParsedHandoff {
+  targetAgent: string;
+  request: string;
+}
+
+function parseHandoffRequest(args: unknown): string {
+  if (!args || typeof args !== "object") return "";
+  const request = (args as { request?: unknown }).request;
+  if (typeof request === "string") return request.trim();
+  if (request && typeof request === "object") {
+    const value = (request as { value?: unknown }).value;
+    if (typeof value === "string") return value.trim();
+  }
+  return "";
+}
+
+function extractTextHandoff(content: unknown): ParsedHandoff | null {
+  if (typeof content !== "string") return null;
+  const text = content.trim();
+  if (!text.includes("transfer_to_")) return null;
+
+  try {
+    const parsed = JSON.parse(text) as { name?: string; args?: unknown; parameters?: unknown };
+    if (!parsed.name?.startsWith("transfer_to_")) return null;
+    const targetAgent = parsed.name.replace(/^transfer_to_/, "");
+    const request = parseHandoffRequest(parsed.args) || parseHandoffRequest(parsed.parameters);
+    return { targetAgent, request };
+  } catch {
+    // Some local models emit near-JSON fragments; recover with regex.
+    const nameMatch = text.match(/"name"\s*:\s*"(transfer_to_[^"]+)"/);
+    if (!nameMatch) return null;
+    const targetAgent = nameMatch[1].replace(/^transfer_to_/, "");
+
+    const stringRequestMatch = text.match(/"request"\s*:\s*"([^"]+)"/);
+    if (stringRequestMatch) {
+      return { targetAgent, request: stringRequestMatch[1].trim() };
+    }
+
+    const valueRequestMatch = text.match(/"request"\s*:\s*\{[^}]*"value"\s*:\s*"([^"]+)"/);
+    return { targetAgent, request: valueRequestMatch?.[1]?.trim() ?? "" };
+  }
+}
+
 /**
  * Build a multi-agent orchestrator graph.
  *
@@ -185,14 +228,37 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
         // Respond to the handoff tool call so the conversation stays valid,
         // then route to the sub-agent via Command.
         const toolResponse = new ToolMessage({
-          content: `Transferring to ${targetAgent} agent.`,
+          content: (() => {
+            const req =
+              typeof handoffCall.args?.request === "string" ? handoffCall.args.request.trim() : "";
+            return req
+              ? `Transferring to ${targetAgent} agent. Task: ${req}`
+              : `Transferring to ${targetAgent} agent.`;
+          })(),
           tool_call_id: handoffCall.id!,
         });
+
         return new Command({
           goto: targetAgent as never,
           update: { messages: [response, toolResponse] },
         });
       }
+    }
+
+    // Fallback: some local models emit transfer JSON as plain text instead of
+    // native tool calls. Detect and treat it as a handoff anyway.
+    const textHandoff = extractTextHandoff(response.content);
+    if (textHandoff) {
+      const toolResponse = new ToolMessage({
+        content: textHandoff.request
+          ? `Transferring to ${textHandoff.targetAgent} agent. Task: ${textHandoff.request}`
+          : `Transferring to ${textHandoff.targetAgent} agent.`,
+        tool_call_id: "text_handoff_fallback",
+      });
+      return new Command({
+        goto: textHandoff.targetAgent as never,
+        update: { messages: [response, toolResponse] },
+      });
     }
 
     // No handoff — either regular tool calls or final answer

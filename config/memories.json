@@ -1,0 +1,24 @@
+{
+  "default": {
+    "enabled": true,
+    "storageMode": "markdown-sqlite",
+    "storageDir": "memories",
+    "indexDbPath": "data/memories.sqlite",
+    "defaultScope": "general",
+    "embeddingModelKey": "memory-embed",
+    "indexingStrategy": "immediate",
+    "chunking": {
+      "chunkSize": 800,
+      "chunkOverlap": 120
+    },
+    "retrieval": {
+      "topK": 5,
+      "maxChunksPerMemory": 2,
+      "includeChunks": true
+    },
+    "tiers": {
+      "hotDays": 30,
+      "warmDays": 180
+    }
+  }
+}

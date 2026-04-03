@@ -8,7 +8,7 @@
  */
 
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { weatherToolMetadata, handleWeather } from "./tools/WeatherTool.js";
+import { weatherToolMetadata, handleWeather } from "./tools/WeatherTool";
 
 await launchToolServer({
   toolKey: "weather-eu",

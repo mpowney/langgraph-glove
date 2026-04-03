@@ -1,9 +1,9 @@
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { openToolMetadata, handleOpen } from "./tools/OpenTool.js";
-import { getFieldsToolMetadata, handleGetFields } from "./tools/GetFieldsTool.js";
-import { submitFormToolMetadata, handleSubmitForm } from "./tools/SubmitFormTool.js";
-import { closeToolMetadata, handleClose } from "./tools/CloseTool.js";
-import { sessionManager } from "./SessionManager.js";
+import { openToolMetadata, handleOpen } from "./tools/OpenTool";
+import { getFieldsToolMetadata, handleGetFields } from "./tools/GetFieldsTool";
+import { submitFormToolMetadata, handleSubmitForm } from "./tools/SubmitFormTool";
+import { closeToolMetadata, handleClose } from "./tools/CloseTool";
+import { sessionManager } from "./SessionManager";
 
 const server = await launchToolServer({
   toolKey: "browse-session",

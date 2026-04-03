@@ -10,9 +10,8 @@ Requires **Node.js 22+** (pinned via `.nvmrc`).
 
 | Package | Description |
 |---|---|
-| `@langgraph-glove/core` | Agent runtime, graph builders, channel base class, RPC clients, `RemoteTool` |
+| `@langgraph-glove/core` | Agent runtime, gateway lifecycle, graph builders, channels, RPC clients, `RemoteTool` |
 | `@langgraph-glove/config` | Config loading, secret management, Zod schemas, `ModelRegistry` |
-| `@langgraph-glove/gateway` | Lifecycle management — config → tools → agent → channels → health → shutdown |
 | `@langgraph-glove/ui-web` | React + Fluent UI v9 chat SPA served by `WebChannel` |
 | `@langgraph-glove/channel-telegram` | Telegram channel (grammY, long polling) |
 | `@langgraph-glove/tool-server` | Abstract tool server + Unix socket / HTTP implementations |
@@ -266,14 +265,14 @@ pnpm start:web
 pnpm start:web-only
 
 # Or invoke node directly (equivalent to pnpm start:web)
-node packages/gateway/dist/main.js --web
-node packages/gateway/dist/main.js --web --web-port 3000
+node packages/core/dist/main.js --web
+node packages/core/dist/main.js --web --web-port 3000
 ```
 
 To override the config or data directories:
 
 ```bash
-GLOVE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/gateway/dist/main.js --web
+GLOVE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/core/dist/main.js --web
 ```
 
 Environment variables for the gateway:
@@ -353,7 +352,7 @@ The `debug:*` scripts run the gateway directly from TypeScript source using `tsx
 pnpm debug
 
 # CLI + Web UI on http://localhost:8080
-pnpm debug:web
+LOG_FILE=logs/output.log LOG_LEVEL=VERBOSE pnpm debug:web
 
 # Web UI only (no CLI) — useful for browser-only testing
 pnpm debug:web-only
@@ -379,7 +378,7 @@ To attach VS Code, add a launch configuration in `.vscode/launch.json`:
 
 Then run one of the `debug:*` scripts and use **Run → Attach to Node Process** (or the launch config above) to connect. Breakpoints set in any `.ts` source file — including `Gateway.ts`, `main.ts`, and all `@langgraph-glove/*` packages — will be hit directly.
 
-> **Note:** `tsx` is a `devDependency` of `@langgraph-glove/gateway` and is resolved through the pnpm workspace — no global install required.
+> **Note:** `tsx` is a `devDependency` of `@langgraph-glove/core` and is resolved through the pnpm workspace — no global install required.
 
 ---
 
@@ -414,7 +413,7 @@ Run the backend (gateway or example) and the Vite dev server in separate termina
 
 ```bash
 # Terminal 1 — backend with WebChannel on port 8080
-node packages/gateway/dist/main.js
+node packages/core/dist/main.js
 
 # Terminal 2 — Vite dev server (hot-reload) on port 5173
 VITE_WS_URL=ws://localhost:8080 pnpm --filter @langgraph-glove/ui-web dev

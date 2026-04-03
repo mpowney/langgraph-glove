@@ -78,7 +78,7 @@ export const AgentEntrySchema = z.object({
   systemPrompt: z.string().optional(),
   /** Short description of what this agent does (used by the orchestrator for routing). */
   description: z.string().optional(),
-  /** Tool names this agent is allowed to use. Empty/missing = all tools. */
+  /** Tool names this agent is allowed to use. Missing = all tools, empty = no tools. */
   tools: z.array(z.string()).optional(),
   /** Maximum ReAct loop steps before aborting. */
   recursionLimit: z.number().int().positive().optional(),
@@ -91,6 +91,75 @@ export const AgentsConfigSchema = z
     message: 'agents.json must contain a "default" key',
   });
 export type AgentsConfig = z.infer<typeof AgentsConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Memory config schema
+// ---------------------------------------------------------------------------
+
+export const MemoryStorageModeSchema = z.enum(["markdown-sqlite"]);
+export type MemoryStorageMode = z.infer<typeof MemoryStorageModeSchema>;
+
+export const MemoryRetentionTierSchema = z.enum(["hot", "warm", "cold"]);
+export type MemoryRetentionTier = z.infer<typeof MemoryRetentionTierSchema>;
+
+export const MemoryChunkingConfigSchema = z
+  .object({
+    /** Maximum characters per chunk before overlap is applied. */
+    chunkSize: z.number().int().positive(),
+    /** Number of characters to repeat at the start of the next chunk. */
+    chunkOverlap: z.number().int().min(0),
+  })
+  .refine((obj) => obj.chunkOverlap < obj.chunkSize, {
+    message: "chunkOverlap must be smaller than chunkSize",
+    path: ["chunkOverlap"],
+  });
+export type MemoryChunkingConfig = z.infer<typeof MemoryChunkingConfigSchema>;
+
+export const MemoryRetrievalConfigSchema = z.object({
+  /** Maximum memories returned to the agent. */
+  topK: z.number().int().positive().optional(),
+  /** Cap how many chunks any single memory can contribute to the result. */
+  maxChunksPerMemory: z.number().int().positive().optional(),
+  /** Whether to include raw chunk excerpts in results. */
+  includeChunks: z.boolean().optional(),
+});
+export type MemoryRetrievalConfig = z.infer<typeof MemoryRetrievalConfigSchema>;
+
+export const MemoryTierConfigSchema = z.object({
+  /** Days a memory stays in the hot tier before ageing into warm. */
+  hotDays: z.number().int().positive().optional(),
+  /** Days a memory stays in the warm tier before ageing into cold. */
+  warmDays: z.number().int().positive().optional(),
+});
+export type MemoryTierConfig = z.infer<typeof MemoryTierConfigSchema>;
+
+export const MemoryEntrySchema = z.object({
+  /** Whether the memory subsystem is enabled for this profile. */
+  enabled: z.boolean().optional(),
+  /** Storage mode for source memories and derived index state. */
+  storageMode: MemoryStorageModeSchema.optional(),
+  /** Directory containing markdown memory files. Relative paths resolve from the workspace root. */
+  storageDir: z.string().optional(),
+  /** SQLite database path for memory metadata and chunk index rows. */
+  indexDbPath: z.string().optional(),
+  /** Scope assigned when a memory is created without an explicit scope. */
+  defaultScope: z.string().optional(),
+  /** Model key in models.json intended for embedding generation. */
+  embeddingModelKey: z.string().optional(),
+  /** Whether embeddings are generated immediately or deferred. */
+  indexingStrategy: z.enum(["immediate", "deferred"]).optional(),
+  chunking: MemoryChunkingConfigSchema.optional(),
+  retrieval: MemoryRetrievalConfigSchema.optional(),
+  tiers: MemoryTierConfigSchema.optional(),
+});
+export type MemoryEntry = z.infer<typeof MemoryEntrySchema>;
+
+export const MemoriesConfigSchema = z
+  .record(z.string(), MemoryEntrySchema)
+  .refine((obj) => "default" in obj, {
+    message: 'memories.json must contain a "default" key',
+  });
+export type MemoriesConfig = z.infer<typeof MemoriesConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // Tool server config schema

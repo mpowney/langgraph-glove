@@ -5,66 +5,60 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy workspace root config (needed for pnpm install)
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 
-# Copy package.json files for workspace packages this tool depends on
 COPY packages/config/package.json packages/config/
 COPY packages/tool-server/package.json packages/tool-server/
-COPY packages/tool-search/package.json packages/tool-search/
+COPY packages/tool-memory/package.json packages/tool-memory/
 
-# Stub out other workspace packages so pnpm lockfile resolves
 COPY packages/core/package.json packages/core/
+COPY packages/gateway/package.json packages/gateway/
 COPY packages/channel-telegram/package.json packages/channel-telegram/
 COPY packages/tool-weather-au/package.json packages/tool-weather-au/
 COPY packages/tool-weather-eu/package.json packages/tool-weather-eu/
 COPY packages/tool-weather-us/package.json packages/tool-weather-us/
 COPY packages/tool-browse/package.json packages/tool-browse/
 COPY packages/tool-browse-session/package.json packages/tool-browse-session/
+COPY packages/tool-search/package.json packages/tool-search/
+COPY packages/ui-web/package.json packages/ui-web/
 
 RUN pnpm install --frozen-lockfile
 
-# Copy source and build only what we need
 COPY packages/config/ packages/config/
 COPY packages/tool-server/ packages/tool-server/
-COPY packages/tool-search/ packages/tool-search/
+COPY packages/tool-memory/ packages/tool-memory/
 
 RUN pnpm --filter @langgraph-glove/config build && \
     pnpm --filter @langgraph-glove/tool-server build && \
-    pnpm --filter @langgraph-glove/tool-search build
+    pnpm --filter @langgraph-glove/tool-memory build
 
-# Stage 2: Production runtime
+# Stage 2: Runtime
 FROM node:22-slim AS runtime
 
 RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
 
-# Copy workspace config
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-
-# Copy package.json files for runtime resolution
 COPY packages/config/package.json packages/config/
 COPY packages/tool-server/package.json packages/tool-server/
-COPY packages/tool-search/package.json packages/tool-search/
+COPY packages/tool-memory/package.json packages/tool-memory/
 
-# Install production dependencies only
 RUN pnpm install --frozen-lockfile --prod
 
-# Copy built output
 COPY --from=builder /app/packages/config/dist/ packages/config/dist/
 COPY --from=builder /app/packages/tool-server/dist/ packages/tool-server/dist/
-COPY --from=builder /app/packages/tool-search/dist/ packages/tool-search/dist/
+COPY --from=builder /app/packages/tool-memory/dist/ packages/tool-memory/dist/
 
-VOLUME ["/app/config", "/app/secrets"]
+VOLUME ["/app/config", "/app/secrets", "/app/memories", "/app/data"]
 
 ENV NODE_ENV=production
 ENV GLOVE_CONFIG_DIR=/app/config
 ENV GLOVE_SECRETS_DIR=/app/secrets
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://localhost:3012/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+  CMD node -e "fetch('http://localhost:3013/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-EXPOSE 3012
+EXPOSE 3013
 
-CMD ["node", "packages/tool-search/dist/main.js"]
+CMD ["node", "packages/tool-memory/dist/main.js"]

@@ -6,13 +6,17 @@
     "build": "pnpm -r build",
     "dev": "pnpm -r --parallel dev",
     "typecheck": "pnpm --filter @langgraph-glove/tool-server build && pnpm -r typecheck",
+    "memory:smoke": "bash scripts/memory-smoke.sh",
+    "tools:bg": "bash scripts/tools-bg.sh",
+    "tools:bg:dry": "bash scripts/tools-bg.sh --dry-run",
+    "tools:stop": "bash scripts/tools-stop.sh",
     "clean": "pnpm -r clean",
-    "start": "node packages/gateway/dist/main.js",
-    "start:web": "node packages/gateway/dist/main.js --web",
-    "start:web-only": "node packages/gateway/dist/main.js --web --no-cli",
-    "debug": "pnpm exec tsx --inspect packages/gateway/src/main.ts",
-    "debug:web": "pnpm exec tsx --inspect packages/gateway/src/main.ts --web",
-    "debug:web-only": "pnpm exec tsx --inspect packages/gateway/src/main.ts --web --no-cli"
+    "start": "node packages/core/dist/main.js",
+    "start:web": "node packages/core/dist/main.js --web",
+    "start:web-only": "node packages/core/dist/main.js --web --no-cli",
+    "debug": "pnpm exec tsx --inspect packages/core/src/main.ts",
+    "debug:web": "pnpm exec tsx --inspect packages/core/src/main.ts --web",
+    "debug:web-only": "pnpm exec tsx --inspect packages/core/src/main.ts --web --no-cli"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3"]

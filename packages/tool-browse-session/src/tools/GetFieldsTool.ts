@@ -1,5 +1,5 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { sessionManager } from "../SessionManager.js";
+import { sessionManager } from "../SessionManager";
 
 export const getFieldsToolMetadata: ToolMetadata = {
   name: "browse_get_fields",

@@ -1,7 +1,7 @@
 {
   "name": "@langgraph-glove/core",
   "version": "0.1.0",
-  "description": "Core agent, channels, RPC clients and remote tool support for langgraph-glove",
+  "description": "Core runtime and gateway server for langgraph-glove",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -12,11 +12,16 @@
     }
   },
   "scripts": {
-    "build": "tsup src/index.ts src/examples/cli.ts src/examples/cli-and-web.ts --format esm --dts --out-dir dist",
-    "dev": "tsup src/index.ts src/examples/cli.ts src/examples/cli-and-web.ts --format esm --dts --out-dir dist --watch",
+    "build": "tsup src/index.ts src/main.ts src/examples/cli.ts src/examples/cli-and-web.ts --format esm --dts --out-dir dist",
+    "dev": "tsup src/index.ts src/main.ts src/examples/cli.ts src/examples/cli-and-web.ts --format esm --dts --out-dir dist --watch",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
-    "debug": "tsx --inspect src/examples/cli-and-web.ts"
+    "start": "node dist/main.js",
+    "start:web": "node dist/main.js --web",
+    "start:web-only": "node dist/main.js --web --no-cli",
+    "debug": "tsx --inspect src/main.ts",
+    "debug:web": "tsx --inspect src/main.ts --web",
+    "debug:web-only": "tsx --inspect src/main.ts --web --no-cli"
   },
   "dependencies": {
     "@langchain/core": "^1.1.36",

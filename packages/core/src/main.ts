@@ -5,22 +5,26 @@
  * defaults), creates the gateway, and starts it.
  *
  * Environment variables:
- *   GLOVE_CONFIG_DIR   — path to config directory  (default: ./config)
- *   GLOVE_SECRETS_DIR  — path to secrets directory  (default: ./secrets)
+ *   GLOVE_CONFIG_DIR   - path to config directory  (default: ./config)
+ *   GLOVE_SECRETS_DIR  - path to secrets directory (default: ./secrets)
  *
  * Flags:
- *   --web              — also start the WebChannel (browser UI)
- *   --web-port <n>     — port for the WebChannel  (default: 8080)
- *   --no-cli           — disable the CLI channel
+ *   --web              - also start the WebChannel (browser UI)
+ *   --web-port <n>     - port for the WebChannel  (default: 8080)
+ *   --no-cli           - disable the CLI channel
  *
  * Usage:
  *   node dist/main.js [--web] [--web-port 3000] [--no-cli]
  */
 
 import path from "node:path";
-import { Gateway } from "./Gateway.js";
 import { ConfigLoader } from "@langgraph-glove/config";
-import { LogService, ConsoleSubscriber, FileSubscriber, LogLevel, CliChannel, WebChannel } from "@langgraph-glove/core";
+import { Gateway } from "./gateway/Gateway";
+import { LogService } from "./logging/LogService";
+import { FileSubscriber } from "./logging/FileSubscriber";
+import { LogLevel } from "./logging/LogLevel";
+import { CliChannel } from "./channels/CliChannel";
+import { WebChannel } from "./channels/WebChannel";
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -33,7 +37,7 @@ const webPortIndex = args.indexOf("--web-port");
 const webPort = webPortIndex !== -1 ? parseInt(args[webPortIndex + 1] ?? "8080", 10) : 8080;
 
 // ---------------------------------------------------------------------------
-// Logging — set up before anything else
+// Logging - set up before anything else
 // ---------------------------------------------------------------------------
 
 const logLevel = (process.env["LOG_LEVEL"] ?? "INFO").toUpperCase();
@@ -59,7 +63,7 @@ try {
   const earlyConfig = new ConfigLoader(configDir, secretsDir).load();
   defaultAgentDescription = earlyConfig.agents["default"]?.description;
 } catch {
-  // Config will be validated properly inside Gateway.start() — ignore here
+  // Config will be validated properly inside Gateway.start() - ignore here
 }
 
 // ---------------------------------------------------------------------------

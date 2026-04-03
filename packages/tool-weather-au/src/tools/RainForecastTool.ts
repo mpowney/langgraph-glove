@@ -1,5 +1,5 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { searchLocation } from "./WeatherTool.js";
+import { searchLocation } from "./WeatherTool";
 
 const BOM_API_BASE = "https://api.weather.bom.gov.au/v1";
 

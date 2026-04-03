@@ -1,7 +1,7 @@
 import { HumanMessage, AIMessageChunk, ToolMessage } from "@langchain/core/messages";
-import type { Channel, IncomingMessage } from "../channels/Channel.js";
-import { Logger } from "../logging/Logger.js";
-import { LlmCallbackHandler } from "../logging/LlmCallbackHandler.js";
+import type { Channel, IncomingMessage } from "../channels/Channel";
+import { Logger } from "../logging/Logger";
+import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 
 const logger = new Logger("Agent.ts");
 
@@ -176,7 +176,16 @@ export class GloveAgent {
                 const targetAgent = tc.name.replace(/^transfer_to_/, "");
                 const request =
                   typeof tc.args === "object" && tc.args !== null && "request" in tc.args
-                    ? String((tc.args as { request: string }).request)
+                    ? (() => {
+                        const value = (tc.args as { request?: unknown }).request;
+                        if (typeof value === "string") return value;
+                        if (value == null) return "";
+                        try {
+                          return JSON.stringify(value);
+                        } catch {
+                          return String(value);
+                        }
+                      })()
                     : "";
                 onToolEvent("agent-transfer", JSON.stringify({ agent: targetAgent, request }));
               } else {

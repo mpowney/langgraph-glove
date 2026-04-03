@@ -4,8 +4,8 @@ import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import { distPath } from "@langgraph-glove/ui-web";
-import { Channel } from "./Channel.js";
-import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel.js";
+import { Channel } from "./Channel";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {

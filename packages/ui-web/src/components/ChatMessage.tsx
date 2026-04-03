@@ -134,7 +134,7 @@ const useStyles = makeStyles({
     lineHeight: "1.5",
   },
   agentBubble: {
-    maxWidth: "80%",
+    width: "80vw",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusXLarge,
     borderBottomLeftRadius: tokens.borderRadiusSmall,
@@ -252,7 +252,7 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
           )}
           <Accordion className={styles.promptAccordion} collapsible>
           <AccordionItem value="prompt">
-            <AccordionHeader size="medium">Prompt context</AccordionHeader>
+            <AccordionHeader size="small">Prompt context</AccordionHeader>
             <AccordionPanel>
               <div className={styles.promptPanel}>
                 <InlineContent content={entry.content} />

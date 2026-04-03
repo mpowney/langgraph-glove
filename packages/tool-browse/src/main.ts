@@ -1,7 +1,7 @@
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { screenshotToolMetadata, handleScreenshot } from "./tools/ScreenshotTool.js";
-import { getContentToolMetadata, handleGetContent } from "./tools/GetContentTool.js";
-import { closeBrowser } from "./browser.js";
+import { screenshotToolMetadata, handleScreenshot } from "./tools/ScreenshotTool";
+import { getContentToolMetadata, handleGetContent } from "./tools/GetContentTool";
+import { closeBrowser } from "./browser";
 
 const server = await launchToolServer({
   toolKey: "browse",
