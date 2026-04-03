@@ -206,5 +206,14 @@ export const GatewayConfigSchema = z.object({
   apiPort: z.number().int().positive().optional(),
   /** Host to bind the AdminApi server to. Defaults to "0.0.0.0". */
   apiHost: z.string().optional(),
+  /** Authentication and bootstrap settings for web/admin surfaces. */
+  auth: z.object({
+    /** One-time setup token time-to-live in minutes. */
+    setupTokenTtlMinutes: z.number().int().positive().optional(),
+    /** User session token time-to-live in minutes. */
+    sessionTtlMinutes: z.number().int().positive().optional(),
+    /** Minimum allowed password length during bootstrap. */
+    minPasswordLength: z.number().int().min(6).optional(),
+  }).optional(),
 });
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;

@@ -22,6 +22,7 @@ import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import type { RpcClient } from "../rpc/RpcClient";
 import { RemoteTool } from "../tools/RemoteTool";
 import { AdminApi } from "../api/AdminApi";
+import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
 
 const logger = new Logger("Gateway");
@@ -66,6 +67,7 @@ export class Gateway extends EventEmitter {
   private models: ModelRegistry | null = null;
   private healthServer: HealthServer | null = null;
   private adminApi: AdminApi | null = null;
+  private authService: AuthService | null = null;
   private shutdownHandlers: (() => void)[] = [];
 
   constructor(private readonly options: GatewayOptions) {
@@ -110,11 +112,24 @@ export class Gateway extends EventEmitter {
       this.checkpointer = SqliteSaver.fromConnString(dbPath);
       logger.info(`SQLite persistence: ${dbPath}`);
 
-      // 5. Tool discovery
+      // 5. Auth bootstrap
+      this.authService = new AuthService({
+        dbPath,
+        config: this.config.gateway.auth,
+      });
+      const setupToken = this.authService.ensureBootstrapToken();
+      if (setupToken) {
+        logger.warn("Initial setup is required.");
+        logger.warn("Use this setup token in the web UI to create your password:");
+        logger.warn(`Setup token (expires ${setupToken.expiresAt}): ${setupToken.token}`);
+        logger.warn("You can regenerate it with: pnpm --filter @langgraph-glove/core debug -- --regenerate-setup-token");
+      }
+
+      // 6. Tool discovery
       const tools = await this.discoverTools(this.config.tools);
       logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
 
-      // 6. Build agent graph (single-agent or multi-agent orchestrator)
+      // 7. Build agent graph (single-agent or multi-agent orchestrator)
       const graph = this.buildAgentGraph(tools);
 
       this.agent = new GloveAgent(graph, {
@@ -124,32 +139,33 @@ export class Gateway extends EventEmitter {
         ).recursionLimit,
       });
 
-      // 7. Channels
+      // 8. Channels
       for (const channel of this.options.channels ?? []) {
         this.agent.addChannel(channel);
       }
       await this.agent.start();
       logger.info("Agent and channels started");
 
-      // 8. Health server
+      // 9. Health server
       const healthPort = this.config.gateway.healthPort ?? 9090;
       const healthHost = this.config.gateway.healthHost ?? "0.0.0.0";
       this.healthServer = new HealthServer(this);
       await this.healthServer.listen(healthPort, healthHost);
       logger.info(`Health endpoint: http://${healthHost}:${healthPort}/health`);
 
-      // 9. Admin API
+      // 10. Admin API
       const apiPort = this.config.gateway.apiPort ?? 8081;
       const apiHost = this.config.gateway.apiHost ?? "0.0.0.0";
       this.adminApi = new AdminApi({
         port: apiPort,
         host: apiHost,
         dbPath: this.config.gateway.dbPath,
+        authService: this.authService,
       });
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
 
-      // 10. Signal handlers
+      // 11. Signal handlers
       this.installSignalHandlers();
 
       this.setState("running");
@@ -180,6 +196,11 @@ export class Gateway extends EventEmitter {
     if (this.adminApi) {
       await this.adminApi.close();
       this.adminApi = null;
+    }
+
+    if (this.authService) {
+      this.authService.close();
+      this.authService = null;
     }
 
     // Stop agent + channels

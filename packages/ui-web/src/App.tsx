@@ -8,7 +8,11 @@ import { ChatArea } from "./components/ChatArea";
 import { InputBar } from "./components/InputBar";
 import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
+import { AuthGate } from "./components/AuthGate";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
+import { useAuth } from "./hooks/useAuth";
+
+const PERSONAL_TOKEN_KEY = "glove_personal_token";
 
 const conversationId = crypto.randomUUID();
 
@@ -24,7 +28,12 @@ const useStyles = makeStyles({
 function App() {
   const theme = useTheme();
   const appInfo = useAppInfo();
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId);
+  const authApiBaseUrl = appInfo?.apiUrl ?? null;
+  const auth = useAuth(authApiBaseUrl);
+  const [personalToken, setPersonalTokenState] = useState<string>(
+    () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
+  );
+  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, personalToken || undefined);
   const styles = useStyles();
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
@@ -36,6 +45,15 @@ function App() {
   const setShowAllPersisted = useCallback((value: boolean) => {
     localStorage.setItem("showAll", String(value));
     setShowAll(value);
+  }, []);
+
+  const setPersonalToken = useCallback((token: string) => {
+    if (token) {
+      sessionStorage.setItem(PERSONAL_TOKEN_KEY, token);
+    } else {
+      sessionStorage.removeItem(PERSONAL_TOKEN_KEY);
+    }
+    setPersonalTokenState(token);
   }, []);
 
   const isStreaming = useMemo(
@@ -68,6 +86,21 @@ function App() {
     [messages, showAll, myConversationId],
   );
 
+  if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated)) {
+    return (
+      <FluentProvider theme={theme}>
+        <AuthGate
+          loading={auth.loading}
+          setupRequired={auth.setupRequired}
+          minPasswordLength={auth.minPasswordLength}
+          error={auth.error}
+          onLogin={auth.login}
+          onSetup={auth.setup}
+        />
+      </FluentProvider>
+    );
+  }
+
   return (
     <FluentProvider theme={theme}>
       <div className={styles.shell}>
@@ -79,11 +112,18 @@ function App() {
           memoryAdminEnabled={memoryAvailable}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
           onOpenBrowser={() => setBrowserOpen(true)}
+          personalToken={personalToken}
+          onSetPersonalToken={setPersonalToken}
         />
         <ChatArea messages={visibleMessages} myConversationId={myConversationId} showAll={showAll} />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
-        <ConversationBrowser open={browserOpen} onClose={() => setBrowserOpen(false)} apiBaseUrl={appInfo?.apiUrl} />
-        <MemoryAdmin open={memoryAdminOpen} onClose={() => setMemoryAdminOpen(false)} memoryToolUrl={memoryToolUrl} />
+        <ConversationBrowser
+          open={browserOpen}
+          onClose={() => setBrowserOpen(false)}
+          apiBaseUrl={appInfo?.apiUrl}
+          authToken={auth.token ?? undefined}
+        />
+        <MemoryAdmin open={memoryAdminOpen} onClose={() => setMemoryAdminOpen(false)} memoryToolUrl={memoryToolUrl} personalToken={personalToken} />
       </div>
     </FluentProvider>
   );

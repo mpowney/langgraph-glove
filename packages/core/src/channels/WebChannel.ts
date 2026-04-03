@@ -13,6 +13,12 @@ interface ClientMessage {
   type: "message";
   text: string;
   conversationId: string;
+  /**
+   * Optional personal token supplied by the browser for encrypted personal
+   * memory operations. Stored in-memory per conversation and never logged
+   * or persisted to disk.
+   */
+  personalToken?: string | null;
 }
 
 /** Messages sent from server → browser client. */
@@ -97,6 +103,11 @@ export class WebChannel extends Channel {
   private readonly appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
+  /**
+   * Per-conversation personal tokens, held only in memory for the lifetime of
+   * the server process. Never written to disk or included in any log output.
+   */
+  private readonly personalTokens = new Map<string, string>();
 
   constructor(config: WebChannelConfig = {}) {
     super(config);
@@ -245,12 +256,22 @@ export class WebChannel extends Channel {
 
       if (parsed.type !== "message" || !parsed.text || !this.handler) return;
 
+      // Update the in-memory personal token cache for this conversation.
+      if (typeof parsed.personalToken === "string" && parsed.personalToken) {
+        this.personalTokens.set(parsed.conversationId, parsed.personalToken);
+      } else if (parsed.personalToken === null) {
+        this.personalTokens.delete(parsed.conversationId);
+      }
+
+      const personalToken = this.personalTokens.get(parsed.conversationId);
+
       const message: IncomingMessage = {
         id: uuidv4(),
         conversationId: parsed.conversationId,
         text: parsed.text,
         sender: `ws:${parsed.conversationId}`,
         timestamp: new Date(),
+        ...(personalToken !== undefined ? { metadata: { personalToken } } : {}),
       };
 
       // Tag the socket with its conversationId for targeted broadcast

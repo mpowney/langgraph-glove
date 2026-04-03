@@ -174,9 +174,16 @@ export interface ConversationBrowserProps {
   onClose: () => void;
   /** Base URL of the AdminApi server. Defaults to same origin when absent. */
   apiBaseUrl?: string;
+  /** Optional bearer token for protected admin API routes. */
+  authToken?: string;
 }
 
-export function ConversationBrowser({ open, onClose, apiBaseUrl = "" }: ConversationBrowserProps) {
+export function ConversationBrowser({
+  open,
+  onClose,
+  apiBaseUrl = "",
+  authToken,
+}: ConversationBrowserProps) {
   const styles = useStyles();
   const {
     conversations,
@@ -195,9 +202,9 @@ export function ConversationBrowser({ open, onClose, apiBaseUrl = "" }: Conversa
   useEffect(() => {
     if (open) {
       clearSelection();
-      loadConversations();
+      void loadConversations(authToken);
     }
-  }, [open, clearSelection, loadConversations]);
+  }, [open, clearSelection, loadConversations, authToken]);
 
   const inMessageView = selectedThreadId !== null;
 
@@ -223,7 +230,9 @@ export function ConversationBrowser({ open, onClose, apiBaseUrl = "" }: Conversa
               <Button
                 appearance="subtle"
                 icon={<ArrowClockwise24Regular />}
-                onClick={inMessageView && selectedThreadId ? () => loadMessages(selectedThreadId) : loadConversations}
+                onClick={inMessageView && selectedThreadId
+                  ? () => void loadMessages(selectedThreadId, authToken)
+                  : () => void loadConversations(authToken)}
                 aria-label="Refresh"
               />
               <Button
@@ -256,7 +265,7 @@ export function ConversationBrowser({ open, onClose, apiBaseUrl = "" }: Conversa
                   {i > 0 && <Divider />}
                   <div
                     className={styles.conversationItem}
-                    onClick={() => loadMessages(conv.threadId)}
+                    onClick={() => void loadMessages(conv.threadId, authToken)}
                     role="button"
                     tabIndex={0}
                     onKeyDown={(e) => e.key === "Enter" && loadMessages(conv.threadId)}

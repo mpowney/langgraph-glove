@@ -12,11 +12,18 @@ export function useConversationBrowser(apiBaseUrl = "") {
   const [listError, setListError] = useState<string | null>(null);
   const [messagesError, setMessagesError] = useState<string | null>(null);
 
-  const loadConversations = useCallback(async () => {
+  const authHeaders = (authToken?: string): Record<string, string> => {
+    if (!authToken) return {};
+    return { Authorization: `Bearer ${authToken}` };
+  };
+
+  const loadConversations = useCallback(async (authToken?: string) => {
     setListState("loading");
     setListError(null);
     try {
-      const res = await fetch(`${apiBaseUrl}/api/conversations`);
+      const res = await fetch(`${apiBaseUrl}/api/conversations`, {
+        headers: authHeaders(authToken),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as ConversationSummary[];
       setConversations(data);
@@ -27,13 +34,15 @@ export function useConversationBrowser(apiBaseUrl = "") {
     }
   }, [apiBaseUrl]);
 
-  const loadMessages = useCallback(async (threadId: string) => {
+  const loadMessages = useCallback(async (threadId: string, authToken?: string) => {
     setSelectedThreadId(threadId);
     setMessagesState("loading");
     setMessagesError(null);
     setMessages([]);
     try {
-      const res = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(threadId)}`);
+      const res = await fetch(`${apiBaseUrl}/api/conversations/${encodeURIComponent(threadId)}`, {
+        headers: authHeaders(authToken),
+      });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as BrowserMessage[];
       setMessages(data);

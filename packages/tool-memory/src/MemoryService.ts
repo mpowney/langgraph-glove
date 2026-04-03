@@ -1,4 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHash,
+  randomBytes,
+  randomUUID,
+  scryptSync,
+} from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
@@ -14,6 +21,7 @@ export interface MemoryReference {
   memoryId?: string;
   slug?: string;
   storagePath?: string;
+  personalToken?: string;
 }
 
 export interface MemoryDocument {
@@ -28,6 +36,7 @@ export interface MemoryDocument {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  personal: boolean;
   content: string;
 }
 
@@ -43,6 +52,7 @@ export interface MemorySummary {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  personal: boolean;
   lastIndexedAt?: string;
 }
 
@@ -52,6 +62,8 @@ export interface CreateMemoryInput {
   scope?: string;
   tags?: string[];
   retentionTier?: MemoryRetentionTier;
+  personal?: boolean;
+  personalToken?: string;
 }
 
 export interface AppendMemoryInput extends MemoryReference {
@@ -65,6 +77,7 @@ export interface UpdateMemoryInput extends MemoryReference {
   tags?: string[];
   retentionTier?: MemoryRetentionTier;
   status?: string;
+  personal?: boolean;
 }
 
 export interface ListMemoriesInput {
@@ -77,6 +90,7 @@ export interface SearchMemoriesInput {
   query: string;
   scope?: string;
   limit?: number;
+  personalToken?: string;
 }
 
 export interface ReindexMemoryInput extends MemoryReference {}
@@ -122,6 +136,7 @@ interface MemoryRow {
   created_at: string;
   updated_at: string;
   revision: number;
+  is_personal: number;
   last_indexed_at: string | null;
   embedding_model_key: string | null;
   content_hash: string;
@@ -144,6 +159,7 @@ interface ChunkRow {
   created_at: string;
   updated_at: string;
   revision: number;
+  is_personal: number;
   last_indexed_at: string | null;
 }
 
@@ -173,6 +189,7 @@ interface ChunkRecord {
 }
 
 const FRONTMATTER_MARKER = "---";
+const PERSONAL_PAYLOAD_PREFIX = "glove-personal-v1:";
 
 export class MemoryService {
   private readonly configDir: string;
@@ -258,10 +275,11 @@ export class MemoryService {
       createdAt: now,
       updatedAt: now,
       revision: 1,
+      personal: input.personal ?? false,
       content,
     };
 
-    this.writeMemoryDocument(document);
+    this.writeMemoryDocument(document, input.personalToken);
     this.upsertMemoryRow(document);
     await this.reindexDocument(document);
     return document;
@@ -277,7 +295,7 @@ export class MemoryService {
     document.revision += 1;
     document.retentionTier = "hot";
 
-    this.writeMemoryDocument(document);
+    this.writeMemoryDocument(document, input.personalToken);
     this.upsertMemoryRow(document);
     await this.reindexDocument(document);
     return document;
@@ -304,11 +322,14 @@ export class MemoryService {
     if (input.status !== undefined) {
       document.status = requireNonEmpty(input.status, "memory_update: 'status' cannot be empty");
     }
+    if (input.personal !== undefined) {
+      document.personal = Boolean(input.personal);
+    }
 
     document.updatedAt = new Date().toISOString();
     document.revision += 1;
 
-    this.writeMemoryDocument(document);
+    this.writeMemoryDocument(document, input.personalToken);
     this.upsertMemoryRow(document);
     await this.reindexDocument(document);
     return document;
@@ -363,6 +384,7 @@ export class MemoryService {
             m.created_at,
             m.updated_at,
             m.revision,
+            m.is_personal,
             m.last_indexed_at
           FROM memory_chunks c
           INNER JOIN memories m ON m.id = c.memory_id
@@ -392,18 +414,23 @@ export class MemoryService {
       const existing = grouped.get(item.row.memory_id);
       const excerpt = excerptForQuery(item.row.content, queryTerms);
       const summary = this.chunkRowToSummary(item.row);
+      const canRevealExcerpt = !summary.personal || hasPersonalToken(input.personalToken);
 
       if (!existing) {
         grouped.set(item.row.memory_id, {
           memory: summary,
           score: item.score,
-          excerpts: this.settings.includeChunks ? [excerpt] : [],
+          excerpts: this.settings.includeChunks && canRevealExcerpt ? [excerpt] : [],
         });
         if (grouped.size >= limit) continue;
         continue;
       }
 
-      if (existing.excerpts.length < this.settings.maxChunksPerMemory && this.settings.includeChunks) {
+      if (
+        existing.excerpts.length < this.settings.maxChunksPerMemory
+        && this.settings.includeChunks
+        && canRevealExcerpt
+      ) {
         existing.excerpts.push(excerpt);
       }
       existing.score = Math.max(existing.score, item.score);
@@ -425,7 +452,12 @@ export class MemoryService {
   async reindexMemory(input: ReindexMemoryInput = {}): Promise<ReindexResult> {
     const references = hasReference(input)
       ? [this.resolveMemoryDocument(input)]
-      : this.listMemories({ limit: 10_000 }).map((summary) => this.getMemory({ memoryId: summary.id }));
+      : this.listMemories({ limit: 10_000 })
+        .filter((summary) => !summary.personal || hasPersonalToken(input.personalToken))
+        .map((summary) => this.getMemory({
+          memoryId: summary.id,
+          personalToken: input.personalToken,
+        }));
 
     let chunkCount = 0;
     for (const document of references) {
@@ -478,6 +510,7 @@ export class MemoryService {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         revision INTEGER NOT NULL DEFAULT 1,
+        is_personal INTEGER NOT NULL DEFAULT 0,
         last_indexed_at TEXT,
         embedding_model_key TEXT,
         content_hash TEXT NOT NULL
@@ -515,6 +548,18 @@ export class MemoryService {
       CREATE INDEX IF NOT EXISTS idx_memory_chunk_embeddings_memory_id
         ON memory_chunk_embeddings(memory_id);
     `);
+
+    const hasPersonalColumn = this.db
+      .prepare<[], { count: number }>(`
+        SELECT COUNT(*) AS count
+        FROM pragma_table_info('memories')
+        WHERE name = 'is_personal'
+      `)
+      .get()?.count ?? 0;
+
+    if (hasPersonalColumn === 0) {
+      this.db.exec("ALTER TABLE memories ADD COLUMN is_personal INTEGER NOT NULL DEFAULT 0");
+    }
   }
 
   private resolveSettings(entry: MemoryEntry): ResolvedMemoryConfig {
@@ -544,7 +589,27 @@ export class MemoryService {
   private resolveMemoryDocument(reference: MemoryReference): MemoryDocument {
     const row = this.resolveMemoryRow(reference);
     const raw = fs.readFileSync(row.storage_path, "utf8");
-    return parseMemoryDocument(raw, row.storage_path);
+    const parsed = parseMemoryDocument(raw, row.storage_path);
+
+    const document: MemoryDocument = {
+      ...parsed,
+      personal: row.is_personal === 1,
+    };
+
+    if (!document.personal) {
+      return document;
+    }
+
+    const token = requirePersonalToken(
+      reference.personalToken,
+      "This memory is marked personal. Provide 'personalToken' to retrieve content.",
+    );
+
+    if (isEncryptedPersonalContent(document.content)) {
+      document.content = decryptPersonalContent(document.content, token, document.id);
+    }
+
+    return document;
   }
 
   private resolveMemoryRow(reference: MemoryReference): MemoryRow {
@@ -585,9 +650,24 @@ export class MemoryService {
     return row;
   }
 
-  private writeMemoryDocument(document: MemoryDocument): void {
+  private writeMemoryDocument(document: MemoryDocument, personalToken?: string): void {
     fs.mkdirSync(path.dirname(document.storagePath), { recursive: true });
-    fs.writeFileSync(document.storagePath, serializeMemoryDocument(document), "utf8");
+
+    const diskDocument: MemoryDocument = {
+      ...document,
+      content: document.personal
+        ? encryptPersonalContent(
+          document.content,
+          requirePersonalToken(
+            personalToken,
+            "'personalToken' is required when creating or updating a personal memory",
+          ),
+          document.id,
+        )
+        : document.content,
+    };
+
+    fs.writeFileSync(document.storagePath, serializeMemoryDocument(diskDocument), "utf8");
   }
 
   private upsertMemoryRow(document: MemoryDocument): void {
@@ -608,9 +688,10 @@ export class MemoryService {
             created_at,
             updated_at,
             revision,
+            is_personal,
             embedding_model_key,
             content_hash
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             slug = excluded.slug,
             title = excluded.title,
@@ -622,6 +703,7 @@ export class MemoryService {
             created_at = excluded.created_at,
             updated_at = excluded.updated_at,
             revision = excluded.revision,
+            is_personal = excluded.is_personal,
             embedding_model_key = excluded.embedding_model_key,
             content_hash = excluded.content_hash
         `,
@@ -638,6 +720,7 @@ export class MemoryService {
         document.createdAt,
         document.updatedAt,
         document.revision,
+        document.personal ? 1 : 0,
         this.settings.embeddingModelKey,
         contentHash,
       );
@@ -765,6 +848,7 @@ export class MemoryService {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       revision: row.revision,
+      personal: row.is_personal === 1,
       lastIndexedAt: row.last_indexed_at ?? undefined,
     };
   }
@@ -782,6 +866,7 @@ export class MemoryService {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       revision: row.revision,
+      personal: row.is_personal === 1,
       lastIndexedAt: row.last_indexed_at ?? undefined,
     };
   }
@@ -808,6 +893,7 @@ function parseMemoryDocument(raw: string, storagePath: string): MemoryDocument {
       `Memory file is missing 'updatedAt': ${storagePath}`,
     ),
     revision: parseInteger(metadata.revision, 1),
+    personal: parseBoolean(metadata.personal, false),
     content,
   };
 }
@@ -825,6 +911,7 @@ function serializeMemoryDocument(document: MemoryDocument): string {
     `createdAt: ${document.createdAt}`,
     `updatedAt: ${document.updatedAt}`,
     `revision: ${document.revision}`,
+    `personal: ${document.personal ? "true" : "false"}`,
     FRONTMATTER_MARKER,
     "",
   ];
@@ -1018,6 +1105,87 @@ function parseRetentionTier(value: string | undefined): MemoryRetentionTier {
 function parseInteger(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true") return true;
+  if (normalized === "false") return false;
+  return fallback;
+}
+
+function hasPersonalToken(token: string | undefined): boolean {
+  return Boolean(token?.trim());
+}
+
+function requirePersonalToken(token: string | undefined, message: string): string {
+  const normalized = token?.trim();
+  if (!normalized) {
+    throw new Error(message);
+  }
+  return normalized;
+}
+
+function isEncryptedPersonalContent(content: string): boolean {
+  return content.startsWith(PERSONAL_PAYLOAD_PREFIX);
+}
+
+function encryptPersonalContent(content: string, personalToken: string, memoryId: string): string {
+  const salt = randomBytes(16);
+  const iv = randomBytes(12);
+  const key = derivePersonalKey(personalToken, memoryId, salt);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(content, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+
+  const payload = {
+    salt: salt.toString("base64url"),
+    iv: iv.toString("base64url"),
+    tag: tag.toString("base64url"),
+    ciphertext: ciphertext.toString("base64url"),
+  };
+
+  return `${PERSONAL_PAYLOAD_PREFIX}${Buffer.from(JSON.stringify(payload), "utf8").toString("base64url")}`;
+}
+
+function decryptPersonalContent(payload: string, personalToken: string, memoryId: string): string {
+  const encoded = payload.slice(PERSONAL_PAYLOAD_PREFIX.length);
+  let parsed: {
+    salt: string;
+    iv: string;
+    tag: string;
+    ciphertext: string;
+  };
+
+  try {
+    parsed = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
+      salt: string;
+      iv: string;
+      tag: string;
+      ciphertext: string;
+    };
+  } catch {
+    throw new Error("Invalid encrypted personal memory payload");
+  }
+
+  try {
+    const salt = Buffer.from(parsed.salt, "base64url");
+    const iv = Buffer.from(parsed.iv, "base64url");
+    const tag = Buffer.from(parsed.tag, "base64url");
+    const ciphertext = Buffer.from(parsed.ciphertext, "base64url");
+    const key = derivePersonalKey(personalToken, memoryId, salt);
+    const decipher = createDecipheriv("aes-256-gcm", key, iv);
+    decipher.setAuthTag(tag);
+    const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+    return plaintext.toString("utf8");
+  } catch {
+    throw new Error("Unable to decrypt personal memory content. Verify the personal token.");
+  }
+}
+
+function derivePersonalKey(personalToken: string, memoryId: string, salt: Buffer): Buffer {
+  return scryptSync(`${personalToken}:${memoryId}`, salt, 32);
 }
 
 function escapeValue(value: string): string {

@@ -26,7 +26,7 @@ function buildWsUrl(): string {
   return `${protocol}//${location.host}`;
 }
 
-export function useWebSocket(conversationId: string) {
+export function useWebSocket(conversationId: string, personalToken?: string) {
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
@@ -220,10 +220,15 @@ export function useWebSocket(conversationId: string) {
         receivedAt: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, userEntry]);
-      const payload: ClientMessage = { type: "message", text, conversationId };
+      const payload: ClientMessage = {
+        type: "message",
+        text,
+        conversationId,
+        ...(personalToken ? { personalToken } : {}),
+      };
       ws.send(JSON.stringify(payload));
     },
-    [conversationId],
+    [conversationId, personalToken],
   );
 
   return { messages, sendMessage, status, myConversationId: conversationId };

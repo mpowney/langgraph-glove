@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
   makeStyles,
   tokens,
@@ -6,8 +6,18 @@ import {
   Switch,
   Button,
   Tooltip,
+  Popover,
+  PopoverTrigger,
+  PopoverSurface,
+  Field,
+  Input,
 } from "@fluentui/react-components";
-import { Brain24Regular, Chat24Regular } from "@fluentui/react-icons";
+import {
+  Brain24Regular,
+  Chat24Regular,
+  LockClosed24Regular,
+  LockClosed24Filled,
+} from "@fluentui/react-icons";
 import type { AppInfo, ConnectionStatus } from "../types";
 
 const useStyles = makeStyles({
@@ -65,6 +75,15 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForegroundOnBrand,
     opacity: 0.9,
   },
+  tokenActive: {
+    color: tokens.colorPaletteGreenForeground1,
+  },
+  tokenPopover: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalM,
+    minWidth: "260px",
+  },
 });
 
 const STATUS_LABELS: Record<ConnectionStatus, string> = {
@@ -82,6 +101,9 @@ interface AppHeaderProps {
   memoryAdminEnabled: boolean;
   onOpenMemoryAdmin: () => void;
   onOpenBrowser: () => void;
+  /** Currently active personal token (empty string = none). */
+  personalToken: string;
+  onSetPersonalToken: (token: string) => void;
 }
 
 export function AppHeader({
@@ -92,8 +114,12 @@ export function AppHeader({
   memoryAdminEnabled,
   onOpenMemoryAdmin,
   onOpenBrowser,
+  personalToken,
+  onSetPersonalToken,
 }: AppHeaderProps) {
   const styles = useStyles();
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [draftToken, setDraftToken] = useState("");
 
   const dotClass =
     status === "connected"
@@ -101,6 +127,22 @@ export function AppHeader({
       : status === "connecting"
         ? styles.dotConnecting
         : styles.dotError;
+
+  const handleOpenPopover = () => {
+    setDraftToken(personalToken);
+    setPopoverOpen(true);
+  };
+
+  const handleSetToken = () => {
+    onSetPersonalToken(draftToken.trim());
+    setPopoverOpen(false);
+  };
+
+  const handleClearToken = () => {
+    onSetPersonalToken("");
+    setDraftToken("");
+    setPopoverOpen(false);
+  };
 
   return (
     <header className={styles.root}>
@@ -144,6 +186,52 @@ export function AppHeader({
             aria-label="Open memory admin"
           />
         </Tooltip>
+        <Popover open={popoverOpen} onOpenChange={(_, data) => { if (!data.open) setPopoverOpen(false); }}>
+          <PopoverTrigger disableButtonEnhancement>
+            <Tooltip
+              content={personalToken ? "Personal token active — click to change" : "Set personal token for encrypted memories"}
+              relationship="label"
+            >
+              <Button
+                appearance="subtle"
+                icon={personalToken ? <LockClosed24Filled className={styles.tokenActive} /> : <LockClosed24Regular />}
+                onClick={handleOpenPopover}
+                style={{ color: tokens.colorNeutralForegroundOnBrand }}
+                aria-label={personalToken ? "Personal token active" : "Set personal token"}
+              />
+            </Tooltip>
+          </PopoverTrigger>
+          <PopoverSurface>
+            <div className={styles.tokenPopover}>
+              <Text weight="semibold">Personal memory token</Text>
+              <Text size={200}>
+                This token unlocks encrypted personal memories during this conversation.
+                It is never sent to the server except as part of tool calls — it is not
+                logged and is cleared when you close the tab.
+              </Text>
+              <Field label="Token">
+                <Input
+                  type="password"
+                  value={draftToken}
+                  onChange={(_, data) => setDraftToken(data.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") handleSetToken(); }}
+                  placeholder="Enter personal token"
+                  autoFocus
+                />
+              </Field>
+              <div style={{ display: "flex", gap: tokens.spacingHorizontalS, justifyContent: "flex-end" }}>
+                {personalToken && (
+                  <Button appearance="subtle" onClick={handleClearToken}>
+                    Clear
+                  </Button>
+                )}
+                <Button appearance="primary" onClick={handleSetToken} disabled={!draftToken.trim()}>
+                  Set token
+                </Button>
+              </div>
+            </div>
+          </PopoverSurface>
+        </Popover>
         <span className={`${styles.statusDot} ${dotClass}`} aria-hidden />
         <Text size={100} className={styles.statusLabel}>
           {STATUS_LABELS[status]}

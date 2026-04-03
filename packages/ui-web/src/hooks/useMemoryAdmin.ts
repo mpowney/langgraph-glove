@@ -54,7 +54,7 @@ export function useMemoryAdmin(memoryToolUrl = "") {
     }
   }, [memoryToolUrl]);
 
-  const searchMemories = useCallback(async (query: string) => {
+  const searchMemories = useCallback(async (query: string, personalToken?: string) => {
     const trimmed = query.trim();
     if (!trimmed) {
       setSearchResults(null);
@@ -66,6 +66,9 @@ export function useMemoryAdmin(memoryToolUrl = "") {
     try {
       const data = await callMemoryTool<MemorySearchResult>(memoryToolUrl, "memory_search", {
         query: trimmed,
+        ...(typeof personalToken === "string" && personalToken.trim()
+          ? { personalToken: personalToken.trim() }
+          : {}),
       });
       setSearchResults(data);
       setSearchState("idle");
@@ -75,11 +78,16 @@ export function useMemoryAdmin(memoryToolUrl = "") {
     }
   }, [memoryToolUrl]);
 
-  const loadMemory = useCallback(async (memoryId: string) => {
+  const loadMemory = useCallback(async (memoryId: string, personalToken?: string) => {
     setDetailState("loading");
     setDetailError(null);
     try {
-      const data = await callMemoryTool<MemoryDocument>(memoryToolUrl, "memory_get", { memoryId });
+      const data = await callMemoryTool<MemoryDocument>(memoryToolUrl, "memory_get", {
+        memoryId,
+        ...(typeof personalToken === "string" && personalToken.trim()
+          ? { personalToken: personalToken.trim() }
+          : {}),
+      });
       setSelectedMemory(data);
       setDetailState("idle");
     } catch (err) {
@@ -88,7 +96,11 @@ export function useMemoryAdmin(memoryToolUrl = "") {
     }
   }, [memoryToolUrl]);
 
-  const saveMemory = useCallback(async (memoryId: string, updates: Partial<MemoryDocument>) => {
+  const saveMemory = useCallback(async (
+    memoryId: string,
+    updates: Partial<MemoryDocument>,
+    personalToken?: string,
+  ) => {
     setSaveState("loading");
     setSaveError(null);
     try {
@@ -100,6 +112,10 @@ export function useMemoryAdmin(memoryToolUrl = "") {
         ...(Array.isArray(updates.tags) ? { tags: updates.tags } : {}),
         ...(typeof updates.retentionTier === "string" ? { retentionTier: updates.retentionTier } : {}),
         ...(typeof updates.status === "string" ? { status: updates.status } : {}),
+        ...(typeof updates.personal === "boolean" ? { personal: updates.personal } : {}),
+        ...(typeof personalToken === "string" && personalToken.trim()
+          ? { personalToken: personalToken.trim() }
+          : {}),
       });
       setSelectedMemory(data);
       setMemories((prev) => prev.map((m) => (m.id === data.id ? data : m)));

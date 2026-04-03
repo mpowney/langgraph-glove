@@ -7,6 +7,8 @@
     "dev": "pnpm -r --parallel dev",
     "typecheck": "pnpm --filter @langgraph-glove/tool-server build && pnpm -r typecheck",
     "memory:smoke": "bash scripts/memory-smoke.sh",
+    "memory:inspect": "node scripts/inspect-memories.cjs",
+    "memory:inspect:personal": "node scripts/inspect-memories.cjs --personal",
     "tools:bg": "bash scripts/tools-bg.sh",
     "tools:bg:dry": "bash scripts/tools-bg.sh --dry-run",
     "tools:stop": "bash scripts/tools-stop.sh",

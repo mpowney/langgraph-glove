@@ -12,6 +12,12 @@ export interface IncomingMessage {
   sender: string;
   /** Wall-clock time when the message was received. */
   timestamp: Date;
+  /**
+   * Optional channel-specific metadata attached to the message.
+   * Values here are never persisted to LangGraph state or checkpoints.
+   * Currently used to carry `personalToken` from WebChannel clients.
+   */
+  metadata?: Record<string, unknown>;
 }
 
 /** An outgoing message sent from the agent to the user. */

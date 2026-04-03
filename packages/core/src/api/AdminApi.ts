@@ -2,6 +2,8 @@ import http from "node:http";
 import express, { type Express } from "express";
 import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
+import type { Request } from "express";
+import type { AuthService } from "../auth/AuthService";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -107,6 +109,8 @@ export interface AdminApiConfig {
    * Defaults to `*` so the SPA served on a different port can reach it.
    */
   allowedOrigins?: string | string[];
+  /** Optional auth service used to protect admin endpoints and expose auth APIs. */
+  authService?: AuthService;
 }
 
 /**
@@ -123,6 +127,7 @@ export class AdminApi {
   private readonly host: string;
   private readonly dbPath?: string;
   private readonly allowedOrigins: string;
+  private readonly authService?: AuthService;
   private readonly app: Express;
   private httpServer?: http.Server;
 
@@ -133,6 +138,7 @@ export class AdminApi {
 
     const origins = config.allowedOrigins;
     this.allowedOrigins = Array.isArray(origins) ? origins.join(", ") : (origins ?? "*");
+    this.authService = config.authService;
 
     this.app = express();
     this.registerRoutes();
@@ -149,11 +155,13 @@ export class AdminApi {
   }
 
   private registerRoutes(): void {
+    this.app.use(express.json({ limit: "64kb" }));
+
     // CORS — allow the SPA (on a different origin/port) to call this API
     this.app.use((_req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", this.allowedOrigins);
-      res.setHeader("Access-Control-Allow-Methods", "GET, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
       if (_req.method === "OPTIONS") {
         res.sendStatus(204);
         return;
@@ -161,11 +169,81 @@ export class AdminApi {
       next();
     });
 
+    if (this.authService) {
+      this.app.get("/api/auth/status", (_req, res) => {
+        res.json(this.authService?.getStatus() ?? { setupRequired: false, minPasswordLength: 12 });
+      });
+
+      this.app.post("/api/auth/setup", (req, res) => {
+        const setupToken = readBodyString(req.body, "setupToken");
+        const password = readBodyString(req.body, "password");
+        if (!setupToken || !password) {
+          res.status(400).json({ error: "setupToken and password are required" });
+          return;
+        }
+
+        try {
+          this.authService?.completeSetup({ setupToken, password });
+          const session = this.authService?.login(password);
+          res.json({
+            token: session?.token,
+            expiresAt: session?.expiresAt,
+          });
+        } catch (err) {
+          res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+
+      this.app.post("/api/auth/login", (req, res) => {
+        const password = readBodyString(req.body, "password");
+        if (!password) {
+          res.status(400).json({ error: "password is required" });
+          return;
+        }
+
+        try {
+          const session = this.authService?.login(password);
+          res.json(session);
+        } catch (err) {
+          res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+
+      this.app.post("/api/auth/logout", (req, res) => {
+        const token = readBearerToken(req);
+        if (!token) {
+          res.status(401).json({ error: "Missing bearer token" });
+          return;
+        }
+
+        this.authService?.revokeSession(token);
+        res.status(204).send();
+      });
+    }
+
     if (this.dbPath) {
       const dbPath = this.dbPath;
 
+      const requireAuth = (req: express.Request, res: express.Response): boolean => {
+        if (!this.authService) return true;
+        const token = readBearerToken(req);
+        if (!token) {
+          res.status(401).json({ error: "Missing bearer token" });
+          return false;
+        }
+
+        const user = this.authService.authenticateSession(token);
+        if (!user) {
+          res.status(401).json({ error: "Invalid or expired session" });
+          return false;
+        }
+
+        return true;
+      };
+
       // List all conversation threads
-      this.app.get("/api/conversations", (_req, res) => {
+      this.app.get("/api/conversations", (req, res) => {
+        if (!requireAuth(req, res)) return;
         try {
           const db = new Database(dbPath, { readonly: true, fileMustExist: true });
           const rows = db.prepare<[], ConversationRow>(`
@@ -193,6 +271,7 @@ export class AdminApi {
 
       // Get messages for a specific thread
       this.app.get("/api/conversations/:threadId", (req, res) => {
+        if (!requireAuth(req, res)) return;
         const { threadId } = req.params;
         try {
           const db = new Database(dbPath, { readonly: true, fileMustExist: true });
@@ -236,4 +315,18 @@ export class AdminApi {
       this.httpServer.close((err) => (err ? reject(err) : resolve()));
     });
   }
+}
+
+function readBodyString(body: unknown, key: string): string {
+  if (typeof body !== "object" || body === null) return "";
+  const value = (body as Record<string, unknown>)[key];
+  if (typeof value !== "string") return "";
+  return value.trim();
+}
+
+function readBearerToken(req: Request): string {
+  const header = req.header("authorization");
+  if (!header) return "";
+  if (!header.startsWith("Bearer ")) return "";
+  return header.slice(7).trim();
 }

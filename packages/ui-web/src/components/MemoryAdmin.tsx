@@ -12,6 +12,7 @@ import {
   Field,
   Dropdown,
   Option,
+  Switch,
   OverlayDrawer,
   DrawerHeader,
   DrawerHeaderTitle,
@@ -155,6 +156,8 @@ interface MemoryAdminProps {
   open: boolean;
   onClose: () => void;
   memoryToolUrl?: string;
+  /** Personal token for encrypted memory operations. Empty string = no token set. */
+  personalToken?: string;
 }
 
 interface EditFormState {
@@ -163,6 +166,7 @@ interface EditFormState {
   tagsCsv: string;
   status: string;
   retentionTier: "hot" | "warm" | "cold";
+  personal: boolean;
   content: string;
 }
 
@@ -173,6 +177,7 @@ function toFormState(memory: MemoryDocument): EditFormState {
     tagsCsv: memory.tags.join(", "),
     status: memory.status,
     retentionTier: memory.retentionTier,
+    personal: memory.personal,
     content: memory.content,
   };
 }
@@ -184,7 +189,7 @@ function tagsFromCsv(value: string): string[] {
     .filter((part) => part.length > 0);
 }
 
-export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminProps) {
+export function MemoryAdmin({ open, onClose, memoryToolUrl = "", personalToken = "" }: MemoryAdminProps) {
   const styles = useStyles();
   const {
     health,
@@ -215,6 +220,8 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminPr
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<EditFormState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MemorySummary | null>(null);
+
+  const hasToken = personalToken.trim().length > 0;
 
   useEffect(() => {
     if (!open) return;
@@ -256,11 +263,11 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminPr
       await loadMemories();
       return;
     }
-    await searchMemories(trimmed);
+    await searchMemories(trimmed, personalToken);
   };
 
   const handleSelectMemory = async (memory: MemorySummary) => {
-    await loadMemory(memory.id);
+    await loadMemory(memory.id, personalToken);
   };
 
   const handleSave = async () => {
@@ -271,8 +278,9 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminPr
       tags: tagsFromCsv(form.tagsCsv),
       status: form.status,
       retentionTier: form.retentionTier,
+      personal: form.personal,
       content: form.content,
-    });
+    }, personalToken);
     if (saved) {
       setForm(toFormState(saved));
     }
@@ -350,6 +358,11 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminPr
                 />
                 <Button onClick={() => void handleSearch()} appearance="secondary">Search</Button>
               </div>
+              {!hasToken && (
+                <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                  Set a personal token (lock icon in the header) to access encrypted personal memories.
+                </Text>
+              )}
               {searchState === "error" && searchError && <Text className={styles.errorText}>{searchError}</Text>}
               {listState === "error" && listError && <Text className={styles.errorText}>{listError}</Text>}
               {(listState === "loading" || searchState === "loading") && <Spinner label="Loading memories…" />}
@@ -403,6 +416,7 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminPr
                       <div className={styles.listMeta}>
                         <Badge appearance="tint" size="small">{memory.scope}</Badge>
                         <Badge appearance="filled" size="small">{memory.retentionTier}</Badge>
+                        {memory.personal && <Badge appearance="outline" size="small">personal</Badge>}
                       </div>
                       {excerptsByMemoryId.has(memory.id) && (
                         <Text className={styles.excerpt}>{excerptsByMemoryId.get(memory.id)}</Text>
@@ -476,6 +490,20 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "" }: MemoryAdminPr
                       <Option value="warm">warm</Option>
                       <Option value="cold">cold</Option>
                     </Dropdown>
+                  </Field>
+
+                  <Field label="Privacy">
+                    <Switch
+                      checked={form.personal}
+                      label={form.personal ? "Personal (encrypted at rest)" : "Standard (unencrypted)"}
+                      disabled={!hasToken}
+                      onChange={(_, data) => setForm((prev) => prev ? { ...prev, personal: data.checked } : prev)}
+                    />
+                    {!hasToken && (
+                      <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
+                        Set a personal token via the lock icon in the header to enable this.
+                      </Text>
+                    )}
                   </Field>
 
                   <Field label="Markdown content" required>
