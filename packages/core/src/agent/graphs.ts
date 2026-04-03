@@ -222,21 +222,67 @@ function extractTextHandoff(content: unknown): ParsedHandoff | null {
   }
 }
 
+function stringifyMessageContent(content: unknown): string {
+  if (typeof content === "string") return content;
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function normalizeSubAgentUpdates(
+  subAgentName: string,
+  previousMessages: BaseMessage[],
+  nextMessages: BaseMessage[],
+): BaseMessage[] {
+  const appendedMessages = nextMessages.slice(previousMessages.length);
+  const normalizedMessages: BaseMessage[] = [];
+  let finalAnswer: string | undefined;
+
+  for (const message of appendedMessages) {
+    if (message instanceof ToolMessage) {
+      normalizedMessages.push(message);
+      continue;
+    }
+
+    if (message instanceof AIMessage) {
+      const content = stringifyMessageContent(message.content).trim();
+      if (content) {
+        finalAnswer = content;
+      }
+    }
+  }
+
+  if (finalAnswer) {
+    normalizedMessages.push(
+      new ToolMessage({
+        content: `Sub-agent \"${subAgentName}\" reported: ${finalAnswer}`,
+        tool_call_id: `subagent_${subAgentName}_${randomUUID()}`,
+      }),
+    );
+  }
+
+  return normalizedMessages;
+}
+
 /**
  * Build a multi-agent orchestrator graph.
  *
  * Structure:
  * ```
- * START → orchestrator ──→ sub-agent-A → orchestrator
- *                      ├─→ sub-agent-B → orchestrator
+ * START → orchestrator ──→ sub-agent-A-wrapper → orchestrator
+ *                      ├─→ sub-agent-B-wrapper → orchestrator
  *                      ├─→ orchestrator_tools → orchestrator
  *                      └─→ END
  * ```
  *
  * The orchestrator model receives auto-generated `transfer_to_<name>` tools
  * for each sub-agent. When it calls one of these, the graph routes to that
- * sub-agent's ReAct loop. When the sub-agent finishes, control returns to
- * the orchestrator, which can delegate again or respond directly.
+ * sub-agent's ReAct loop inside a wrapper node. The wrapper feeds the
+ * sub-agent's tool outputs and final answer back to the orchestrator as
+ * internal context, allowing the orchestrator to continue working without
+ * persisting two separate assistant final answers for one user turn.
  */
 export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
   const { orchestrator, subAgents, checkpointer } = config;
@@ -378,7 +424,18 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
 
   // Sub-agent subgraph nodes
   for (const [name, subGraph] of subAgentGraphs) {
-    graph = graph.addNode(name, subGraph);
+    graph = graph.addNode(name, async (state: typeof MessagesAnnotation.State, config: unknown) => {
+      const result = await (subGraph as typeof subGraph & {
+        invoke(input: { messages: BaseMessage[] }, options?: unknown): Promise<{ messages: BaseMessage[] }>;
+      }).invoke(
+        { messages: state.messages },
+        config,
+      );
+
+      return {
+        messages: normalizeSubAgentUpdates(name, state.messages, result.messages),
+      };
+    });
     graph = graph.addEdge(name, "orchestrator");
   }
 

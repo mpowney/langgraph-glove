@@ -60,6 +60,32 @@ function mergeArgumentFragment(existing: string | undefined, incoming: string): 
   return `${existing}${incoming}`;
 }
 
+function mergeTextFragment(existing: string, incoming: string): { merged: string; delta: string } {
+  if (!incoming) return { merged: existing, delta: "" };
+  if (!existing) return { merged: incoming, delta: incoming };
+
+  // Some providers resend the full accumulated message on later chunks.
+  if (incoming === existing) return { merged: existing, delta: "" };
+  if (incoming.startsWith(existing)) {
+    return { merged: incoming, delta: incoming.slice(existing.length) };
+  }
+  if (existing.endsWith(incoming)) {
+    return { merged: existing, delta: "" };
+  }
+
+  const maxOverlap = Math.min(existing.length, incoming.length);
+  for (let overlap = maxOverlap; overlap > 0; overlap -= 1) {
+    if (existing.endsWith(incoming.slice(0, overlap))) {
+      return {
+        merged: `${existing}${incoming.slice(overlap)}`,
+        delta: incoming.slice(overlap),
+      };
+    }
+  }
+
+  return { merged: `${existing}${incoming}`, delta: incoming };
+}
+
 function isGenericToolName(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized.length === 0 || ["tool", "structuredtool", "dynamictool", "remotetool"].includes(normalized);
@@ -310,6 +336,8 @@ export class GloveAgent {
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string) => void,
   ): AsyncGenerator<string> {
     const streamedToolArgsByKey = new Map<string, string>();
+    let streamedText = "";
+    let streamedTextNode: string | undefined;
 
     const toolCallKey = (tool: { id?: string; name?: string }, toolIndex: number): string => {
       if (typeof tool.id === "string" && tool.id.trim().length > 0) {
@@ -394,7 +422,7 @@ export class GloveAgent {
       },
     );
 
-    for await (const [chunk, _metadata] of streamResult as AsyncIterable<
+    for await (const [chunk, metadata] of streamResult as AsyncIterable<
       [unknown, { langgraph_node?: string }]
     >) {
       if (chunk instanceof AIMessageChunk) {
@@ -415,6 +443,8 @@ export class GloveAgent {
         }
 
         if (chunk.tool_calls?.length) {
+          streamedText = "";
+          streamedTextNode = undefined;
           // Completed tool-call decisions — fire event, don't yield text.
           if (onToolEvent) {
             for (const [toolIndex, tc] of chunk.tool_calls.entries()) {
@@ -454,9 +484,22 @@ export class GloveAgent {
             }
           }
         } else if (typeof chunk.content === "string" && chunk.content) {
-          yield chunk.content;
+          const currentNode = metadata.langgraph_node;
+          if (streamedTextNode && currentNode && streamedTextNode !== currentNode) {
+            streamedText = "";
+          }
+
+          streamedTextNode = currentNode ?? streamedTextNode;
+          const nextText = mergeTextFragment(streamedText, chunk.content);
+          streamedText = nextText.merged;
+
+          if (nextText.delta) {
+            yield nextText.delta;
+          }
         }
       } else if (chunk instanceof ToolMessage && onToolEvent) {
+        streamedText = "";
+        streamedTextNode = undefined;
         const content =
           typeof chunk.content === "string"
             ? chunk.content
