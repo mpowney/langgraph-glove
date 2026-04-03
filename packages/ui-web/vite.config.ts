@@ -1,6 +1,24 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+function resolveApiTarget(): string {
+  const wsUrl = process.env["VITE_WS_URL"];
+  if (!wsUrl) return "http://127.0.0.1:8080";
+
+  try {
+    const url = new URL(wsUrl);
+    // Use http(s) for the Vite proxy target and prefer IPv4 loopback over ::1.
+    url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+    }
+    return url.toString();
+  } catch {
+    // Fallback for malformed values while keeping backward compatibility.
+    return wsUrl.replace(/^wss?/, "http").replace("localhost", "127.0.0.1");
+  }
+}
+
 export default defineConfig({
   plugins: [react()],
   build: {
@@ -10,13 +28,11 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Forward /api/info to the WebChannel (chat) server in dev mode.
+      // Forward all /api/* routes to the backend server in dev mode.
       // The backend port is read from VITE_WS_URL (e.g. ws://localhost:8080)
       // and falls back to port 8080.
-      "/api/info": {
-        target: process.env["VITE_WS_URL"]
-          ? process.env["VITE_WS_URL"].replace(/^wss?/, "http")
-          : "http://localhost:8080",
+      "/api": {
+        target: resolveApiTarget(),
         changeOrigin: true,
       },
     },

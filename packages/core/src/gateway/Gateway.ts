@@ -271,7 +271,7 @@ export class Gateway extends EventEmitter {
       const desc = t.description.replaceAll("{name}", t.name);
       return `- ${t.name}: ${desc}`;
     });
-    return systemPrompt.replace("{tool-descriptions}", `\n${lines.join("\n")}`);
+    return systemPrompt.replace("{tool-descriptions}", `\n${lines.join("\n")}\n\n`);
   }
 
   /**
