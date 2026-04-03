@@ -4,6 +4,75 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PID_FILE="$ROOT_DIR/logs/tool-processes.pids"
 
+get_pid_cwd() {
+  local pid="$1"
+
+  # macOS/BSD-compatible way to query cwd for a pid.
+  lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | awk '/^n/ { sub(/^n/, "", $0); print; exit }'
+}
+
+list_child_pids() {
+  local parent_pid="$1"
+  local children
+
+  children="$(ps -axo pid=,ppid= | awk -v ppid="$parent_pid" '$2 == ppid { print $1 }')"
+  if [[ -z "${children:-}" ]]; then
+    return 0
+  fi
+
+  while IFS= read -r child_pid; do
+    [[ -z "${child_pid:-}" ]] && continue
+    echo "$child_pid"
+    list_child_pids "$child_pid"
+  done <<< "$children"
+}
+
+collect_tool_pids() {
+  local tool_name="$1"
+  local seed_pid="$2"
+  local cmd
+  local all_pids=""
+
+  if [[ -n "${seed_pid:-}" ]] && kill -0 "$seed_pid" 2>/dev/null; then
+    all_pids+="$seed_pid"$'\n'
+    all_pids+="$(list_child_pids "$seed_pid")"$'\n'
+  fi
+
+  # Fallback for stale/missing seed pid: match process command lines for this tool.
+  while IFS= read -r pid; do
+    [[ -z "${pid:-}" ]] && continue
+    all_pids+="$pid"$'\n'
+  done < <(ps -axww -o pid=,command= | awk -v tool="$tool_name" -v root="$ROOT_DIR" '
+    (index($0, "pnpm --filter ./packages/" tool " dev") ||
+     index($0, "pnpm --filter \"./packages/" tool "\" dev") ||
+     index($0, root "/packages/" tool "/src/main.ts") ||
+     index($0, root "/packages/" tool "/node_modules/.bin/../tsx/dist/cli.mjs") ||
+     index($0, root "/node_modules/.pnpm/tsx@")) &&
+    $2 ~ /node|pnpm/
+    { print $1 }
+  ')
+
+  if [[ -n "$all_pids" ]]; then
+    echo "$all_pids" | awk 'NF' | sort -u
+  fi
+}
+
+safe_command_match() {
+  local tool_name="$1"
+  local pid="$2"
+  local command_line
+  local cwd
+
+  command_line="$(ps -p "$pid" -ww -o command= 2>/dev/null || true)"
+  cwd="$(get_pid_cwd "$pid")"
+
+  [[ "$command_line" == *"pnpm --filter ./packages/${tool_name} dev"* ||
+     "$command_line" == *"pnpm --filter \"./packages/${tool_name}\" dev"* ||
+      "$command_line" == *"$ROOT_DIR/packages/${tool_name}/src/main.ts"* ||
+      "$command_line" == *"$ROOT_DIR/packages/${tool_name}/node_modules/.bin/../tsx/dist/cli.mjs"* ||
+    ("$command_line" == *"$ROOT_DIR/node_modules/.pnpm/tsx@"* && ("$cwd" == "$ROOT_DIR/packages/${tool_name}" || "$cwd" == "$ROOT_DIR/packages/${tool_name}/"*)) ]]
+}
+
 if [[ ! -f "$PID_FILE" ]]; then
   echo "No PID file found at $PID_FILE"
   exit 0
@@ -24,36 +93,58 @@ while IFS=: read -r tool_name pid log_file; do
     continue
   fi
 
-  if ! kill -0 "$pid" 2>/dev/null; then
-    echo "$tool_name already stopped (pid=$pid)"
+  tool_pids=()
+  while IFS= read -r found_pid; do
+    [[ -z "${found_pid:-}" ]] && continue
+    tool_pids+=("$found_pid")
+  done < <(collect_tool_pids "$tool_name" "$pid")
+
+  if [[ ${#tool_pids[@]} -eq 0 ]]; then
+    echo "$tool_name already stopped (seed pid=$pid)"
     ((already_stopped += 1))
     continue
   fi
 
-  command_line="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  valid_targets=()
+  for target_pid in "${tool_pids[@]}"; do
+    if safe_command_match "$tool_name" "$target_pid"; then
+      valid_targets+=("$target_pid")
+    fi
+  done
 
-  # Safety check: only terminate processes that look like tool package dev runs.
-  if [[ "$command_line" != *"packages/${tool_name}"* && "$command_line" != *"pnpm --filter ./packages/${tool_name}"* && "$command_line" != *"pnpm --filter \"./packages/${tool_name}\""* ]]; then
-    echo "Skipping $tool_name (pid=$pid) due to command mismatch"
+  if [[ ${#valid_targets[@]} -eq 0 ]]; then
+    echo "Skipping $tool_name (seed pid=$pid) due to command mismatch"
     ((skipped += 1))
     continue
   fi
 
-  kill "$pid" 2>/dev/null || true
+  # Kill children first, then parent-like entries, to avoid orphaned workers.
+  for ((i=${#valid_targets[@]}-1; i>=0; i--)); do
+    kill -HUP "${valid_targets[$i]}" 2>/dev/null || true
+  done
 
   # Wait briefly for graceful shutdown.
   for _ in {1..20}; do
-    if ! kill -0 "$pid" 2>/dev/null; then
+    any_alive=0
+    for target_pid in "${valid_targets[@]}"; do
+      if kill -0 "$target_pid" 2>/dev/null; then
+        any_alive=1
+        break
+      fi
+    done
+    if [[ $any_alive -eq 0 ]]; then
       break
     fi
     sleep 0.1
   done
 
-  if kill -0 "$pid" 2>/dev/null; then
-    kill -9 "$pid" 2>/dev/null || true
-  fi
+  for target_pid in "${valid_targets[@]}"; do
+    if kill -0 "$target_pid" 2>/dev/null; then
+      kill -9 "$target_pid" 2>/dev/null || true
+    fi
+  done
 
-  echo "Stopped $tool_name (pid=$pid)"
+  echo "Stopped $tool_name (seed pid=$pid, matched=${#valid_targets[@]})"
   ((terminated += 1))
 done < "$PID_FILE"
 
