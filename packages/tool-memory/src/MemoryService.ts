@@ -919,6 +919,8 @@ function scoreChunk(query: string, queryTerms: string[], row: ChunkRow): number 
     if (haystack.includes(term)) score += 2;
   }
 
+  if (score <= 0) return 0;
+
   if (row.scope.toLowerCase() === "general") score += 0.25;
   if (row.retention_tier === "hot") score += 0.5;
   return score;
