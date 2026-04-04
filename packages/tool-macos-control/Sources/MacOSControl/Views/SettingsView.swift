@@ -10,6 +10,7 @@ struct SettingsView: View {
     // Local editing copies
     @State private var editTransport: RpcTransport = .unixSocket
     @State private var editPort: Int             = 3020
+    @State private var editPortString: String    = "3020"
     @State private var editSocketName: String    = "macos-control"
     @State private var applyPending: Bool        = false
 
@@ -28,7 +29,7 @@ struct SettingsView: View {
                     HStack {
                         Text("Port")
                         Spacer()
-                        TextField("Port", value: $editPort, format: .number)
+                        TextField("Port", text: $editPortString)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 80)
                     }
@@ -113,21 +114,27 @@ struct SettingsView: View {
     // MARK: - Helpers
 
     private var settingsUnchanged: Bool {
-        editTransport == appState.transport
-            && editPort      == appState.serverPort
+        let parsedPort = Int(editPortString.filter { $0.isNumber })
+        return editTransport == appState.transport
+            && parsedPort    == appState.serverPort
             && editSocketName == appState.socketName
     }
 
     private func syncFromAppState() {
         editTransport  = appState.transport
         editPort       = appState.serverPort
+        editPortString = String(appState.serverPort)
         editSocketName = appState.socketName
     }
 
     private func apply() {
         applyPending = true
         appState.transport  = editTransport
-        appState.serverPort = editPort
+        if let p = Int(editPortString.filter { $0.isNumber }), p > 0 {
+            appState.serverPort = p
+            editPort = p
+            editPortString = String(p)
+        }
         appState.socketName = editSocketName
         appState.saveSettings()
         appState.restartServer()

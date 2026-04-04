@@ -1,5 +1,15 @@
 import SwiftUI
 
+import AppKit
+
+class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // When launched from a terminal, the terminal retains key focus.
+        // Activate explicitly so keyboard input goes to our windows.
+        NSApp.activate(ignoringOtherApps: true)
+    }
+}
+
 /// Entry point for the macOS Control tool — a langgraph-glove tool server
 /// that exposes macOS accessibility and UI-control capabilities over HTTP JSON-RPC.
 ///
@@ -11,6 +21,7 @@ import SwiftUI
 /// A menu-bar extra provides at-a-glance status and quick access to settings.
 @main
 struct MacOSControlApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {

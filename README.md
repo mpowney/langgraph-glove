@@ -249,7 +249,7 @@ pnpm build
 - **Command-line only:** Install Xcode Command Line Tools — `xcode-select --install` — which includes the Swift compiler and Swift Package Manager. No full Xcode install required.
 - **Full Xcode:** Install [Xcode 15+](https://apps.apple.com/app/xcode/id497799835) from the Mac App Store (includes command-line tools).
 
-#### Build and run from the command line
+#### Build, bundle, and run from the command line
 
 ```bash
 cd packages/tool-macos-control
@@ -263,6 +263,26 @@ swift build -c release
 # Run the pre-built binary:
 .build/release/MacOSControl
 ```
+
+#### Bundle as a macOS app (.app)
+
+Create a standalone macOS application bundle with proper Info.plist and code signing:
+
+```bash
+# From the workspace root, bundle the app:
+pnpm macos:bundle
+
+# Bundle and open in Finder:
+pnpm macos:bundle:open
+
+# Or manually from packages/tool-macos-control:
+bash ../../scripts/macos-bundle-control-app.sh --open
+```
+
+The bundled app is created at `packages/tool-macos-control/dist/MacOSControl.app` and can be launched via:
+- **Finder:** Double-click the .app bundle
+- **Terminal:** `open packages/tool-macos-control/dist/MacOSControl.app`
+- **Direct invocation:** `packages/tool-macos-control/dist/MacOSControl.app/Contents/MacOS/MacOSControl`
 
 #### Build and run with Xcode (alternative)
 
