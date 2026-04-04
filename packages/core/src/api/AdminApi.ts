@@ -3,6 +3,7 @@ import express, { type Express } from "express";
 import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
+import type { ToolServerEntry } from "@langgraph-glove/config";
 import type { AuthService } from "../auth/AuthService";
 
 // ---------------------------------------------------------------------------
@@ -111,6 +112,8 @@ export interface AdminApiConfig {
   allowedOrigins?: string | string[];
   /** Optional auth service used to protect admin endpoints and expose auth APIs. */
   authService?: AuthService;
+  /** Tool server config map used for HTTP proxying under `/api/tools/_<name>`. */
+  toolsConfig?: Record<string, ToolServerEntry>;
 }
 
 /**
@@ -128,6 +131,7 @@ export class AdminApi {
   private readonly dbPath?: string;
   private readonly allowedOrigins: string;
   private readonly authService?: AuthService;
+  private readonly toolsConfig: Record<string, ToolServerEntry>;
   private readonly app: Express;
   private httpServer?: http.Server;
 
@@ -139,6 +143,7 @@ export class AdminApi {
     const origins = config.allowedOrigins;
     this.allowedOrigins = Array.isArray(origins) ? origins.join(", ") : (origins ?? "*");
     this.authService = config.authService;
+    this.toolsConfig = config.toolsConfig ?? {};
 
     this.app = express();
     this.registerRoutes();
@@ -156,6 +161,23 @@ export class AdminApi {
 
   private registerRoutes(): void {
     this.app.use(express.json({ limit: "64kb" }));
+
+    const requireAuth = (req: express.Request, res: express.Response): boolean => {
+      if (!this.authService) return true;
+      const token = readBearerToken(req);
+      if (!token) {
+        res.status(401).json({ error: "Missing bearer token" });
+        return false;
+      }
+
+      const user = this.authService.authenticateSession(token);
+      if (!user) {
+        res.status(401).json({ error: "Invalid or expired session" });
+        return false;
+      }
+
+      return true;
+    };
 
     // CORS — allow the SPA (on a different origin/port) to call this API
     this.app.use((_req, res, next) => {
@@ -221,25 +243,76 @@ export class AdminApi {
       });
     }
 
+    const proxyToolRequest = async (
+      req: express.Request,
+      res: express.Response,
+    ): Promise<void> => {
+      if (!requireAuth(req, res)) return;
+
+      const rawToolParam = req.params["toolPath"];
+      const toolRef = typeof rawToolParam === "string" ? rawToolParam.trim() : "";
+      if (!toolRef.startsWith("_") || toolRef.length < 2) {
+        res.status(400).json({ error: "Tool path must be in the form /api/tools/_<tool_name>" });
+        return;
+      }
+
+      const toolName = toolRef.slice(1);
+      const entry = this.toolsConfig[toolName];
+      if (!entry || entry.enabled === false) {
+        res.status(404).json({ error: `Tool "${toolName}" is not configured` });
+        return;
+      }
+      if (entry.transport !== "http" || !entry.url) {
+        res.status(400).json({
+          error: `Tool "${toolName}" is not configured for HTTP RPC`,
+        });
+        return;
+      }
+
+      const rest = typeof req.params["0"] === "string" && req.params["0"].length > 0
+        ? `/${req.params["0"]}`
+        : "";
+      const queryIndex = req.originalUrl.indexOf("?");
+      const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
+
+      const baseUrl = entry.url.endsWith("/") ? entry.url.slice(0, -1) : entry.url;
+      const targetUrl = `${baseUrl}${rest}${query}`;
+
+      try {
+        const headers: Record<string, string> = {};
+        const contentType = req.header("content-type");
+        if (contentType) {
+          headers["content-type"] = contentType;
+        }
+
+        const hasBody = req.method !== "GET" && req.method !== "HEAD" && req.body !== undefined;
+        const upstream = await fetch(targetUrl, {
+          method: req.method,
+          headers,
+          ...(hasBody ? { body: JSON.stringify(req.body) } : {}),
+        });
+
+        const responseContentType = upstream.headers.get("content-type");
+        if (responseContentType) {
+          res.setHeader("content-type", responseContentType);
+        }
+
+        res.status(upstream.status).send(await upstream.text());
+      } catch (err) {
+        res.status(502).json({ error: err instanceof Error ? err.message : "Tool upstream unreachable" });
+      }
+    };
+
+    this.app.all("/api/tools/:toolPath", (req, res) => {
+      void proxyToolRequest(req, res);
+    });
+
+    this.app.all("/api/tools/:toolPath/*", (req, res) => {
+      void proxyToolRequest(req, res);
+    });
+
     if (this.dbPath) {
       const dbPath = this.dbPath;
-
-      const requireAuth = (req: express.Request, res: express.Response): boolean => {
-        if (!this.authService) return true;
-        const token = readBearerToken(req);
-        if (!token) {
-          res.status(401).json({ error: "Missing bearer token" });
-          return false;
-        }
-
-        const user = this.authService.authenticateSession(token);
-        if (!user) {
-          res.status(401).json({ error: "Invalid or expired session" });
-          return false;
-        }
-
-        return true;
-      };
 
       // List all conversation threads
       this.app.get("/api/conversations", (req, res) => {

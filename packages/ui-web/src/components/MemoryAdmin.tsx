@@ -156,6 +156,7 @@ interface MemoryAdminProps {
   open: boolean;
   onClose: () => void;
   memoryToolUrl?: string;
+  authToken?: string;
   /** Personal token for encrypted memory operations. Empty string = no token set. */
   personalToken?: string;
 }
@@ -189,7 +190,13 @@ function tagsFromCsv(value: string): string[] {
     .filter((part) => part.length > 0);
 }
 
-export function MemoryAdmin({ open, onClose, memoryToolUrl = "", personalToken = "" }: MemoryAdminProps) {
+export function MemoryAdmin({
+  open,
+  onClose,
+  memoryToolUrl = "",
+  authToken,
+  personalToken = "",
+}: MemoryAdminProps) {
   const styles = useStyles();
   const {
     health,
@@ -215,7 +222,7 @@ export function MemoryAdmin({ open, onClose, memoryToolUrl = "", personalToken =
     saveMemory,
     deleteMemory,
     clearSelection,
-  } = useMemoryAdmin(memoryToolUrl);
+  } = useMemoryAdmin(memoryToolUrl, authToken);
 
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<EditFormState | null>(null);

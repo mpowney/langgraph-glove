@@ -19,14 +19,19 @@ function updateMessageToEnd(
   ];
 }
 
-function buildWsUrl(): string {
+function buildWsUrl(authToken?: string): string {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  if (envUrl) return envUrl;
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${location.host}`;
+  const base = envUrl ?? (() => {
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${location.host}`;
+  })();
+  if (!authToken) return base;
+  const url = new URL(base);
+  url.searchParams.set("token", authToken);
+  return url.toString();
 }
 
-export function useWebSocket(conversationId: string, personalToken?: string) {
+export function useWebSocket(conversationId: string, personalToken?: string, authToken?: string) {
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
@@ -42,7 +47,7 @@ export function useWebSocket(conversationId: string, personalToken?: string) {
     // a spurious disconnect message to the chat. Instead we defer the close
     // until onopen if the socket hasn't connected yet.
     let active = true;
-    const ws = new WebSocket(buildWsUrl());
+    const ws = new WebSocket(buildWsUrl(authToken));
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -206,7 +211,7 @@ export function useWebSocket(conversationId: string, personalToken?: string) {
         ws.close();
       }
     };
-  }, [conversationId]);
+  }, [conversationId, authToken]);
 
   const sendMessage = useCallback(
     (text: string) => {

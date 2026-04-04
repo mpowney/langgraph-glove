@@ -140,6 +140,15 @@ export class Gateway extends EventEmitter {
       });
 
       // 8. Channels
+      // Inject the auth service into any channel that supports it — this
+      // gates WebSocket upgrades behind the session token check.
+      for (const ch of this.options.channels ?? []) {
+        if (typeof (ch as unknown as { setAuthService?: unknown }).setAuthService === "function") {
+          (ch as unknown as { setAuthService: (svc: AuthService) => void }).setAuthService(
+            this.authService,
+          );
+        }
+      }
       for (const channel of this.options.channels ?? []) {
         this.agent.addChannel(channel);
       }
@@ -161,6 +170,7 @@ export class Gateway extends EventEmitter {
         host: apiHost,
         dbPath: this.config.gateway.dbPath,
         authService: this.authService,
+        toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
       });
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);

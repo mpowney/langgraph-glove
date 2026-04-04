@@ -33,7 +33,7 @@ function App() {
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, personalToken || undefined);
+  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, personalToken || undefined, auth.token ?? undefined);
   const styles = useStyles();
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
@@ -61,16 +61,21 @@ function App() {
     [messages],
   );
   const inputDisabled = status !== "connected" || isStreaming;
-  const configuredMemoryToolUrl = (import.meta.env.VITE_MEMORY_TOOL_URL as string | undefined)?.trim() ?? "";
+  const configuredToolsBaseUrl = (import.meta.env.VITE_TOOLS_URL as string | undefined)?.trim() ?? "";
+  const legacyMemoryToolUrl = (import.meta.env.VITE_MEMORY_TOOL_URL as string | undefined)?.trim() ?? "";
+  // Use the generic tools route in dev; in production prefer a generic tools base
+  // and keep VITE_MEMORY_TOOL_URL as a backward-compatible fallback.
   const memoryToolUrl = import.meta.env.DEV
-    ? (configuredMemoryToolUrl ? "/_memory_tool" : "")
-    : configuredMemoryToolUrl;
+    ? "/api/tools/_memory"
+    : configuredToolsBaseUrl
+      ? `${configuredToolsBaseUrl.replace(/\/$/, "")}/_memory`
+      : legacyMemoryToolUrl;
 
   useEffect(() => {
     let active = true;
 
     const checkMemoryAvailability = async () => {
-      const health = await checkMemoryToolAvailability(memoryToolUrl);
+      const health = await checkMemoryToolAvailability(memoryToolUrl, auth.token ?? undefined);
       if (!active) return;
       setMemoryAvailable(health.available);
     };
@@ -79,7 +84,7 @@ function App() {
     return () => {
       active = false;
     };
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, auth.token]);
 
   const visibleMessages = useMemo(
     () => showAll ? messages : messages.filter((m) => m.conversationId === myConversationId),
@@ -123,7 +128,13 @@ function App() {
           apiBaseUrl={appInfo?.apiUrl}
           authToken={auth.token ?? undefined}
         />
-        <MemoryAdmin open={memoryAdminOpen} onClose={() => setMemoryAdminOpen(false)} memoryToolUrl={memoryToolUrl} personalToken={personalToken} />
+        <MemoryAdmin
+          open={memoryAdminOpen}
+          onClose={() => setMemoryAdminOpen(false)}
+          memoryToolUrl={memoryToolUrl}
+          authToken={auth.token ?? undefined}
+          personalToken={personalToken}
+        />
       </div>
     </FluentProvider>
   );
