@@ -12,6 +12,8 @@
  *   --web              - also start the WebChannel (browser UI)
  *   --web-port <n>     - port for the WebChannel  (default: 8080)
  *   --no-cli           - disable the CLI channel
+ *   --regenerate-setup-token - print a new setup token and exit (for initial setup or if the original token is lost)
+ *   --reset-auth       - wipe all auth state and print a fresh setup token, then exit
  *
  * Usage:
  *   node dist/main.js [--web] [--web-port 3000] [--no-cli]
@@ -35,6 +37,7 @@ const args = process.argv.slice(2);
 const useWeb = args.includes("--web");
 const noCli = args.includes("--no-cli");
 const regenerateSetupToken = args.includes("--regenerate-setup-token");
+const resetAuth = args.includes("--reset-auth");
 const webPortIndex = args.indexOf("--web-port");
 const webPort = webPortIndex !== -1 ? parseInt(args[webPortIndex + 1] ?? "8080", 10) : 8080;
 
@@ -85,6 +88,24 @@ if (regenerateSetupToken) {
     const setupToken = auth.regenerateBootstrapToken();
     // Use stdout so operators can copy the token from terminal output.
     console.log(`Setup token (expires ${setupToken.expiresAt}): ${setupToken.token}`);
+  } finally {
+    auth.close();
+  }
+
+  process.exit(0);
+}
+
+if (resetAuth) {
+  const config = new ConfigLoader(configDir, secretsDir).load();
+  const auth = new AuthService({
+    dbPath: config.gateway.dbPath ?? "data/checkpoints.sqlite",
+    config: config.gateway.auth,
+  });
+
+  try {
+    const setupToken = auth.resetAuth();
+    console.log("Auth state reset. All users, sessions, and passkeys have been removed.");
+    console.log(`New setup token (expires ${setupToken.expiresAt}): ${setupToken.token}`);
   } finally {
     auth.close();
   }

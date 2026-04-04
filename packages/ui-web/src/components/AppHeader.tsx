@@ -11,6 +11,7 @@ import {
   PopoverSurface,
   Field,
   Input,
+  Spinner,
 } from "@fluentui/react-components";
 import {
   Brain24Regular,
@@ -104,6 +105,8 @@ interface AppHeaderProps {
   /** Currently active personal token (empty string = none). */
   personalToken: string;
   onSetPersonalToken: (token: string) => void;
+  passkeyEnabled?: boolean;
+  onGeneratePersonalTokenWithPasskey?: () => Promise<string | null>;
 }
 
 export function AppHeader({
@@ -116,10 +119,14 @@ export function AppHeader({
   onOpenBrowser,
   personalToken,
   onSetPersonalToken,
+  passkeyEnabled = false,
+  onGeneratePersonalTokenWithPasskey,
 }: AppHeaderProps) {
   const styles = useStyles();
   const [popoverOpen, setPopoverOpen] = useState(false);
   const [draftToken, setDraftToken] = useState("");
+  const [tokenError, setTokenError] = useState<string | null>(null);
+  const [isGeneratingWithPasskey, setIsGeneratingWithPasskey] = useState(false);
 
   const dotClass =
     status === "connected"
@@ -130,17 +137,38 @@ export function AppHeader({
 
   const handleOpenPopover = () => {
     setDraftToken(personalToken);
+    setTokenError(null);
     setPopoverOpen(true);
   };
 
   const handleSetToken = () => {
+    setTokenError(null);
     onSetPersonalToken(draftToken.trim());
     setPopoverOpen(false);
   };
 
   const handleClearToken = () => {
+    setTokenError(null);
     onSetPersonalToken("");
     setDraftToken("");
+    setPopoverOpen(false);
+  };
+
+  const handleGenerateTokenWithPasskey = async () => {
+    if (!onGeneratePersonalTokenWithPasskey) return;
+
+    setTokenError(null);
+    setIsGeneratingWithPasskey(true);
+    const generatedToken = await onGeneratePersonalTokenWithPasskey();
+    setIsGeneratingWithPasskey(false);
+
+    if (!generatedToken) {
+      setTokenError("Passkey verification failed. Try again.");
+      return;
+    }
+
+    onSetPersonalToken(generatedToken);
+    setDraftToken(generatedToken);
     setPopoverOpen(false);
   };
 
@@ -204,10 +232,20 @@ export function AppHeader({
           <PopoverSurface>
             <div className={styles.tokenPopover}>
               <Text weight="semibold">Personal memory token</Text>
-              <Text size={200}>
-                It is sent for this conversation, and only used for tool operations
-                that require it. Once you close this tab, it will be cleared.
+              <Text size={200} style={{ maxWidth: "300px" }}>
+                A personal memory token is used to encrypt personal or sensitive 
+                information stored as memories. Any time the agent needs access
+                to encrypted memories, the token must be provided.
               </Text>
+              {passkeyEnabled && onGeneratePersonalTokenWithPasskey && (
+                <Button
+                  appearance="secondary"
+                  onClick={() => { void handleGenerateTokenWithPasskey(); }}
+                  disabled={isGeneratingWithPasskey}
+                >
+                  {isGeneratingWithPasskey ? <Spinner size="tiny" /> : "Use passkey"}
+                </Button>
+              )}
               <Field label="Token">
                 <Input
                   type="password"
@@ -218,13 +256,22 @@ export function AppHeader({
                   autoFocus
                 />
               </Field>
+              {tokenError && (
+                <Text size={200} style={{ color: tokens.colorPaletteRedForeground1 }}>
+                  {tokenError}
+                </Text>
+              )}
               <div style={{ display: "flex", gap: tokens.spacingHorizontalS, justifyContent: "flex-end" }}>
                 {personalToken && (
                   <Button appearance="subtle" onClick={handleClearToken}>
                     Clear
                   </Button>
                 )}
-                <Button appearance="primary" onClick={handleSetToken} disabled={!draftToken.trim()}>
+                <Button
+                  appearance="primary"
+                  onClick={handleSetToken}
+                  disabled={!draftToken.trim() || isGeneratingWithPasskey}
+                >
                   Set token
                 </Button>
               </div>

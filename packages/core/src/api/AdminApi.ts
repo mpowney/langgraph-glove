@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
 import type { ToolServerEntry } from "@langgraph-glove/config";
-import type { AuthService } from "../auth/AuthService";
+import type { AuthService, AuthenticatedUser } from "../auth/AuthService";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -199,14 +199,19 @@ export class AdminApi {
       this.app.post("/api/auth/setup", (req, res) => {
         const setupToken = readBodyString(req.body, "setupToken");
         const password = readBodyString(req.body, "password");
-        if (!setupToken || !password) {
-          res.status(400).json({ error: "setupToken and password are required" });
+        if (!setupToken) {
+          res.status(400).json({ error: "setupToken is required" });
           return;
         }
 
         try {
-          this.authService?.completeSetup({ setupToken, password });
-          const session = this.authService?.login(password);
+          const setup = this.authService?.completeSetup({
+            setupToken,
+            ...(password ? { password } : {}),
+          });
+          const session = password
+            ? this.authService?.login(password)
+            : (setup ? this.authService?.createSessionForUser(setup.userId) : undefined);
           res.json({
             token: session?.token,
             expiresAt: session?.expiresAt,
@@ -240,6 +245,86 @@ export class AdminApi {
 
         this.authService?.revokeSession(token);
         res.status(204).send();
+      });
+
+      // -----------------------------------------------------------------------
+      // Passkey (WebAuthn) endpoints
+      // -----------------------------------------------------------------------
+
+      // Begin passkey registration — requires an active session
+      this.app.post("/api/auth/passkey/register/begin", (req, res) => {
+        const user = requireAuthUser(req, res, this.authService!);
+        if (!user) return;
+
+        const origin = req.headers.origin ?? `http://${req.headers.host ?? "localhost"}`;
+        const rpId = getRpId(origin);
+        const rpName = "LangGraph Glove";
+
+        void (async () => {
+          try {
+            const options = await this.authService!.beginPasskeyRegistration(user.userId, rpId, rpName);
+            res.json(options);
+          } catch (err) {
+            res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Complete passkey registration — requires an active session
+      this.app.post("/api/auth/passkey/register/complete", (req, res) => {
+        const user = requireAuthUser(req, res, this.authService!);
+        if (!user) return;
+
+        const origin = req.headers.origin ?? `http://${req.headers.host ?? "localhost"}`;
+        const rpId = getRpId(origin);
+
+        void (async () => {
+          try {
+            const result = await this.authService!.completePasskeyRegistration(
+              user.userId,
+              req.body,
+              rpId,
+              origin,
+            );
+            res.json(result);
+          } catch (err) {
+            res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Begin passkey authentication — public
+      this.app.post("/api/auth/passkey/authenticate/begin", (req, res) => {
+        const origin = req.headers.origin ?? `http://${req.headers.host ?? "localhost"}`;
+        const rpId = getRpId(origin);
+
+        void (async () => {
+          try {
+            const options = await this.authService!.beginPasskeyAuthentication(rpId);
+            res.json(options);
+          } catch (err) {
+            res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Complete passkey authentication — public, returns session token
+      this.app.post("/api/auth/passkey/authenticate/complete", (req, res) => {
+        const origin = req.headers.origin ?? `http://${req.headers.host ?? "localhost"}`;
+        const rpId = getRpId(origin);
+
+        void (async () => {
+          try {
+            const session = await this.authService!.completePasskeyAuthentication(
+              req.body,
+              rpId,
+              origin,
+            );
+            res.json(session);
+          } catch (err) {
+            res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
       });
     }
 
@@ -402,4 +487,35 @@ function readBearerToken(req: Request): string {
   if (!header) return "";
   if (!header.startsWith("Bearer ")) return "";
   return header.slice(7).trim();
+}
+
+/**
+ * Like `requireAuth` but returns the authenticated user object, or writes a
+ * 401 response and returns `null` when auth fails.
+ */
+function requireAuthUser(
+  req: express.Request,
+  res: express.Response,
+  authService: AuthService,
+): AuthenticatedUser | null {
+  const token = readBearerToken(req);
+  if (!token) {
+    res.status(401).json({ error: "Missing bearer token" });
+    return null;
+  }
+  const user = authService.authenticateSession(token);
+  if (!user) {
+    res.status(401).json({ error: "Invalid or expired session" });
+    return null;
+  }
+  return user;
+}
+
+/** Extract the RP ID (hostname only) from a full origin URL. */
+function getRpId(origin: string): string {
+  try {
+    return new URL(origin).hostname;
+  } catch {
+    return "localhost";
+  }
 }
