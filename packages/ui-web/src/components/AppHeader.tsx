@@ -205,9 +205,8 @@ export function AppHeader({
             <div className={styles.tokenPopover}>
               <Text weight="semibold">Personal memory token</Text>
               <Text size={200}>
-                It is sent to the server over the WebSocket for this conversation and
-                used only for tool and memory operations. It is not persisted and is
-                cleared when you close the tab.
+                It is sent for this conversation, and only used for tool operations
+                that require it. Once you close this tab, it will be cleared.
               </Text>
               <Field label="Token">
                 <Input
