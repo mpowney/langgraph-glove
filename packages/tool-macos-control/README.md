@@ -1,7 +1,7 @@
 # tool-macos-control
 
 A Swift / SwiftUI macOS tool server for the **langgraph-glove** monorepo.  
-It exposes macOS accessibility and UI-control capabilities over the same HTTP JSON-RPC protocol used by all other tool packages in this repo.
+It exposes macOS accessibility and UI-control capabilities using the same JSON-RPC protocol and transport options (Unix socket **and** HTTP) as all other tool packages in this repo.
 
 ---
 
@@ -43,8 +43,9 @@ or run the pre-built binary:
 The app opens a **control panel** window where you can:
 
 1. **Grant permissions** — Accessibility (required for all UI interaction tools) and Screen Recording (required for `macos_take_screenshot`).
-2. **Configure the port** — Default is `3020`.
-3. **Start / stop the HTTP server** — The server starts automatically on launch.
+2. **Choose transport** — Unix socket (default, matches the other tools) or HTTP.
+3. **Configure** — socket name or TCP port depending on the transport.
+4. **Start / stop the server** — The server starts automatically on launch.
 
 ---
 
@@ -62,7 +63,18 @@ The control panel shows the current status and has buttons to open the relevant 
 
 ---
 
-## HTTP Endpoints
+## Transports
+
+### Unix socket (default)
+
+Communicates via **newline-delimited JSON (NDJSON)** over a Unix domain socket — identical to every other local tool in the monorepo.
+
+- Socket path: `/tmp/langgraph-glove-{socketName}.sock`  (default: `/tmp/langgraph-glove-macos-control.sock`)
+- Protocol matches `UnixSocketToolServer` / `UnixSocketRpcClient` in TypeScript
+
+### HTTP
+
+Provides an HTTP/1.1 JSON-RPC server on a configurable TCP port (default `3020`).
 
 | Method | Path | Description |
 |---|---|---|
@@ -70,19 +82,13 @@ The control panel shows the current status and has buttons to open the relevant 
 | `GET` | `/tools` | List all registered tools and their JSON Schemas |
 | `GET` | `/health` | Health check (`{"status":"ok"}`) |
 
-### JSON-RPC request format
+### Wire protocol (both transports)
 
 ```json
-{
-  "id": "unique-request-id",
-  "method": "macos_click",
-  "params": { "x": 640, "y": 400 }
-}
-```
+// Request
+{ "id": "unique-request-id", "method": "macos_click", "params": { "x": 640, "y": 400 } }
 
-### JSON-RPC response format
-
-```json
+// Response
 { "id": "unique-request-id", "result": { "clicked": true, "x": 640, "y": 400, "button": "left" } }
 ```
 
@@ -108,7 +114,17 @@ The control panel shows the current status and has buttons to open the relevant 
 
 ## Connecting to the gateway
 
-Add the following entry to `config/tools.json` in the repository root:
+The entry is already present in `config/tools.json` (disabled by default since this is macOS-only):
+
+```json
+"macos-control": {
+  "transport": "unix-socket",
+  "socketName": "macos-control",
+  "enabled": false
+}
+```
+
+To activate, set `"enabled": true`.  To use HTTP instead:
 
 ```json
 "macos-control": {
@@ -118,28 +134,7 @@ Add the following entry to `config/tools.json` in the repository root:
 }
 ```
 
-Then add the tools to an agent in `config/agents.json`:
-
-```json
-"macos": {
-  "modelKey": "default",
-  "systemPrompt": "You are a macOS UI control specialist. {tool-descriptions}.",
-  "description": "Controls the macOS UI using accessibility APIs",
-  "tools": [
-    "macos_get_frontmost_app",
-    "macos_list_running_apps",
-    "macos_launch_app",
-    "macos_get_ui_tree",
-    "macos_find_element",
-    "macos_get_focused_element",
-    "macos_click",
-    "macos_type_text",
-    "macos_press_key",
-    "macos_scroll",
-    "macos_take_screenshot"
-  ]
-}
-```
+The sample `macos` agent in `config/agents.json` is already configured with all 11 tools.
 
 ---
 
@@ -150,17 +145,22 @@ MacOSControlApp (@main, SwiftUI)
 │
 ├── AppState (ObservableObject)
 │   ├── Permission management (AXIsProcessTrusted, CGPreflightScreenCaptureAccess)
-│   └── RpcServer lifecycle
+│   ├── RpcTransport enum (.http | .unixSocket)
+│   └── RpcServer / UnixSocketRpcServer lifecycle
 │
 ├── SwiftUI Views
 │   ├── ContentView          — top-level layout
 │   ├── PermissionsView      — permission status rows + request buttons
-│   └── ServerStatusView     — port config, start/stop, endpoint list
+│   └── ServerStatusView     — transport picker, config, start/stop
 │
-├── RpcServer  (Network.framework NWListener)
+├── RpcServer  (Network.framework NWListener — HTTP/1.1)
 │   ├── POST /rpc   — JSON-RPC dispatch via ToolRegistry
 │   ├── GET /tools  — metadata introspection
 │   └── GET /health — health check
+│
+├── UnixSocketRpcServer  (POSIX socket — NDJSON)
+│   └── Mirrors TypeScript UnixSocketToolServer
+│       Socket path: /tmp/langgraph-glove-{name}.sock
 │
 ├── ToolRegistry — metadata + handler store (mirrors TypeScript tool-server)
 │

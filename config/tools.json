@@ -35,8 +35,8 @@
     "enabled": true
   },
   "macos-control": {
-    "transport": "http",
-    "url": "http://localhost:3020",
+    "transport": "unix-socket",
+    "socketName": "macos-control",
     "enabled": false
   }
 }

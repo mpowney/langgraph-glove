@@ -2,6 +2,27 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+// MARK: - Transport type
+
+/// The transport protocol the tool server listens on.
+enum RpcTransport: String, CaseIterable, Identifiable {
+    /// HTTP/1.1 JSON-RPC on a TCP port — same as `HttpToolServer` in TypeScript.
+    case http = "http"
+    /// NDJSON over a Unix domain socket — same as `UnixSocketToolServer` in TypeScript.
+    case unixSocket = "unix-socket"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .http: return "HTTP"
+        case .unixSocket: return "Unix Socket"
+        }
+    }
+}
+
+// MARK: - App state
+
 /// Central observable state shared between the SwiftUI views and the RPC server.
 @MainActor
 final class AppState: ObservableObject {
@@ -11,14 +32,27 @@ final class AppState: ObservableObject {
     @Published var accessibilityGranted: Bool = false
     @Published var screenRecordingGranted: Bool = false
 
-    @Published var serverRunning: Bool = false
-    /// Port as Int so SwiftUI TextField(value:format:.number) works without extra bridging.
+    /// Active transport.  Defaults to Unix socket to match all other tools in the monorepo.
+    @Published var transport: RpcTransport = .unixSocket
+
+    /// TCP port used when transport is `.http`.
+    /// Stored as Int so SwiftUI TextField(value:format:.number) works without bridging.
     @Published var serverPort: Int = 3020
+
+    /// Socket name used when transport is `.unixSocket`.
+    /// The actual path will be `/tmp/langgraph-glove-{socketName}.sock`.
+    @Published var socketName: String = "macos-control"
+
+    @Published var serverRunning: Bool = false
     @Published var serverError: String? = nil
 
     // MARK: - Private
 
-    private var server: RpcServer?
+    private var httpServer: RpcServer?
+    private var unixServer: UnixSocketRpcServer?
+
+    /// Derived socket path — always in sync with `socketName`.
+    var currentSocketPath: String { socketPathForTool(socketName) }
 
     // MARK: - Lifecycle
 
@@ -80,10 +114,19 @@ final class AppState: ObservableObject {
         guard !serverRunning else { return }
         let registry = ToolRegistry()
         registerAllTools(in: registry)
-        let s = RpcServer(port: UInt16(clamping: serverPort), registry: registry)
+
         do {
-            try s.start()
-            server = s
+            switch transport {
+            case .http:
+                let s = RpcServer(port: UInt16(clamping: serverPort), registry: registry)
+                try s.start()
+                httpServer = s
+
+            case .unixSocket:
+                let s = UnixSocketRpcServer(name: socketName, registry: registry)
+                try s.start()
+                unixServer = s
+            }
             serverRunning = true
             serverError = nil
         } catch {
@@ -92,8 +135,10 @@ final class AppState: ObservableObject {
     }
 
     func stopServer() {
-        server?.stop()
-        server = nil
+        httpServer?.stop()
+        httpServer = nil
+        unixServer?.stop()
+        unixServer = nil
         serverRunning = false
     }
 

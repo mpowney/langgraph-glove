@@ -6,15 +6,38 @@ struct ServerStatusView: View {
     var body: some View {
         GroupBox("Tool Server") {
             VStack(spacing: 12) {
+                // ── Transport selector ───────────────────────────────────
+                HStack {
+                    Text("Transport")
+                        .foregroundStyle(.secondary)
+                    Picker("", selection: $appState.transport) {
+                        ForEach(RpcTransport.allCases) { t in
+                            Text(t.displayName).tag(t)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .disabled(appState.serverRunning)
+                    .frame(maxWidth: 200)
+                    Spacer()
+                }
+
+                Divider()
+
+                // ── Transport-specific config ────────────────────────────
+                switch appState.transport {
+                case .http:
+                    httpConfigRow
+                case .unixSocket:
+                    unixSocketConfigRow
+                }
+
                 // ── Status + start/stop ──────────────────────────────────
                 HStack {
                     Circle()
                         .fill(appState.serverRunning ? Color.green : Color.gray)
                         .frame(width: 8, height: 8)
 
-                    Text(appState.serverRunning
-                         ? "Running on port \(appState.serverPort)"
-                         : "Stopped")
+                    Text(statusLabel)
                         .fontWeight(.medium)
 
                     Spacer()
@@ -30,22 +53,6 @@ struct ServerStatusView: View {
                     }
                 }
 
-                // ── Port selector (only editable when stopped) ───────────
-                HStack {
-                    Text("Port")
-                        .foregroundStyle(.secondary)
-                    TextField("Port", value: $appState.serverPort, format: .number)
-                        .textFieldStyle(.roundedBorder)
-                        .frame(width: 70)
-                        .disabled(appState.serverRunning)
-                    if appState.serverRunning {
-                        Button("Restart") { appState.restartServer() }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                    }
-                    Spacer()
-                }
-
                 // ── Error message ────────────────────────────────────────
                 if let error = appState.serverError {
                     HStack {
@@ -57,12 +64,12 @@ struct ServerStatusView: View {
                     }
                 }
 
-                // ── Endpoint list (only when running) ────────────────────
-                if appState.serverRunning {
+                // ── HTTP endpoint list (only in HTTP mode when running) ──
+                if appState.serverRunning, appState.transport == .http {
                     VStack(alignment: .leading, spacing: 4) {
-                        EndpointRow(method: "POST", path: "/rpc",    description: "JSON-RPC tool calls",    port: appState.serverPort)
-                        EndpointRow(method: "GET",  path: "/tools",  description: "Tool introspection",    port: appState.serverPort)
-                        EndpointRow(method: "GET",  path: "/health", description: "Health check",          port: appState.serverPort)
+                        EndpointRow(method: "POST", path: "/rpc",    description: "JSON-RPC tool calls", port: appState.serverPort)
+                        EndpointRow(method: "GET",  path: "/tools",  description: "Tool introspection",  port: appState.serverPort)
+                        EndpointRow(method: "GET",  path: "/health", description: "Health check",        port: appState.serverPort)
                     }
                     .padding(8)
                     .background(Color(.textBackgroundColor))
@@ -72,9 +79,60 @@ struct ServerStatusView: View {
             .padding(8)
         }
     }
+
+    // MARK: - Sub-views
+
+    private var httpConfigRow: some View {
+        HStack {
+            Text("Port")
+                .foregroundStyle(.secondary)
+            TextField("Port", value: $appState.serverPort, format: .number)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 70)
+                .disabled(appState.serverRunning)
+            if appState.serverRunning {
+                Button("Restart") { appState.restartServer() }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            Spacer()
+        }
+    }
+
+    private var unixSocketConfigRow: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Socket name")
+                    .foregroundStyle(.secondary)
+                TextField("Socket name", text: $appState.socketName)
+                    .textFieldStyle(.roundedBorder)
+                    .disabled(appState.serverRunning)
+                if appState.serverRunning {
+                    Button("Restart") { appState.restartServer() }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                }
+            }
+            Text(appState.currentSocketPath)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+    }
+
+    private var statusLabel: String {
+        guard appState.serverRunning else { return "Stopped" }
+        switch appState.transport {
+        case .http:
+            return "Running on port \(appState.serverPort)"
+        case .unixSocket:
+            return "Running on Unix socket"
+        }
+    }
 }
 
-// MARK: - Single endpoint row
+// MARK: - Single HTTP endpoint row
 
 private struct EndpointRow: View {
     let method: String
