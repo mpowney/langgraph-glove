@@ -41,6 +41,8 @@ interface AuthState {
   minPasswordLength: number;
   passkeyRegistered: boolean;
   promptPasskeySetup: boolean;
+  /** True when account was set up without a password — passkey registration is mandatory. */
+  passkeySetupRequired: boolean;
   error: string | null;
 }
 
@@ -119,6 +121,7 @@ export function useAuth(apiBaseUrl: string | null) {
       minPasswordLength: 12,
       passkeyRegistered: false,
       promptPasskeySetup: false,
+      passkeySetupRequired: false,
       error: null,
     };
   });
@@ -146,6 +149,8 @@ export function useAuth(apiBaseUrl: string | null) {
           passkeyRegistered,
           // Keep prompting only while setup is complete and no passkey exists.
           promptPasskeySetup: !setupRequired && !passkeyRegistered && prev.promptPasskeySetup,
+          // If a passkey was just registered externally, clear the required flag.
+          passkeySetupRequired: passkeyRegistered ? false : prev.passkeySetupRequired,
           error: null,
         };
       });
@@ -220,6 +225,7 @@ export function useAuth(apiBaseUrl: string | null) {
         authenticated: true,
         token: payload.token,
         promptPasskeySetup: true,
+        passkeySetupRequired: !password?.trim(),
         error: null,
       }));
       return true;
@@ -254,6 +260,7 @@ export function useAuth(apiBaseUrl: string | null) {
       authenticated: false,
       token: null,
       promptPasskeySetup: false,
+      passkeySetupRequired: false,
       error: null,
     }));
   }, [apiBaseUrl]);
@@ -289,6 +296,7 @@ export function useAuth(apiBaseUrl: string | null) {
         loading: false,
         passkeyRegistered: true,
         promptPasskeySetup: false,
+        passkeySetupRequired: false,
         error: null,
       }));
       return true;

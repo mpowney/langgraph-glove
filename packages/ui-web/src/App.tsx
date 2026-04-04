@@ -101,6 +101,7 @@ function App() {
           loading={auth.loading}
           setupRequired={auth.setupRequired}
           forcePasskeySetup={auth.promptPasskeySetup}
+          passkeySetupRequired={auth.passkeySetupRequired}
           minPasswordLength={auth.minPasswordLength}
           passkeyRegistered={auth.passkeyRegistered}
           error={auth.error}

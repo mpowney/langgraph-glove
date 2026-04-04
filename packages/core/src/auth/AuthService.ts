@@ -264,6 +264,8 @@ export class AuthService {
     rpId: string,
     rpName: string,
   ): Promise<PublicKeyCredentialCreationOptionsJSON> {
+    this.pruneExpiredPasskeyChallenges();
+
     const existingPasskeys = this.db
       .prepare<[string], Pick<PasskeyRow, "id" | "transports">>(`
         SELECT id, transports FROM auth_passkeys WHERE user_id = ?
@@ -304,15 +306,20 @@ export class AuthService {
     rpId: string,
     expectedOrigin: string,
   ): Promise<{ credentialId: string }> {
+    this.pruneExpiredPasskeyChallenges();
+
+    // Decode the challenge from the response to look up the exact ceremony row,
+    // preventing race conditions when multiple tabs start registration concurrently.
+    const rawClientData = Buffer.from(response.response.clientDataJSON, "base64url").toString("utf8");
+    const clientChallenge = (JSON.parse(rawClientData) as { challenge: string }).challenge;
+
     const row = this.db
-      .prepare<[string], PasskeyChallengeRow>(`
+      .prepare<[string, string], PasskeyChallengeRow>(`
         SELECT challenge, user_id, purpose, expires_at
         FROM auth_passkey_challenges
-        WHERE user_id = ? AND purpose = 'register'
-        ORDER BY expires_at DESC
-        LIMIT 1
+        WHERE challenge = ? AND user_id = ? AND purpose = 'register'
       `)
-      .get(userId);
+      .get(clientChallenge, userId);
 
     if (!row) throw new Error("No pending registration challenge");
     if (Date.parse(row.expires_at) <= Date.now()) throw new Error("Registration challenge has expired");
@@ -362,6 +369,8 @@ export class AuthService {
   async beginPasskeyAuthentication(
     rpId: string,
   ): Promise<PublicKeyCredentialRequestOptionsJSON> {
+    this.pruneExpiredPasskeyChallenges();
+
     const passkeys = this.db
       .prepare<[], Pick<PasskeyRow, "id" | "transports">>(`
         SELECT id, transports FROM auth_passkeys
@@ -395,15 +404,20 @@ export class AuthService {
     rpId: string,
     expectedOrigin: string,
   ): Promise<SessionDetails> {
+    this.pruneExpiredPasskeyChallenges();
+
+    // Decode the challenge from the response to look up the exact ceremony row,
+    // preventing race conditions when multiple tabs start authentication concurrently.
+    const rawClientData = Buffer.from(response.response.clientDataJSON, "base64url").toString("utf8");
+    const clientChallenge = (JSON.parse(rawClientData) as { challenge: string }).challenge;
+
     const row = this.db
-      .prepare<[], PasskeyChallengeRow>(`
+      .prepare<[string], PasskeyChallengeRow>(`
         SELECT challenge, user_id, purpose, expires_at
         FROM auth_passkey_challenges
-        WHERE user_id IS NULL AND purpose = 'authenticate'
-        ORDER BY expires_at DESC
-        LIMIT 1
+        WHERE challenge = ? AND user_id IS NULL AND purpose = 'authenticate'
       `)
-      .get();
+      .get(clientChallenge);
 
     if (!row) throw new Error("No pending authentication challenge");
     if (Date.parse(row.expires_at) <= Date.now()) throw new Error("Authentication challenge has expired");
@@ -483,6 +497,12 @@ export class AuthService {
       .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM auth_passkeys")
       .get()?.count ?? 0;
     return count > 0;
+  }
+
+  private pruneExpiredPasskeyChallenges(): void {
+    this.db
+      .prepare("DELETE FROM auth_passkey_challenges WHERE expires_at <= ?")
+      .run(new Date().toISOString());
   }
 
   private createSession(userId: string): SessionDetails {

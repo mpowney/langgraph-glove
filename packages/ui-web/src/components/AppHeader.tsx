@@ -234,7 +234,7 @@ export function AppHeader({
               <Text weight="semibold">Personal memory token</Text>
               <Text size={200} style={{ maxWidth: "300px" }}>
                 A personal memory token is used to encrypt personal or sensitive 
-                information stored as memories. Any time the agent needs to access 
+                information stored as memories. Any time the agent needs access
                 to encrypted memories, the token must be provided.
               </Text>
               {passkeyEnabled && onGeneratePersonalTokenWithPasskey && (

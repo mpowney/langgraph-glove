@@ -62,6 +62,8 @@ interface AuthGateProps {
   loading: boolean;
   setupRequired: boolean;
   forcePasskeySetup: boolean;
+  /** True when the account was created without a password — passkey registration is mandatory. */
+  passkeySetupRequired: boolean;
   minPasswordLength: number;
   passkeyRegistered: boolean;
   error: string | null;
@@ -161,7 +163,9 @@ export function AuthGate(props: AuthGateProps) {
         <section className={styles.panel}>
           <Text className={styles.title} weight="semibold">Register a passkey</Text>
           <Text>
-            Your account is ready. Optionally register a passkey (fingerprint, Face ID, or security key) so you can sign in without a password next time.
+            {props.passkeySetupRequired
+              ? "Your account has no password. Register a passkey to be able to sign in after this session expires."
+              : "Your account is ready. Optionally register a passkey (fingerprint, Face ID, or security key) so you can sign in without a password next time."}
           </Text>
 
           {passkeySuccess && (
@@ -186,13 +190,16 @@ export function AuthGate(props: AuthGateProps) {
             </Button>
           )}
 
-          <Button
-            appearance="subtle"
-            onClick={props.onSkipPasskeySetup}
-            disabled={props.loading}
-          >
-            {passkeySuccess ? "Continue to app" : "Skip for now"}
-          </Button>
+          {/* Hide skip when passkey is mandatory (no password set) unless already registered */}
+          {(!props.passkeySetupRequired || passkeySuccess) && (
+            <Button
+              appearance="subtle"
+              onClick={props.onSkipPasskeySetup}
+              disabled={props.loading}
+            >
+              {passkeySuccess ? "Continue to app" : "Skip for now"}
+            </Button>
+          )}
         </section>
       </div>
     );
