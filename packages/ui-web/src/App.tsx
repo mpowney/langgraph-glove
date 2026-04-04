@@ -127,6 +127,8 @@ function App() {
           onOpenBrowser={() => setBrowserOpen(true)}
           personalToken={personalToken}
           onSetPersonalToken={setPersonalToken}
+          passkeyEnabled={auth.passkeyRegistered}
+          onGeneratePersonalTokenWithPasskey={auth.generatePersonalTokenWithPasskey}
         />
         <ChatArea messages={visibleMessages} myConversationId={myConversationId} showAll={showAll} />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />

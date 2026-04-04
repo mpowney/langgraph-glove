@@ -5,6 +5,7 @@ import {
 } from "@simplewebauthn/browser";
 
 const TOKEN_STORAGE_KEY = "glove.auth.token";
+const PASSKEY_PERSONAL_TOKEN_KEY = "glove.auth.passkey.personal_token";
 
 interface AuthStatusPayload {
   setupRequired: boolean;
@@ -15,6 +16,21 @@ interface AuthStatusPayload {
 interface AuthSessionPayload {
   token: string;
   expiresAt: string;
+}
+
+function generatePersonalMemoryToken(): string {
+  const bytes = new Uint8Array(32);
+  crypto.getRandomValues(bytes);
+
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/u, "");
 }
 
 interface AuthState {
@@ -46,6 +62,19 @@ function storeToken(token: string | null): void {
     return;
   }
   sessionStorage.removeItem(TOKEN_STORAGE_KEY);
+}
+
+function readPasskeyPersonalToken(): string | null {
+  const token = sessionStorage.getItem(PASSKEY_PERSONAL_TOKEN_KEY);
+  return token?.trim() ? token : null;
+}
+
+function storePasskeyPersonalToken(token: string | null): void {
+  if (token) {
+    sessionStorage.setItem(PASSKEY_PERSONAL_TOKEN_KEY, token);
+    return;
+  }
+  sessionStorage.removeItem(PASSKEY_PERSONAL_TOKEN_KEY);
 }
 
 async function postJson<T>(url: string, body: Record<string, unknown>, token?: string): Promise<T> {
@@ -219,6 +248,7 @@ export function useAuth(apiBaseUrl: string | null) {
     }
 
     storeToken(null);
+    storePasskeyPersonalToken(null);
     setState((prev) => ({
       ...prev,
       authenticated: false,
@@ -272,28 +302,36 @@ export function useAuth(apiBaseUrl: string | null) {
     }
   }, [apiBaseUrl]);
 
+  const completePasskeyAuthenticationFlow = useCallback(async () => {
+    if (apiBaseUrl === null) {
+      throw new Error("Auth API is unavailable");
+    }
+
+    const optionsRes = await fetch(`${apiBaseUrl}/api/auth/passkey/authenticate/begin`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    if (!optionsRes.ok) {
+      const payload = await optionsRes.json().catch(() => ({})) as Record<string, unknown>;
+      throw new Error(parseError(payload, `HTTP ${optionsRes.status}`));
+    }
+    const options = await optionsRes.json();
+
+    const authResponse = await startAuthentication({ optionsJSON: options });
+
+    return postJson<AuthSessionPayload>(
+      `${apiBaseUrl}/api/auth/passkey/authenticate/complete`,
+      authResponse as unknown as Record<string, unknown>,
+    );
+  }, [apiBaseUrl]);
+
   const loginWithPasskey = useCallback(async () => {
     if (apiBaseUrl === null) return false;
 
     setState((prev) => ({ ...prev, loading: true, error: null }));
     try {
-      const optionsRes = await fetch(`${apiBaseUrl}/api/auth/passkey/authenticate/begin`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-      if (!optionsRes.ok) {
-        const payload = await optionsRes.json().catch(() => ({})) as Record<string, unknown>;
-        throw new Error(parseError(payload, `HTTP ${optionsRes.status}`));
-      }
-      const options = await optionsRes.json();
-
-      const authResponse = await startAuthentication({ optionsJSON: options });
-
-      const session = await postJson<AuthSessionPayload>(
-        `${apiBaseUrl}/api/auth/passkey/authenticate/complete`,
-        authResponse as unknown as Record<string, unknown>,
-      );
+      const session = await completePasskeyAuthenticationFlow();
 
       storeToken(session.token);
       setState((prev) => ({
@@ -316,7 +354,36 @@ export function useAuth(apiBaseUrl: string | null) {
       }));
       return false;
     }
-  }, [apiBaseUrl]);
+  }, [apiBaseUrl, completePasskeyAuthenticationFlow]);
+
+  const generatePersonalTokenWithPasskey = useCallback(async () => {
+    try {
+      const session = await completePasskeyAuthenticationFlow();
+      storeToken(session.token);
+
+      let personalToken = readPasskeyPersonalToken();
+      if (!personalToken) {
+        personalToken = generatePersonalMemoryToken();
+        storePasskeyPersonalToken(personalToken);
+      }
+
+      setState((prev) => ({
+        ...prev,
+        authenticated: true,
+        token: session.token,
+        setupRequired: false,
+        promptPasskeySetup: false,
+        error: null,
+      }));
+      return personalToken;
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      return null;
+    }
+  }, [completePasskeyAuthenticationFlow]);
 
   const dismissPasskeySetupPrompt = useCallback(() => {
     setState((prev) => ({ ...prev, promptPasskeySetup: false }));
@@ -330,6 +397,7 @@ export function useAuth(apiBaseUrl: string | null) {
     logout,
     registerPasskey,
     loginWithPasskey,
+    generatePersonalTokenWithPasskey,
     dismissPasskeySetupPrompt,
   };
 }
