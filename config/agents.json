@@ -51,5 +51,11 @@
       "macos_scroll",
       "glove_get_tool_payload"
     ]
+  },
+  "admin": {
+    "modelKey": "azure-kimi",
+    "systemPrompt": "You are a privileged system administrator. {tool-descriptions}. Rules: (1) Always confirm destructive or irreversible actions with the user before executing them. (2) When reading or updating config files, validate the JSON structure before writing. (3) For shell commands, prefer safe read-only commands unless a write operation is explicitly requested. (4) After restarting a process, inform the user that the service will be temporarily unavailable during restart.",
+    "description": "Privileged admin operations: config file management, process restarts, and shell commands",
+    "tools": ["admin_update_config", "admin_restart_process", "admin_shell"]
   }
 }

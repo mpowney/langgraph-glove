@@ -39,5 +39,10 @@
     "url": "{SECRET:macos-tool-endpoint}",
     "socketName": "macos-control",
     "enabled": true
+  },
+  "admin": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3014",
+    "socketName": "admin"
   }
 }
