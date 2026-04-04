@@ -22,5 +22,23 @@
     "systemPrompt": "You are a global weather specialist. {tool-descriptions}. Always include units and location details.",
     "description": "Global weather forecasts and conditions",
     "tools": ["weather_au", "weather_eu", "weather_us", "rain_forecast_au"]
+  },
+  "macos": {
+    "modelKey": "azure-kimi",
+    "systemPrompt": "You are a macOS UI control specialist. {tool-descriptions}. Use accessibility tools to read the screen, find elements, click, type, and interact with macOS applications. Always take a screenshot first to understand what is currently on screen.",
+    "description": "Controls the macOS UI using accessibility APIs — click, type, press keys, scroll, screenshot",
+    "tools": [
+      "macos_get_frontmost_app",
+      "macos_list_running_apps",
+      "macos_launch_app",
+      "macos_get_ui_tree",
+      "macos_find_element",
+      "macos_get_focused_element",
+      "macos_click",
+      "macos_type_text",
+      "macos_press_key",
+      "macos_scroll",
+      "macos_take_screenshot"
+    ]
   }
 }

@@ -1,0 +1,179 @@
+# tool-macos-control
+
+A Swift / SwiftUI macOS tool server for the **langgraph-glove** monorepo.  
+It exposes macOS accessibility and UI-control capabilities over the same HTTP JSON-RPC protocol used by all other tool packages in this repo.
+
+---
+
+## Requirements
+
+| Requirement | Version |
+|---|---|
+| macOS | 13 (Ventura) or later |
+| Swift | 5.9 or later (included with Xcode 15+) |
+| Swift Package Manager | bundled with Swift |
+
+> This package is **macOS-only** and is intentionally excluded from the cross-platform Node/TypeScript build pipeline.
+
+---
+
+## Building
+
+```bash
+cd packages/tool-macos-control
+swift build -c release
+```
+
+The compiled binary is written to `.build/release/MacOSControl`.
+
+---
+
+## Running
+
+```bash
+swift run
+```
+
+or run the pre-built binary:
+
+```bash
+.build/release/MacOSControl
+```
+
+The app opens a **control panel** window where you can:
+
+1. **Grant permissions** — Accessibility (required for all UI interaction tools) and Screen Recording (required for `macos_take_screenshot`).
+2. **Configure the port** — Default is `3020`.
+3. **Start / stop the HTTP server** — The server starts automatically on launch.
+
+---
+
+## Permissions
+
+macOS requires explicit user consent before an application can:
+
+| Permission | Required by |
+|---|---|
+| **Accessibility** | `macos_get_ui_tree`, `macos_find_element`, `macos_get_focused_element`, `macos_click`, `macos_type_text`, `macos_press_key`, `macos_scroll` |
+| **Screen Recording** | `macos_take_screenshot` |
+
+After launching, open **System Settings → Privacy & Security** and enable the app in both **Accessibility** and **Screen Recording**.  
+The control panel shows the current status and has buttons to open the relevant Settings pane.
+
+---
+
+## HTTP Endpoints
+
+| Method | Path | Description |
+|---|---|---|
+| `POST` | `/rpc` | Invoke a tool via JSON-RPC 2.0 |
+| `GET` | `/tools` | List all registered tools and their JSON Schemas |
+| `GET` | `/health` | Health check (`{"status":"ok"}`) |
+
+### JSON-RPC request format
+
+```json
+{
+  "id": "unique-request-id",
+  "method": "macos_click",
+  "params": { "x": 640, "y": 400 }
+}
+```
+
+### JSON-RPC response format
+
+```json
+{ "id": "unique-request-id", "result": { "clicked": true, "x": 640, "y": 400, "button": "left" } }
+```
+
+---
+
+## Available Tools
+
+| Tool | Description |
+|---|---|
+| `macos_get_frontmost_app` | Name, bundle ID and PID of the current frontmost app |
+| `macos_list_running_apps` | All running applications |
+| `macos_launch_app` | Launch an app by bundle ID or display name |
+| `macos_get_ui_tree` | Full accessibility element tree of the frontmost (or specified) app |
+| `macos_find_element` | Search the accessibility tree by role / title / value / description |
+| `macos_get_focused_element` | Details of the currently keyboard-focused element |
+| `macos_click` | Left-click, right-click or double-click at screen coordinates |
+| `macos_type_text` | Type a text string via keyboard simulation |
+| `macos_press_key` | Press a key or keyboard shortcut (e.g. `⌘C`, `Escape`, `Return`) |
+| `macos_scroll` | Scroll at screen coordinates |
+| `macos_take_screenshot` | Capture the screen as a base64 PNG |
+
+---
+
+## Connecting to the gateway
+
+Add the following entry to `config/tools.json` in the repository root:
+
+```json
+"macos-control": {
+  "transport": "http",
+  "url": "http://localhost:3020",
+  "enabled": true
+}
+```
+
+Then add the tools to an agent in `config/agents.json`:
+
+```json
+"macos": {
+  "modelKey": "default",
+  "systemPrompt": "You are a macOS UI control specialist. {tool-descriptions}.",
+  "description": "Controls the macOS UI using accessibility APIs",
+  "tools": [
+    "macos_get_frontmost_app",
+    "macos_list_running_apps",
+    "macos_launch_app",
+    "macos_get_ui_tree",
+    "macos_find_element",
+    "macos_get_focused_element",
+    "macos_click",
+    "macos_type_text",
+    "macos_press_key",
+    "macos_scroll",
+    "macos_take_screenshot"
+  ]
+}
+```
+
+---
+
+## Architecture
+
+```
+MacOSControlApp (@main, SwiftUI)
+│
+├── AppState (ObservableObject)
+│   ├── Permission management (AXIsProcessTrusted, CGPreflightScreenCaptureAccess)
+│   └── RpcServer lifecycle
+│
+├── SwiftUI Views
+│   ├── ContentView          — top-level layout
+│   ├── PermissionsView      — permission status rows + request buttons
+│   └── ServerStatusView     — port config, start/stop, endpoint list
+│
+├── RpcServer  (Network.framework NWListener)
+│   ├── POST /rpc   — JSON-RPC dispatch via ToolRegistry
+│   ├── GET /tools  — metadata introspection
+│   └── GET /health — health check
+│
+├── ToolRegistry — metadata + handler store (mirrors TypeScript tool-server)
+│
+└── Tools
+    ├── GetFrontmostAppTool   macos_get_frontmost_app
+    ├── ListRunningAppsTool   macos_list_running_apps
+    ├── LaunchAppTool         macos_launch_app
+    ├── GetUITreeTool         macos_get_ui_tree
+    ├── FindElementTool       macos_find_element
+    ├── GetFocusedElementTool macos_get_focused_element
+    ├── ClickTool             macos_click
+    ├── TypeTextTool          macos_type_text
+    ├── PressKeyTool          macos_press_key
+    ├── ScrollTool            macos_scroll
+    └── TakeScreenshotTool    macos_take_screenshot
+```

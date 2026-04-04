@@ -33,5 +33,10 @@
     "url": "http://localhost:3013",
     "socketName": "memory",
     "enabled": true
+  },
+  "macos-control": {
+    "transport": "http",
+    "url": "http://localhost:3020",
+    "enabled": false
   }
 }

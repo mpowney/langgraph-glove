@@ -18,6 +18,7 @@ Requires **Node.js 22+** (pinned via `.nvmrc`).
 | `@langgraph-glove/tool-weather-au` | Mock Australian weather tools (HTTP or Unix socket) |
 | `@langgraph-glove/tool-weather-eu` | Mock European weather tools (HTTP or Unix socket) |
 | `@langgraph-glove/tool-weather-us` | Mock US weather tools (HTTP or Unix socket) |
+| `tool-macos-control` *(Swift, macOS only)* | macOS UI-control tool server — accessibility, click, type, screenshot |
 
 ---
 
