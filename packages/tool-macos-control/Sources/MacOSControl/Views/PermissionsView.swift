@@ -81,8 +81,10 @@ struct PermissionRow: View {
     }
 }
 
-#Preview {
-    PermissionsView()
-        .environmentObject(AppState())
-        .padding()
+struct PermissionsView_Previews: PreviewProvider {
+    static var previews: some View {
+        PermissionsView()
+            .environmentObject(AppState())
+            .padding()
+    }
 }

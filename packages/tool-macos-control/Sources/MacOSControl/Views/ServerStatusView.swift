@@ -169,8 +169,10 @@ private struct EndpointRow: View {
     }
 }
 
-#Preview {
-    ServerStatusView()
-        .environmentObject(AppState())
-        .padding()
+struct ServerStatusView_Previews: PreviewProvider {
+    static var previews: some View {
+        ServerStatusView()
+            .environmentObject(AppState())
+            .padding()
+    }
 }
