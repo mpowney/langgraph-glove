@@ -515,8 +515,8 @@ export class AuthService {
       throw new Error("Invalid clientDataJSON: could not decode or parse");
     }
     if (
-      typeof clientData !== "object"
-      || clientData === null
+      !clientData
+      || typeof clientData !== "object"
       || typeof (clientData as Record<string, unknown>)["challenge"] !== "string"
     ) {
       throw new Error("Invalid clientDataJSON: missing challenge field");
