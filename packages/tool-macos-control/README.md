@@ -7,13 +7,15 @@ It exposes macOS accessibility and UI-control capabilities using the same JSON-R
 
 ## Requirements
 
-| Requirement | Version |
-|---|---|
-| macOS | 13 (Ventura) or later |
-| Swift | 5.9 or later (included with Xcode 15+) |
-| Swift Package Manager | bundled with Swift |
+| Requirement | Minimum version | Notes |
+|---|---|---|
+| macOS | 13 (Ventura) | — |
+| Swift | 5.9 | Included with Xcode 15+, or install via `xcode-select --install` |
+| Swift Package Manager | bundled with Swift | No external dependencies |
 
 > This package is **macOS-only** and is intentionally excluded from the cross-platform Node/TypeScript build pipeline.
+>
+> Full Xcode is **not required** — the Xcode Command Line Tools (`xcode-select --install`) are sufficient to build and run from the terminal.
 
 ---
 
@@ -21,12 +23,22 @@ It exposes macOS accessibility and UI-control capabilities using the same JSON-R
 
 ### Command-line (Swift Package Manager)
 
+No full Xcode install needed — the **Xcode Command Line Tools** (`xcode-select --install`) include Swift and Swift Package Manager.
+
 ```bash
 cd packages/tool-macos-control
+
+# Build and run (debug — opens the control panel):
+swift run
+
+# Release build only:
 swift build -c release
+
+# Run the pre-built release binary:
+.build/release/MacOSControl
 ```
 
-The compiled binary is written to `.build/release/MacOSControl`.
+The compiled release binary is written to `.build/release/MacOSControl`.
 
 ### Xcode
 
@@ -57,17 +69,7 @@ The compiled binary is written to `.build/release/MacOSControl`.
 
 ## Running
 
-```bash
-swift run
-```
-
-or run the pre-built binary:
-
-```bash
-.build/release/MacOSControl
-```
-
-The app opens a **control panel** window where you can:
+See the [Building](#building) section above for the commands to build and start the app. Once running, the app opens a **control panel** window where you can:
 
 1. **Grant permissions** — Accessibility (required for all UI interaction tools) and Screen Recording (required for `macos_take_screenshot`).
 2. **Choose transport** — Unix socket (default, matches the other tools) or HTTP.

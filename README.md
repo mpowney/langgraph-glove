@@ -243,31 +243,35 @@ pnpm build
 
 ### macOS Control Tool (Swift, optional)
 
-`tool-macos-control` is a native Swift/SwiftUI app and is built separately from the Node.js packages above. It requires **Xcode 15+** (Swift 5.9+) and runs on **macOS 13 (Ventura) or later**.
+`tool-macos-control` is a native Swift/SwiftUI app and is built separately from the Node.js packages above. It runs on **macOS 13 (Ventura) or later** and requires **Swift 5.9+**.
 
-#### Build and run with Xcode
-
-```bash
-# Open the Swift package in Xcode from the repository root:
-xed packages/tool-macos-control
-```
-
-In Xcode:
-1. Select the **MacOSControl** scheme and **My Mac** destination in the toolbar.
-2. Press **⌘R** to build and launch the control panel.
+**Prerequisites:**
+- **Command-line only:** Install Xcode Command Line Tools — `xcode-select --install` — which includes the Swift compiler and Swift Package Manager. No full Xcode install required.
+- **Full Xcode:** Install [Xcode 15+](https://apps.apple.com/app/xcode/id497799835) from the Mac App Store (includes command-line tools).
 
 #### Build and run from the command line
 
 ```bash
 cd packages/tool-macos-control
 
-# Debug build + run (opens the control panel):
+# Build and launch the control panel (debug):
 swift run
 
 # Release build only:
 swift build -c release
+
+# Run the pre-built binary:
 .build/release/MacOSControl
 ```
+
+#### Build and run with Xcode (alternative)
+
+```bash
+# Open the Swift package in Xcode from the repository root:
+xed packages/tool-macos-control
+```
+
+In Xcode, select the **MacOSControl** scheme and **My Mac** destination, then press **⌘R** to build and launch.
 
 After launching, grant **Accessibility** and **Screen Recording** permissions when prompted, then set `"enabled": true` on the `macos-control` entry in `config/tools.json`.
 
