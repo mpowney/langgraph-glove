@@ -19,12 +19,39 @@ It exposes macOS accessibility and UI-control capabilities using the same JSON-R
 
 ## Building
 
+### Command-line (Swift Package Manager)
+
 ```bash
 cd packages/tool-macos-control
 swift build -c release
 ```
 
 The compiled binary is written to `.build/release/MacOSControl`.
+
+### Xcode
+
+1. **Prerequisites** — Xcode 15 or later (ships with Swift 5.9+). Install from the [Mac App Store](https://apps.apple.com/app/xcode/id497799835) or via `xcode-select --install` for command-line tools only.
+
+2. **Open the package in Xcode** — from the repository root:
+   ```bash
+   xed packages/tool-macos-control
+   ```
+   Alternatively, launch Xcode and choose **File → Open…**, then select `packages/tool-macos-control/Package.swift`.
+
+3. **Wait for dependency resolution** — Xcode resolves the Swift Package Manager manifest automatically on first open (this package has no external dependencies, so it's instant).
+
+4. **Select scheme and destination** — in the toolbar, choose the **MacOSControl** scheme and **My Mac** as the destination.
+
+5. **Build** — press **⌘B** (or **Product → Build**).
+
+6. **Run** — press **⌘R** (or **Product → Run**) to build and launch the control panel in one step.
+
+7. **Release archive** — use **Product → Archive** to produce a signed `.app` bundle for distribution.
+
+> **Tip:** You can also build from the command line using Xcode's toolchain:
+> ```bash
+> xcodebuild -scheme MacOSControl -configuration Release build
+> ```
 
 ---
 

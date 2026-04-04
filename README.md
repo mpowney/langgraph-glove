@@ -241,7 +241,39 @@ cd ../..
 pnpm build
 ```
 
-`packages/tool-browse-session` uses Playwright and needs its browser binaries installed once on first setup before you run `tool-browse-session`.
+### macOS Control Tool (Swift, optional)
+
+`tool-macos-control` is a native Swift/SwiftUI app and is built separately from the Node.js packages above. It requires **Xcode 15+** (Swift 5.9+) and runs on **macOS 13 (Ventura) or later**.
+
+#### Build and run with Xcode
+
+```bash
+# Open the Swift package in Xcode from the repository root:
+xed packages/tool-macos-control
+```
+
+In Xcode:
+1. Select the **MacOSControl** scheme and **My Mac** destination in the toolbar.
+2. Press **⌘R** to build and launch the control panel.
+
+#### Build and run from the command line
+
+```bash
+cd packages/tool-macos-control
+
+# Debug build + run (opens the control panel):
+swift run
+
+# Release build only:
+swift build -c release
+.build/release/MacOSControl
+```
+
+After launching, grant **Accessibility** and **Screen Recording** permissions when prompted, then set `"enabled": true` on the `macos-control` entry in `config/tools.json`.
+
+> See [`packages/tool-macos-control/README.md`](packages/tool-macos-control/README.md) for the full reference, including transport options (Unix socket / HTTP), available tools, and gateway config.
+
+
 
 ### Running via the Gateway (recommended)
 
