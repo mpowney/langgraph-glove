@@ -12,6 +12,9 @@ final class RpcServer {
     private let registry: ToolRegistry
     private var listener: NWListener?
 
+    /// Called on the server's internal queue each time a JSON-RPC request is handled.
+    var onRequestHandled: (() -> Void)?
+
     init(port: UInt16, registry: ToolRegistry) {
         self.port = port
         self.registry = registry
@@ -122,7 +125,7 @@ final class RpcServer {
         let requestLine = headerStr.components(separatedBy: "\r\n").first ?? ""
         let parts = requestLine.components(separatedBy: " ")
         let method = parts.first ?? "GET"
-        let path = parts.dropFirst().first.map(String.init) ?? "/"
+        let path = parts.count > 1 ? parts[1] : "/"
 
         return (method: method, path: path, body: body)
     }

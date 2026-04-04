@@ -29,7 +29,6 @@ func handleTypeText(_ params: [String: Any]) async throws -> Any {
     }
 
     let delayMs = params["delayMs"] as? Int ?? 10
-    let delaySec = Double(delayMs) / 1000.0
 
     let src = CGEventSource(stateID: .hidSystemState)
 
@@ -41,7 +40,9 @@ func handleTypeText(_ params: [String: Any]) async throws -> Any {
         up?.keyboardSetUnicodeString(stringLength: 1, unicodeString: &uniChar)
         down?.post(tap: .cghidEventTap)
         up?.post(tap: .cghidEventTap)
-        if delaySec > 0 { Thread.sleep(forTimeInterval: delaySec) }
+        if delayMs > 0 {
+            try await Task.sleep(nanoseconds: UInt64(delayMs) * 1_000_000)
+        }
     }
 
     return ["typed": text.count]

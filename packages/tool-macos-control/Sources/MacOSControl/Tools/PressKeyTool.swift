@@ -97,7 +97,7 @@ func handlePressKey(_ params: [String: Any]) async throws -> Any {
     down?.flags = flags
     up?.flags   = flags
     down?.post(tap: .cghidEventTap)
-    Thread.sleep(forTimeInterval: 0.05)
+    try await Task.sleep(nanoseconds: 50_000_000)
     up?.post(tap: .cghidEventTap)
 
     return ["pressed": key, "modifiers": modifiers]

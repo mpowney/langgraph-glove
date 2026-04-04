@@ -42,7 +42,7 @@ func handleClick(_ params: [String: Any]) async throws -> Any {
         postMouseEvent(.rightMouseDown, up: .rightMouseUp, button: .right, at: point)
     case "double":
         postMouseEvent(.leftMouseDown, up: .leftMouseUp, button: .left, at: point)
-        Thread.sleep(forTimeInterval: 0.08)
+        try await Task.sleep(nanoseconds: 80_000_000)
         postDoubleClick(at: point)
     default:
         postMouseEvent(.leftMouseDown, up: .leftMouseUp, button: .left, at: point)

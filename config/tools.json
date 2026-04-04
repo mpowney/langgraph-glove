@@ -37,6 +37,6 @@
   "macos-control": {
     "transport": "unix-socket",
     "socketName": "macos-control",
-    "enabled": false
+    "enabled": true
   }
 }

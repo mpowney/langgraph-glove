@@ -9,7 +9,7 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 Image(systemName: "macwindow.and.cursorarrow")
                     .font(.title2)
-                    .foregroundStyle(.accent)
+                    .foregroundStyle(Color.accentColor)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("macOS Control")
                         .font(.headline)
@@ -70,7 +70,7 @@ private struct ToolListView: View {
                     HStack(alignment: .top, spacing: 8) {
                         Text(name)
                             .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(.accent)
+                            .foregroundStyle(Color.accentColor)
                             .frame(width: 230, alignment: .leading)
                         Text(description)
                             .font(.caption)

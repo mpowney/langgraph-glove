@@ -38,7 +38,87 @@ type ContentSegment =
   | { kind: "text"; content: string }
   | { kind: "image"; src: string; alt: string };
 
+interface StructuredImagePayload {
+  width?: number;
+  height?: number;
+  data: string;
+  format: string;
+  encoding?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return isRecord(value);
+}
+
+function normalizeImageFormat(format: string): string | null {
+  const normalized = format.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "jpg") return "jpeg";
+  if (normalized === "svg") return "svg+xml";
+  const supportedFormats = new Set(["png", "jpeg", "gif", "webp", "bmp", "svg+xml"]);
+  return supportedFormats.has(normalized) ? normalized : null;
+}
+
+function toStructuredImagePayload(value: unknown): StructuredImagePayload | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("{")) return null;
+    try {
+      return toStructuredImagePayload(JSON.parse(trimmed));
+    } catch {
+      return null;
+    }
+  }
+
+  if (!isRecord(value)) return null;
+  if (typeof value.data !== "string" || typeof value.format !== "string") return null;
+  if (value.encoding != null && value.encoding !== "base64") return null;
+  if (value.width != null && typeof value.width !== "number") return null;
+  if (value.height != null && typeof value.height !== "number") return null;
+
+  const format = normalizeImageFormat(value.format);
+  if (!format) return null;
+
+  return {
+    data: value.data.replace(/\s+/g, ""),
+    format,
+    encoding: typeof value.encoding === "string" ? value.encoding : "base64",
+    width: typeof value.width === "number" ? value.width : undefined,
+    height: typeof value.height === "number" ? value.height : undefined,
+  };
+}
+
+function getStructuredImageSource(content: string): string | null {
+  const directImage = toStructuredImagePayload(content);
+  if (directImage) {
+    return `data:image/${directImage.format};base64,${directImage.data}`;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (isRecord(parsed) && "content" in parsed) {
+      const nestedImage = toStructuredImagePayload(parsed.content);
+      if (nestedImage) {
+        return `data:image/${nestedImage.format};base64,${nestedImage.data}`;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function splitContentWithImages(content: string): ContentSegment[] {
+  const structuredImageSrc = getStructuredImageSource(content);
+  if (structuredImageSrc) {
+    return [{ kind: "image", src: structuredImageSrc, alt: "" }];
+  }
+
   const segments: ContentSegment[] = [];
   let lastIndex = 0;
   DATA_IMAGE_RE.lastIndex = 0;
@@ -220,10 +300,6 @@ interface ChatMessageProps {
   entry: ChatEntry;
   /** Shown as a small muted label when viewing all conversations. */
   sessionLabel?: string;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
 }
 
 function toDisplayJson(value: unknown, fallback: string): string {

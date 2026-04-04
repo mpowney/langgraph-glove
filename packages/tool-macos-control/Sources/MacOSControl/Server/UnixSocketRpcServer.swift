@@ -44,6 +44,13 @@ final class UnixSocketRpcServer {
     private var clientTasks: [Task<Void, Never>] = []
     private let taskLock = NSLock()
 
+    /// Called on a background Task when a client connects.
+    var onConnectionOpened: (() -> Void)?
+    /// Called on a background Task when a client disconnects.
+    var onConnectionClosed: (() -> Void)?
+    /// Called on a background Task each time a JSON-RPC request is handled.
+    var onRequestHandled: (() -> Void)?
+
     init(name: String, registry: ToolRegistry) {
         self.socketPath = socketPathForTool(name)
         self.registry = registry
@@ -72,7 +79,7 @@ final class UnixSocketRpcServer {
             Darwin.close(fd)
             throw NSError(
                 domain: "UnixSocketRpcServer",
-                code: ENAMETOOLONG,
+                code: Int(ENAMETOOLONG),
                 userInfo: [NSLocalizedDescriptionKey:
                     "Socket path is too long (\(socketPath.utf8.count) bytes, max \(cap)): \(socketPath)"]
             )
@@ -153,7 +160,11 @@ final class UnixSocketRpcServer {
     /// Reads NDJSON lines from `fd`, dispatches each to the `ToolRegistry`,
     /// and writes the response back as a JSON line.
     private func handleClient(fd: Int32) async {
-        defer { Darwin.close(fd) }
+        onConnectionOpened?()
+        defer {
+            Darwin.close(fd)
+            onConnectionClosed?()
+        }
 
         var lineBuffer = ""
         let chunkSize = 65_536
@@ -186,6 +197,7 @@ final class UnixSocketRpcServer {
     }
 
     private func dispatch(_ req: RpcRequest) async -> RpcResponse {
+        onRequestHandled?()
         if req.method == "__introspect__" {
             return RpcResponse(id: req.id, result: registry.allMetadata(), error: nil)
         }

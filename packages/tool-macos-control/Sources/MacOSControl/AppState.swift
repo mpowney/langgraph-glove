@@ -46,6 +46,25 @@ final class AppState: ObservableObject {
     @Published var serverRunning: Bool = false
     @Published var serverError: String? = nil
 
+    /// Number of currently-open Unix socket client connections.
+    @Published var activeConnections: Int = 0
+    /// Time of the most recent JSON-RPC request (any transport).
+    @Published var lastRequestDate: Date? = nil
+
+    /// True when the gateway appears to be connected / recently active.
+    /// - Unix socket: at least one open connection.
+    /// - HTTP: a request was received within the last 30 seconds.
+    var coreConnected: Bool {
+        guard serverRunning else { return false }
+        switch transport {
+        case .unixSocket:
+            return activeConnections > 0
+        case .http:
+            guard let last = lastRequestDate else { return false }
+            return Date().timeIntervalSince(last) < 30
+        }
+    }
+
     // MARK: - Private
 
     private var httpServer: RpcServer?
@@ -57,9 +76,24 @@ final class AppState: ObservableObject {
     // MARK: - Lifecycle
 
     init() {
+        // Restore persisted settings.
+        if let saved = UserDefaults.standard.string(forKey: "rpc.transport"),
+           let t = RpcTransport(rawValue: saved) { transport = t }
+        let savedPort = UserDefaults.standard.integer(forKey: "rpc.port")
+        if savedPort > 0 { serverPort = savedPort }
+        if let name = UserDefaults.standard.string(forKey: "rpc.socketName"), !name.isEmpty {
+            socketName = name
+        }
         checkPermissions()
         // Auto-start the server so the gateway can connect immediately.
         startServer()
+    }
+
+    /// Persist the current transport/port/socketName to UserDefaults.
+    func saveSettings() {
+        UserDefaults.standard.set(transport.rawValue, forKey: "rpc.transport")
+        UserDefaults.standard.set(serverPort, forKey: "rpc.port")
+        UserDefaults.standard.set(socketName, forKey: "rpc.socketName")
     }
 
     // MARK: - Permission management
@@ -119,11 +153,30 @@ final class AppState: ObservableObject {
             switch transport {
             case .http:
                 let s = RpcServer(port: UInt16(clamping: serverPort), registry: registry)
+                s.onRequestHandled = { [weak self] in
+                    Task { @MainActor [weak self] in self?.lastRequestDate = Date() }
+                }
                 try s.start()
                 httpServer = s
 
             case .unixSocket:
                 let s = UnixSocketRpcServer(name: socketName, registry: registry)
+                s.onConnectionOpened = { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.activeConnections += 1
+                        self.lastRequestDate = Date()
+                    }
+                }
+                s.onConnectionClosed = { [weak self] in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        self.activeConnections = max(0, self.activeConnections - 1)
+                    }
+                }
+                s.onRequestHandled = { [weak self] in
+                    Task { @MainActor [weak self] in self?.lastRequestDate = Date() }
+                }
                 try s.start()
                 unixServer = s
             }
@@ -140,6 +193,8 @@ final class AppState: ObservableObject {
         unixServer?.stop()
         unixServer = nil
         serverRunning = false
+        activeConnections = 0
+        lastRequestDate = nil
     }
 
     func restartServer() {

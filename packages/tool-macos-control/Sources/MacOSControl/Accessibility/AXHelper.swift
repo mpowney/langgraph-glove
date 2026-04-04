@@ -39,8 +39,9 @@ enum AXHelper {
 
     static func position(_ element: AXUIElement) -> CGPoint? {
         guard let raw = cfValue(element, kAXPositionAttribute as String),
-              CFGetTypeID(raw) == AXValueGetTypeID(),
-              let axValue = raw as? AXValue else { return nil }
+              CFGetTypeID(raw) == AXValueGetTypeID()
+        else { return nil }
+        let axValue = raw as! AXValue
         var pt = CGPoint.zero
         guard AXValueGetValue(axValue, .cgPoint, &pt) else { return nil }
         return pt
@@ -48,8 +49,9 @@ enum AXHelper {
 
     static func size(_ element: AXUIElement) -> CGSize? {
         guard let raw = cfValue(element, kAXSizeAttribute as String),
-              CFGetTypeID(raw) == AXValueGetTypeID(),
-              let axValue = raw as? AXValue else { return nil }
+              CFGetTypeID(raw) == AXValueGetTypeID()
+        else { return nil }
+        let axValue = raw as! AXValue
         var sz = CGSize.zero
         guard AXValueGetValue(axValue, .cgSize, &sz) else { return nil }
         return sz
@@ -144,6 +146,6 @@ enum AXHelper {
               let raw = element,
               CFGetTypeID(raw) == AXUIElementGetTypeID()
         else { return nil }
-        return (raw as? AXUIElement)
+        return (raw as! AXUIElement)
     }
 }
