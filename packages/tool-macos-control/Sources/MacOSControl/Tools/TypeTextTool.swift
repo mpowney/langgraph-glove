@@ -44,5 +44,5 @@ func handleTypeText(_ params: [String: Any]) async throws -> Any {
         if delaySec > 0 { Thread.sleep(forTimeInterval: delaySec) }
     }
 
-    return ["typed": text.count, "characters": true]
+    return ["typed": text.count]
 }

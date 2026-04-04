@@ -159,7 +159,7 @@ final class RpcServer {
                 let json = try? JSONSerialization.data(withJSONObject: metadata),
                 let jsonStr = String(data: json, encoding: .utf8)
             else {
-                return httpResponse(status: 500, body: "Serialisation error")
+                return httpResponse(status: 500, body: "Serialization error")
             }
             return httpResponse(status: 200, body: jsonStr, contentType: "application/json")
 
@@ -211,7 +211,7 @@ final class RpcServer {
             let jsonData = try? JSONSerialization.data(withJSONObject: rpcResp.toJSON()),
             let jsonStr = String(data: jsonData, encoding: .utf8)
         else {
-            return httpResponse(status: 500, body: "Serialisation error")
+            return httpResponse(status: 500, body: "Serialization error")
         }
         return httpResponse(status: 200, body: jsonStr, contentType: "application/json")
     }

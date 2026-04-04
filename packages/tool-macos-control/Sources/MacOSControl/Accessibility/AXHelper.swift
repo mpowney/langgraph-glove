@@ -38,16 +38,20 @@ enum AXHelper {
     }
 
     static func position(_ element: AXUIElement) -> CGPoint? {
-        guard let raw = cfValue(element, kAXPositionAttribute as String) else { return nil }
+        guard let raw = cfValue(element, kAXPositionAttribute as String),
+              CFGetTypeID(raw) == AXValueGetTypeID(),
+              let axValue = raw as? AXValue else { return nil }
         var pt = CGPoint.zero
-        guard AXValueGetValue(raw as! AXValue, .cgPoint, &pt) else { return nil }   // swiftlint:disable:this force_cast
+        guard AXValueGetValue(axValue, .cgPoint, &pt) else { return nil }
         return pt
     }
 
     static func size(_ element: AXUIElement) -> CGSize? {
-        guard let raw = cfValue(element, kAXSizeAttribute as String) else { return nil }
+        guard let raw = cfValue(element, kAXSizeAttribute as String),
+              CFGetTypeID(raw) == AXValueGetTypeID(),
+              let axValue = raw as? AXValue else { return nil }
         var sz = CGSize.zero
-        guard AXValueGetValue(raw as! AXValue, .cgSize, &sz) else { return nil }   // swiftlint:disable:this force_cast
+        guard AXValueGetValue(axValue, .cgSize, &sz) else { return nil }
         return sz
     }
 
@@ -136,9 +140,10 @@ enum AXHelper {
     static func focusedElement() -> AXUIElement? {
         let systemWide = AXUIElementCreateSystemWide()
         var element: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &element) == .success
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedUIElementAttribute as CFString, &element) == .success,
+              let raw = element,
+              CFGetTypeID(raw) == AXUIElementGetTypeID()
         else { return nil }
-        // swiftlint:disable:next force_cast
-        return (element as! AXUIElement)
+        return (raw as? AXUIElement)
     }
 }

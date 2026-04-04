@@ -55,7 +55,7 @@ private struct ToolListView: View {
         ("macos_launch_app",        "Launch an application by name or bundle ID"),
         ("macos_get_ui_tree",       "Get the accessibility tree of an app"),
         ("macos_find_element",      "Find a UI element by role / title / value"),
-        ("macos_get_focused_element","Get details of the currently focused element"),
+        ("macos_get_focused_element", "Get details of the currently focused element"),
         ("macos_click",             "Click at screen coordinates"),
         ("macos_type_text",         "Type text via keyboard simulation"),
         ("macos_press_key",         "Press a key or keyboard shortcut"),
