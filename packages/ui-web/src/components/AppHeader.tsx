@@ -205,9 +205,9 @@ export function AppHeader({
             <div className={styles.tokenPopover}>
               <Text weight="semibold">Personal memory token</Text>
               <Text size={200}>
-                This token unlocks encrypted personal memories during this conversation.
-                It is never sent to the server except as part of tool calls — it is not
-                logged and is cleared when you close the tab.
+                It is sent to the server over the WebSocket for this conversation and
+                used only for tool and memory operations. It is not persisted and is
+                cleared when you close the tab.
               </Text>
               <Field label="Token">
                 <Input

@@ -229,7 +229,7 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
         type: "message",
         text,
         conversationId,
-        ...(personalToken ? { personalToken } : {}),
+        personalToken: personalToken ?? null,
       };
       ws.send(JSON.stringify(payload));
     },

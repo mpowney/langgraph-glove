@@ -33,7 +33,10 @@ function App() {
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, personalToken || undefined, auth.token ?? undefined);
+  const shouldConnect = !auth.loading;
+  const webSocketPersonalToken = shouldConnect ? personalToken || undefined : undefined;
+  const webSocketAuthToken = shouldConnect ? auth.token ?? undefined : undefined;
+  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, webSocketPersonalToken, webSocketAuthToken);
   const styles = useStyles();
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
