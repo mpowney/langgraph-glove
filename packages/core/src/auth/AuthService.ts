@@ -310,8 +310,7 @@ export class AuthService {
 
     // Decode the challenge from the response to look up the exact ceremony row,
     // preventing race conditions when multiple tabs start registration concurrently.
-    const rawClientData = Buffer.from(response.response.clientDataJSON, "base64url").toString("utf8");
-    const clientChallenge = (JSON.parse(rawClientData) as { challenge: string }).challenge;
+    const clientChallenge = this.extractChallengeFromClientData(response.response.clientDataJSON);
 
     const row = this.db
       .prepare<[string, string], PasskeyChallengeRow>(`
@@ -408,8 +407,7 @@ export class AuthService {
 
     // Decode the challenge from the response to look up the exact ceremony row,
     // preventing race conditions when multiple tabs start authentication concurrently.
-    const rawClientData = Buffer.from(response.response.clientDataJSON, "base64url").toString("utf8");
-    const clientChallenge = (JSON.parse(rawClientData) as { challenge: string }).challenge;
+    const clientChallenge = this.extractChallengeFromClientData(response.response.clientDataJSON);
 
     const row = this.db
       .prepare<[string], PasskeyChallengeRow>(`
@@ -503,6 +501,27 @@ export class AuthService {
     this.db
       .prepare("DELETE FROM auth_passkey_challenges WHERE expires_at <= ?")
       .run(new Date().toISOString());
+  }
+
+  /**
+   * Decode the `clientDataJSON` from a WebAuthn response and extract the
+   * challenge string. Throws a descriptive error if the payload is malformed.
+   */
+  private extractChallengeFromClientData(clientDataJSON: string): string {
+    let clientData: unknown;
+    try {
+      clientData = JSON.parse(Buffer.from(clientDataJSON, "base64url").toString("utf8"));
+    } catch {
+      throw new Error("Invalid clientDataJSON: could not decode or parse");
+    }
+    if (
+      typeof clientData !== "object"
+      || clientData === null
+      || typeof (clientData as Record<string, unknown>)["challenge"] !== "string"
+    ) {
+      throw new Error("Invalid clientDataJSON: missing challenge field");
+    }
+    return (clientData as { challenge: string }).challenge;
   }
 
   private createSession(userId: string): SessionDetails {
