@@ -21,6 +21,7 @@
   "dependencies": {
     "@fluentui/react-components": "^9.62.0",
     "@fluentui/react-icons": "^2.0.286",
+    "@simplewebauthn/browser": "^13.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-markdown": "^9.0.3",
@@ -28,9 +29,9 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@types/node": "^22.0.0",
     "@types/react": "^18.3.23",
     "@types/react-dom": "^18.3.7",
-    "@types/node": "^22.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "tsup": "^8.3.0",
     "tsx": "^4.19.0",

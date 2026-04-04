@@ -94,16 +94,21 @@ function App() {
     [messages, showAll, myConversationId],
   );
 
-  if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated)) {
+  if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup)) {
     return (
       <FluentProvider theme={theme}>
         <AuthGate
           loading={auth.loading}
           setupRequired={auth.setupRequired}
+          forcePasskeySetup={auth.promptPasskeySetup}
           minPasswordLength={auth.minPasswordLength}
+          passkeyRegistered={auth.passkeyRegistered}
           error={auth.error}
           onLogin={auth.login}
           onSetup={auth.setup}
+          onLoginWithPasskey={auth.loginWithPasskey}
+          onRegisterPasskey={auth.registerPasskey}
+          onSkipPasskeySetup={auth.dismissPasskeySetupPrompt}
         />
       </FluentProvider>
     );
