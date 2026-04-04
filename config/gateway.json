@@ -3,5 +3,10 @@
   "healthHost": "0.0.0.0",
   "dbPath": "./data/checkpoints.sqlite",
   "apiPort": 8081,
-  "apiHost": "0.0.0.0"
+  "apiHost": "0.0.0.0",
+  "auth": {
+    "setupTokenTtlMinutes": 30,
+    "sessionTtlMinutes": 720,
+    "minPasswordLength": 6
+  }
 }

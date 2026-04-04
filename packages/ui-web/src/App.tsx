@@ -8,7 +8,11 @@ import { ChatArea } from "./components/ChatArea";
 import { InputBar } from "./components/InputBar";
 import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
+import { AuthGate } from "./components/AuthGate";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
+import { useAuth } from "./hooks/useAuth";
+
+const PERSONAL_TOKEN_KEY = "glove_personal_token";
 
 const conversationId = crypto.randomUUID();
 
@@ -24,7 +28,15 @@ const useStyles = makeStyles({
 function App() {
   const theme = useTheme();
   const appInfo = useAppInfo();
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId);
+  const authApiBaseUrl = appInfo?.apiUrl ?? null;
+  const auth = useAuth(authApiBaseUrl);
+  const [personalToken, setPersonalTokenState] = useState<string>(
+    () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
+  );
+  const shouldConnect = !auth.loading;
+  const webSocketPersonalToken = shouldConnect ? personalToken || undefined : undefined;
+  const webSocketAuthToken = shouldConnect ? auth.token ?? undefined : undefined;
+  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, webSocketPersonalToken, webSocketAuthToken);
   const styles = useStyles();
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
@@ -38,21 +50,35 @@ function App() {
     setShowAll(value);
   }, []);
 
+  const setPersonalToken = useCallback((token: string) => {
+    if (token) {
+      sessionStorage.setItem(PERSONAL_TOKEN_KEY, token);
+    } else {
+      sessionStorage.removeItem(PERSONAL_TOKEN_KEY);
+    }
+    setPersonalTokenState(token);
+  }, []);
+
   const isStreaming = useMemo(
     () => messages.some((m) => m.isStreaming),
     [messages],
   );
   const inputDisabled = status !== "connected" || isStreaming;
-  const configuredMemoryToolUrl = (import.meta.env.VITE_MEMORY_TOOL_URL as string | undefined)?.trim() ?? "";
+  const configuredToolsBaseUrl = (import.meta.env.VITE_TOOLS_URL as string | undefined)?.trim() ?? "";
+  const legacyMemoryToolUrl = (import.meta.env.VITE_MEMORY_TOOL_URL as string | undefined)?.trim() ?? "";
+  // Use the generic tools route in dev; in production prefer a generic tools base
+  // and keep VITE_MEMORY_TOOL_URL as a backward-compatible fallback.
   const memoryToolUrl = import.meta.env.DEV
-    ? (configuredMemoryToolUrl ? "/_memory_tool" : "")
-    : configuredMemoryToolUrl;
+    ? "/api/tools/_memory"
+    : configuredToolsBaseUrl
+      ? `${configuredToolsBaseUrl.replace(/\/$/, "")}/_memory`
+      : legacyMemoryToolUrl;
 
   useEffect(() => {
     let active = true;
 
     const checkMemoryAvailability = async () => {
-      const health = await checkMemoryToolAvailability(memoryToolUrl);
+      const health = await checkMemoryToolAvailability(memoryToolUrl, auth.token ?? undefined);
       if (!active) return;
       setMemoryAvailable(health.available);
     };
@@ -61,12 +87,27 @@ function App() {
     return () => {
       active = false;
     };
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, auth.token]);
 
   const visibleMessages = useMemo(
     () => showAll ? messages : messages.filter((m) => m.conversationId === myConversationId),
     [messages, showAll, myConversationId],
   );
+
+  if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated)) {
+    return (
+      <FluentProvider theme={theme}>
+        <AuthGate
+          loading={auth.loading}
+          setupRequired={auth.setupRequired}
+          minPasswordLength={auth.minPasswordLength}
+          error={auth.error}
+          onLogin={auth.login}
+          onSetup={auth.setup}
+        />
+      </FluentProvider>
+    );
+  }
 
   return (
     <FluentProvider theme={theme}>
@@ -79,11 +120,24 @@ function App() {
           memoryAdminEnabled={memoryAvailable}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
           onOpenBrowser={() => setBrowserOpen(true)}
+          personalToken={personalToken}
+          onSetPersonalToken={setPersonalToken}
         />
         <ChatArea messages={visibleMessages} myConversationId={myConversationId} showAll={showAll} />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
-        <ConversationBrowser open={browserOpen} onClose={() => setBrowserOpen(false)} apiBaseUrl={appInfo?.apiUrl} />
-        <MemoryAdmin open={memoryAdminOpen} onClose={() => setMemoryAdminOpen(false)} memoryToolUrl={memoryToolUrl} />
+        <ConversationBrowser
+          open={browserOpen}
+          onClose={() => setBrowserOpen(false)}
+          apiBaseUrl={appInfo?.apiUrl}
+          authToken={auth.token ?? undefined}
+        />
+        <MemoryAdmin
+          open={memoryAdminOpen}
+          onClose={() => setMemoryAdminOpen(false)}
+          memoryToolUrl={memoryToolUrl}
+          authToken={auth.token ?? undefined}
+          personalToken={personalToken}
+        />
       </div>
     </FluentProvider>
   );

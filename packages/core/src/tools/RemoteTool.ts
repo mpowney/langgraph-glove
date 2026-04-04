@@ -1,4 +1,6 @@
 import { StructuredTool } from "@langchain/core/tools";
+import type { RunnableConfig } from "@langchain/core/runnables";
+import type { CallbackManagerForToolRun } from "@langchain/core/callbacks/manager";
 import { z } from "zod";
 import type { RpcClient } from "../rpc/RpcClient";
 import type { ToolMetadata } from "../rpc/RpcProtocol";
@@ -113,8 +115,27 @@ export class RemoteTool extends StructuredTool {
     this.schema = config.schema;
   }
 
-  protected async _call(input: Record<string, unknown>): Promise<string> {
-    const result = await this.rpcClient.call(this.name, input);
+  protected async _call(
+    input: Record<string, unknown>,
+    _runManager?: CallbackManagerForToolRun,
+    config?: RunnableConfig,
+  ): Promise<string> {
+    const args = { ...input };
+
+    // If this tool's schema declares a `personalToken` parameter and one was
+    // not supplied by the LLM, inject it from the LangGraph configurable so
+    // the browser-side personal token flows through automatically.
+    if (
+      "personalToken" in this.schema.shape &&
+      !args.personalToken &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).personalToken === "string"
+    ) {
+      args.personalToken = (config.configurable as Record<string, unknown>).personalToken;
+    }
+
+    const result = await this.rpcClient.call(this.name, args);
     if (typeof result === "string") return result;
     return JSON.stringify(result);
   }

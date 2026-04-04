@@ -25,6 +25,7 @@ import { FileSubscriber } from "./logging/FileSubscriber";
 import { LogLevel } from "./logging/LogLevel";
 import { CliChannel } from "./channels/CliChannel";
 import { WebChannel } from "./channels/WebChannel";
+import { AuthService } from "./auth/AuthService";
 
 // ---------------------------------------------------------------------------
 // CLI args
@@ -33,6 +34,7 @@ import { WebChannel } from "./channels/WebChannel";
 const args = process.argv.slice(2);
 const useWeb = args.includes("--web");
 const noCli = args.includes("--no-cli");
+const regenerateSetupToken = args.includes("--regenerate-setup-token");
 const webPortIndex = args.indexOf("--web-port");
 const webPort = webPortIndex !== -1 ? parseInt(args[webPortIndex + 1] ?? "8080", 10) : 8080;
 
@@ -71,6 +73,24 @@ try {
 // ---------------------------------------------------------------------------
 // Gateway
 // ---------------------------------------------------------------------------
+
+if (regenerateSetupToken) {
+  const config = new ConfigLoader(configDir, secretsDir).load();
+  const auth = new AuthService({
+    dbPath: config.gateway.dbPath ?? "data/checkpoints.sqlite",
+    config: config.gateway.auth,
+  });
+
+  try {
+    const setupToken = auth.regenerateBootstrapToken();
+    // Use stdout so operators can copy the token from terminal output.
+    console.log(`Setup token (expires ${setupToken.expiresAt}): ${setupToken.token}`);
+  } finally {
+    auth.close();
+  }
+
+  process.exit(0);
+}
 
 const channels = [];
 if (!noCli) channels.push(new CliChannel());

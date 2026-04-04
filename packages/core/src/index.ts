@@ -35,6 +35,7 @@ export type { WebChannelConfig } from "./channels/WebChannel";
 // Admin API
 export { AdminApi } from "./api/AdminApi";
 export type { AdminApiConfig, BrowserMessage, ConversationSummary } from "./api/AdminApi";
+export { AuthService } from "./auth/AuthService";
 export { BlueBubblesChannel } from "./channels/BlueBubblesChannel";
 export type { BlueBubblesChannelConfig } from "./channels/BlueBubblesChannel";
 

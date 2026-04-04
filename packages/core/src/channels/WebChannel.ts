@@ -1,5 +1,6 @@
 import http from "node:http";
 import { join } from "node:path";
+import { URL } from "node:url";
 import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
@@ -7,12 +8,19 @@ import Database from "better-sqlite3";
 import { distPath } from "@langgraph-glove/ui-web";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type { AuthService } from "../auth/AuthService";
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {
   type: "message";
   text: string;
   conversationId: string;
+  /**
+   * Optional personal token supplied by the browser for encrypted personal
+   * memory operations. Stored in-memory per conversation and never logged
+   * or persisted to disk.
+   */
+  personalToken?: string | null;
 }
 
 /** Messages sent from server → browser client. */
@@ -69,6 +77,12 @@ export interface WebChannelConfig extends ChannelConfig {
   };
   /** Optional path to the SQLite checkpointer database for checkpoint metadata. */
   checkpointDbPath?: string;
+  /**
+   * Optional auth service.  When provided every WebSocket upgrade request
+   * must carry a valid session token in the `?token=` query parameter;
+   * connections without a valid token are rejected with HTTP 401.
+   */
+  authService?: AuthService;
 }
 
 /**
@@ -98,6 +112,13 @@ export class WebChannel extends Channel {
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
 
+  /**
+   * Per-conversation personal tokens, held only in memory for the lifetime of
+   * the server process. Never written to disk or included in any log output.
+   */
+  private readonly personalTokens = new Map<string, string>();
+  private authService?: AuthService;
+
   constructor(config: WebChannelConfig = {}) {
     super(config);
     this.port = config.port ?? 8080;
@@ -108,6 +129,7 @@ export class WebChannel extends Channel {
       apiUrl: config.appInfo?.apiUrl ?? "",
     };
     this.checkpointDbPath = config.checkpointDbPath;
+    this.authService = config.authService;
 
     if (this.checkpointDbPath) {
       try {
@@ -145,10 +167,40 @@ export class WebChannel extends Channel {
     });
   }
 
+  /**
+   * Inject an auth service after construction.  Called by the Gateway after
+   * it creates the AuthService, before channels are started.
+   */
+  setAuthService(svc: AuthService): void {
+    this.authService = svc;
+  }
+
   async start(): Promise<void> {
     return new Promise((resolve) => {
       this.httpServer = http.createServer(this.app);
-      this.wss = new WebSocketServer({ server: this.httpServer });
+
+      // When an AuthService is configured, validate the session token supplied
+      // as a `?token=` query parameter on every WebSocket upgrade request.
+      // The token is read from the URL before any application code runs and is
+      // never echoed back or logged.
+      const authService = this.authService;
+      type VerifyClientSync = (info: { req: http.IncomingMessage }) => boolean;
+      const verifyClient: VerifyClientSync | undefined = authService
+        ? (info) => {
+            try {
+              const url = new URL(
+                info.req.url ?? "/",
+                `http://${info.req.headers.host ?? "localhost"}`,
+              );
+              const token = url.searchParams.get("token");
+              return !!(token && authService.authenticateSession(token));
+            } catch {
+              return false;
+            }
+          }
+        : undefined;
+
+      this.wss = new WebSocketServer({ server: this.httpServer, ...(verifyClient ? { verifyClient } : {}) });
 
       this.wss.on("connection", (ws) => this.handleConnection(ws));
 
@@ -245,12 +297,22 @@ export class WebChannel extends Channel {
 
       if (parsed.type !== "message" || !parsed.text || !this.handler) return;
 
+      // Update the in-memory personal token cache for this conversation.
+      if (typeof parsed.personalToken === "string" && parsed.personalToken) {
+        this.personalTokens.set(parsed.conversationId, parsed.personalToken);
+      } else if (parsed.personalToken === null) {
+        this.personalTokens.delete(parsed.conversationId);
+      }
+
+      const personalToken = this.personalTokens.get(parsed.conversationId);
+
       const message: IncomingMessage = {
         id: uuidv4(),
         conversationId: parsed.conversationId,
         text: parsed.text,
         sender: `ws:${parsed.conversationId}`,
         timestamp: new Date(),
+        ...(personalToken !== undefined ? { metadata: { personalToken } } : {}),
       };
 
       // Tag the socket with its conversationId for targeted broadcast

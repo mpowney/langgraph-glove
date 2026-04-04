@@ -28,6 +28,11 @@ export interface ClientMessage {
   type: "message";
   text: string;
   conversationId: string;
+  /**
+   * Optional personal token for encrypted personal memory operations.
+   * Pass `null` to explicitly clear the server-side token for this conversation.
+   */
+  personalToken?: string | null;
 }
 
 /** App metadata served by the backend `/api/info` endpoint. */
@@ -95,6 +100,7 @@ export interface MemorySummary {
   createdAt: string;
   updatedAt: string;
   revision: number;
+  personal: boolean;
   lastIndexedAt?: string;
 }
 

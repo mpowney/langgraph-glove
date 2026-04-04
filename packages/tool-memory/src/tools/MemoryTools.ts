@@ -29,6 +29,14 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
               enum: ["hot", "warm", "cold"],
               description: "Initial retention tier for the memory.",
             },
+            personal: {
+              type: "boolean",
+              description: "Mark memory content as personal. Only personal memories are encrypted in the privacy pipeline.",
+            },
+            personalToken: {
+              type: "string",
+              description: "Personal token used when storing personal memory content.",
+            },
           },
           required: ["title", "content"],
         },
@@ -39,6 +47,8 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         scope: params["scope"] as string | undefined,
         tags: params["tags"] as string[] | undefined,
         retentionTier: params["retentionTier"] as "hot" | "warm" | "cold" | undefined,
+        personal: params["personal"] as boolean | undefined,
+        personalToken: params["personalToken"] as string | undefined,
       }),
     },
     {
@@ -53,6 +63,10 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
             slug: { type: "string", description: "Slug derived from the title." },
             storagePath: { type: "string", description: "Absolute path to the markdown file." },
             content: { type: "string", description: "Markdown content to append." },
+            personalToken: {
+              type: "string",
+              description: "Personal token required when appending to personal memory.",
+            },
           },
           required: ["content"],
         },
@@ -62,6 +76,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
         content: params["content"] as string,
+        personalToken: params["personalToken"] as string | undefined,
       }),
     },
     {
@@ -89,6 +104,14 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
               description: "Replacement retention tier.",
             },
             status: { type: "string", description: "Replacement status, for example active or archived." },
+            personal: {
+              type: "boolean",
+              description: "Set whether this memory is personal.",
+            },
+            personalToken: {
+              type: "string",
+              description: "Personal token used when modifying personal memory content.",
+            },
           },
         },
       },
@@ -102,6 +125,8 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         tags: params["tags"] as string[] | undefined,
         retentionTier: params["retentionTier"] as "hot" | "warm" | "cold" | undefined,
         status: params["status"] as string | undefined,
+        personal: params["personal"] as boolean | undefined,
+        personalToken: params["personalToken"] as string | undefined,
       }),
     },
     {
@@ -115,6 +140,10 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
             query: { type: "string", description: "What to search for across stored memories." },
             scope: { type: "string", description: "Optional scope filter." },
             limit: { type: "number", description: "Maximum number of memories to return." },
+            personalToken: {
+              type: "string",
+              description: "Personal token required to include excerpts from personal memories.",
+            },
           },
           required: ["query"],
         },
@@ -123,6 +152,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         query: params["query"] as string,
         scope: params["scope"] as string | undefined,
         limit: params["limit"] as number | undefined,
+        personalToken: params["personalToken"] as string | undefined,
       }),
     },
     {
@@ -136,6 +166,10 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
             storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            personalToken: {
+              type: "string",
+              description: "Personal token required when retrieving personal memory content.",
+            },
           },
         },
       },
@@ -143,6 +177,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
+        personalToken: params["personalToken"] as string | undefined,
       }),
     },
     {
@@ -176,6 +211,10 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
             storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            personalToken: {
+              type: "string",
+              description: "Personal token used when reindexing personal memory content.",
+            },
           },
         },
       },
@@ -183,6 +222,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
+        personalToken: params["personalToken"] as string | undefined,
       }),
     },
     {

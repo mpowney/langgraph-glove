@@ -19,19 +19,21 @@ function resolveApiTarget(): string {
   }
 }
 
-function resolveMemoryToolTarget(): string | null {
-  const memoryToolUrl = process.env["VITE_MEMORY_TOOL_URL"];
-  if (!memoryToolUrl) return null;
+function resolveToolsTarget(): string | null {
+  const adminApiUrl = process.env["VITE_API_URL"] ?? "http://127.0.0.1:8081";
 
   try {
-    const url = new URL(memoryToolUrl);
+    const url = new URL(adminApiUrl);
+    if (url.hostname === "localhost") {
+      url.hostname = "127.0.0.1";
+    }
     return url.toString();
   } catch {
-    return memoryToolUrl.replace("localhost", "127.0.0.1");
+    return adminApiUrl.replace("localhost", "127.0.0.1");
   }
 }
 
-const memoryToolTarget = resolveMemoryToolTarget();
+const toolsTarget = resolveToolsTarget();
 
 export default defineConfig({
   plugins: [react()],
@@ -42,22 +44,23 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      // Forward all /api/* routes to the backend server in dev mode.
+      ...(toolsTarget
+        ? {
+            // Generic tools endpoint is handled by AdminApi.
+            // Example: /api/tools/_memory/rpc -> http://127.0.0.1:8081/api/tools/_memory/rpc
+            "/api/tools": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+          }
+        : {}),
+      // Forward remaining /api/* routes to the backend server in dev mode.
       // The backend port is read from VITE_WS_URL (e.g. ws://localhost:8080)
       // and falls back to port 8080.
       "/api": {
         target: resolveApiTarget(),
         changeOrigin: true,
       },
-      ...(memoryToolTarget
-        ? {
-            "/_memory_tool": {
-              target: memoryToolTarget,
-              changeOrigin: true,
-              rewrite: (path: string) => path.replace(/^\/_memory_tool/, ""),
-            },
-          }
-        : {}),
     },
   },
 });

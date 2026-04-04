@@ -13,7 +13,7 @@ function toErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export function useMemoryAdmin(memoryToolUrl = "") {
+export function useMemoryAdmin(memoryToolUrl = "", authToken?: string) {
   const [health, setHealth] = useState<MemoryToolHealth>({ available: false });
   const [healthState, setHealthState] = useState<LoadingState>("idle");
   const [listState, setListState] = useState<LoadingState>("idle");
@@ -34,27 +34,27 @@ export function useMemoryAdmin(memoryToolUrl = "") {
 
   const checkHealth = useCallback(async () => {
     setHealthState("loading");
-    const result = await checkMemoryToolAvailability(memoryToolUrl);
+    const result = await checkMemoryToolAvailability(memoryToolUrl, authToken);
     setHealth(result);
     setHealthState(result.available ? "idle" : "error");
     return result.available;
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, authToken]);
 
   const loadMemories = useCallback(async () => {
     setListState("loading");
     setListError(null);
     setSearchResults(null);
     try {
-      const data = await callMemoryTool<MemorySummary[]>(memoryToolUrl, "memory_list", {});
+      const data = await callMemoryTool<MemorySummary[]>(memoryToolUrl, "memory_list", {}, authToken);
       setMemories(data);
       setListState("idle");
     } catch (err) {
       setListError(toErrorMessage(err));
       setListState("error");
     }
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, authToken]);
 
-  const searchMemories = useCallback(async (query: string) => {
+  const searchMemories = useCallback(async (query: string, personalToken?: string) => {
     const trimmed = query.trim();
     if (!trimmed) {
       setSearchResults(null);
@@ -66,29 +66,41 @@ export function useMemoryAdmin(memoryToolUrl = "") {
     try {
       const data = await callMemoryTool<MemorySearchResult>(memoryToolUrl, "memory_search", {
         query: trimmed,
-      });
+        ...(typeof personalToken === "string" && personalToken.trim()
+          ? { personalToken: personalToken.trim() }
+          : {}),
+      }, authToken);
       setSearchResults(data);
       setSearchState("idle");
     } catch (err) {
       setSearchError(toErrorMessage(err));
       setSearchState("error");
     }
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, authToken]);
 
-  const loadMemory = useCallback(async (memoryId: string) => {
+  const loadMemory = useCallback(async (memoryId: string, personalToken?: string) => {
     setDetailState("loading");
     setDetailError(null);
     try {
-      const data = await callMemoryTool<MemoryDocument>(memoryToolUrl, "memory_get", { memoryId });
+      const data = await callMemoryTool<MemoryDocument>(memoryToolUrl, "memory_get", {
+        memoryId,
+        ...(typeof personalToken === "string" && personalToken.trim()
+          ? { personalToken: personalToken.trim() }
+          : {}),
+      }, authToken);
       setSelectedMemory(data);
       setDetailState("idle");
     } catch (err) {
       setDetailError(toErrorMessage(err));
       setDetailState("error");
     }
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, authToken]);
 
-  const saveMemory = useCallback(async (memoryId: string, updates: Partial<MemoryDocument>) => {
+  const saveMemory = useCallback(async (
+    memoryId: string,
+    updates: Partial<MemoryDocument>,
+    personalToken?: string,
+  ) => {
     setSaveState("loading");
     setSaveError(null);
     try {
@@ -100,7 +112,11 @@ export function useMemoryAdmin(memoryToolUrl = "") {
         ...(Array.isArray(updates.tags) ? { tags: updates.tags } : {}),
         ...(typeof updates.retentionTier === "string" ? { retentionTier: updates.retentionTier } : {}),
         ...(typeof updates.status === "string" ? { status: updates.status } : {}),
-      });
+        ...(typeof updates.personal === "boolean" ? { personal: updates.personal } : {}),
+        ...(typeof personalToken === "string" && personalToken.trim()
+          ? { personalToken: personalToken.trim() }
+          : {}),
+      }, authToken);
       setSelectedMemory(data);
       setMemories((prev) => prev.map((m) => (m.id === data.id ? data : m)));
       setSearchResults((prev) => {
@@ -117,13 +133,13 @@ export function useMemoryAdmin(memoryToolUrl = "") {
       setSaveState("error");
       return null;
     }
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, authToken]);
 
   const deleteMemory = useCallback(async (memoryId: string) => {
     setDeleteState("loading");
     setDeleteError(null);
     try {
-      await callMemoryTool(memoryToolUrl, "memory_delete", { memoryId });
+      await callMemoryTool(memoryToolUrl, "memory_delete", { memoryId }, authToken);
       setMemories((prev) => prev.filter((memory) => memory.id !== memoryId));
       setSearchResults((prev) => {
         if (!prev) return prev;
@@ -140,7 +156,7 @@ export function useMemoryAdmin(memoryToolUrl = "") {
       setDeleteState("error");
       return false;
     }
-  }, [memoryToolUrl]);
+  }, [memoryToolUrl, authToken]);
 
   const clearSelection = useCallback(() => {
     setSelectedMemory(null);

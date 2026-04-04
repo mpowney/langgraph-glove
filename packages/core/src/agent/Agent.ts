@@ -279,11 +279,15 @@ export class GloveAgent {
     text: string,
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
+    personalToken?: string,
   ): Promise<string> {
     const result = await this.graph.invoke(
       { messages: [new HumanMessage(text)] },
       {
-        configurable: { thread_id: conversationId },
+        configurable: {
+          thread_id: conversationId,
+          ...(personalToken ? { personalToken } : {}),
+        },
         recursionLimit: this.config.recursionLimit ?? 25,
         callbacks,
       },
@@ -308,6 +312,7 @@ export class GloveAgent {
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string) => void,
+    personalToken?: string,
   ): AsyncGenerator<string> {
     const streamedToolArgsByKey = new Map<string, string>();
 
@@ -387,7 +392,10 @@ export class GloveAgent {
     const streamResult = await this.graph.stream(
       { messages: [new HumanMessage(text)] },
       {
-        configurable: { thread_id: conversationId },
+        configurable: {
+          thread_id: conversationId,
+          ...(personalToken ? { personalToken } : {}),
+        },
         streamMode: "messages",
         recursionLimit: this.config.recursionLimit ?? 25,
         callbacks,
@@ -547,7 +555,10 @@ export class GloveAgent {
 
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
-      const baseStream = this.stream(message.text, message.conversationId, callbacks, onToolEvent);
+      const personalToken = typeof message.metadata?.personalToken === "string"
+        ? message.metadata.personalToken
+        : undefined;
+      const baseStream = this.stream(message.text, message.conversationId, callbacks, onToolEvent, personalToken);
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
@@ -566,7 +577,10 @@ export class GloveAgent {
           .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
       }
     } else {
-      const response = await this.invoke(message.text, message.conversationId, callbacks);
+      const personalToken = typeof message.metadata?.personalToken === "string"
+        ? message.metadata.personalToken
+        : undefined;
+      const response = await this.invoke(message.text, message.conversationId, callbacks, personalToken);
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
       for (const ch of mirrorTargets) {

@@ -17,14 +17,20 @@ export async function callMemoryTool<T>(
   memoryToolUrl: string,
   method: string,
   params: Record<string, unknown>,
+  authToken?: string,
 ): Promise<T> {
   if (!memoryToolUrl) {
-    throw new Error("VITE_MEMORY_TOOL_URL is not configured");
+    throw new Error("Memory tool endpoint is not configured");
+  }
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken?.trim()) {
+    headers.Authorization = `Bearer ${authToken.trim()}`;
   }
 
   const res = await fetch(`${memoryToolUrl}/rpc`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({
       id: crypto.randomUUID(),
       method,
@@ -47,16 +53,24 @@ export async function callMemoryTool<T>(
   return payload.result;
 }
 
-export async function checkMemoryToolAvailability(memoryToolUrl: string): Promise<MemoryToolHealth> {
+export async function checkMemoryToolAvailability(
+  memoryToolUrl: string,
+  authToken?: string,
+): Promise<MemoryToolHealth> {
   if (!memoryToolUrl) {
     return {
       available: false,
-      reason: "VITE_MEMORY_TOOL_URL is not configured",
+      reason: "Memory tool endpoint is not configured",
     };
   }
 
   try {
-    const tools = await callMemoryTool<ToolMetadata[]>(memoryToolUrl, "__introspect__", {});
+    const tools = await callMemoryTool<ToolMetadata[]>(
+      memoryToolUrl,
+      "__introspect__",
+      {},
+      authToken,
+    );
     const names = tools.map((tool) => tool.name);
     const missing = REQUIRED_MEMORY_TOOLS.filter((name) => !names.includes(name));
 
