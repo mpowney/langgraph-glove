@@ -574,12 +574,43 @@ export class GloveAgent {
         }
       }
 
-      await sourceChannel.sendStream(message.conversationId, teedStream());
+      try {
+        await sourceChannel.sendStream(message.conversationId, teedStream());
 
-      for (const ch of mirrorTargets) {
-        await ch
-          .sendMessage({ conversationId: message.conversationId, text: fullText, role: "agent" })
-          .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
+        for (const ch of mirrorTargets) {
+          await ch
+            .sendMessage({ conversationId: message.conversationId, text: fullText, role: "agent" })
+            .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
+        }
+      } catch (err) {
+        const detail = formatError(err);
+        const canFallbackToInvoke = fullText.length === 0;
+        if (!canFallbackToInvoke) {
+          throw err;
+        }
+
+        logger.warn(
+          `Streaming failed before any output; falling back to non-stream invoke (conversation: ${message.conversationId}): ${detail}`,
+        );
+
+        const fallbackResponse = await this.invoke(
+          message.text,
+          message.conversationId,
+          callbacks,
+          personalToken,
+        );
+
+        await sourceChannel.sendMessage({
+          conversationId: message.conversationId,
+          text: fallbackResponse,
+          role: "agent",
+        });
+
+        for (const ch of mirrorTargets) {
+          await ch
+            .sendMessage({ conversationId: message.conversationId, text: fallbackResponse, role: "agent" })
+            .catch((e: unknown) => logger.error(`Failed to broadcast fallback response to channel "${ch.name}"`, e));
+        }
       }
     } else {
       const personalToken = typeof message.metadata?.personalToken === "string"

@@ -50,6 +50,14 @@ export class ModelRegistry {
     return Object.keys(this.modelsConfig);
   }
 
+  /** Resolve and return the effective model entry for a key. */
+  resolveEntry(key: string = "default"): ModelEntry {
+    return resolveConfigEntry(
+      this.modelsConfig as Record<string, ModelEntry>,
+      key,
+    );
+  }
+
   private createModel(entry: ModelEntry): BaseChatModel {
     const { provider, model, apiKey, baseUrl, temperature, apiVersion, think, keepAlive } = entry;
     const temp = temperature ?? 0;

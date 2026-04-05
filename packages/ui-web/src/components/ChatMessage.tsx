@@ -307,6 +307,8 @@ interface ChatMessageProps {
   entry: ChatEntry;
   /** Shown as a small muted label when viewing all conversations. */
   sessionLabel?: string;
+  /** Active model context window tokens for prompt-context estimation. */
+  modelContextWindowTokens?: number;
 }
 
 function toDisplayJson(value: unknown, fallback: string): string {
@@ -341,7 +343,24 @@ function tryFormatJsonString(value: string): string {
   }
 }
 
-export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
+const APPROX_CHARS_PER_TOKEN = 4;
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+
+function estimatePromptContextUsage(content: string, contextWindowTokens?: number): string {
+  const chars = content.length;
+  const approxTokens = Math.max(1, Math.ceil(chars / APPROX_CHARS_PER_TOKEN));
+  const denominator =
+    typeof contextWindowTokens === "number" && contextWindowTokens > 0
+      ? contextWindowTokens
+      : DEFAULT_CONTEXT_WINDOW_TOKENS;
+  const ratio = (approxTokens / denominator) * 100;
+  const ratioLabel = ratio < 0.1 ? "<0.1" : ratio.toFixed(1);
+  const tokenLabel = new Intl.NumberFormat().format(approxTokens);
+  const windowLabel = new Intl.NumberFormat().format(denominator);
+  return `~${tokenLabel} tokens (${ratioLabel}% of ${windowLabel} ctx)`;
+}
+
+export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: ChatMessageProps) {
   const styles = useStyles();
 
   if (entry.role === "user") {
@@ -360,6 +379,7 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
   }
 
   if (entry.role === "prompt") {
+    const contextUsageEstimate = estimatePromptContextUsage(entry.content, modelContextWindowTokens);
     return (
       <div className={styles.promptWrapper}>
         <div>
@@ -370,6 +390,7 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
             className={styles.promptAccordion}
             itemValue="prompt"
             headerText="Prompt context"
+            headerPreTimestampText={contextUsageEstimate}
             panelClassName={styles.promptPanel}
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}

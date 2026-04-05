@@ -131,7 +131,12 @@ function App() {
           passkeyEnabled={auth.passkeyRegistered}
           onGeneratePersonalTokenWithPasskey={auth.generatePersonalTokenWithPasskey}
         />
-        <ChatArea messages={visibleMessages} myConversationId={myConversationId} showAll={showAll} />
+        <ChatArea
+          messages={visibleMessages}
+          myConversationId={myConversationId}
+          showAll={showAll}
+          modelContextWindowTokens={appInfo?.modelContextWindowTokens}
+        />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
         <ConversationBrowser
           open={browserOpen}

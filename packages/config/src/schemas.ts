@@ -42,6 +42,8 @@ export const ModelEntrySchema = z.object({
   think: z.boolean().optional(),
   /** Ollama model residency duration after a request (maps to Ollama `keep_alive`). */
   keepAlive: z.union([z.string(), z.number()]).optional(),
+  /** Optional known model context window size in tokens. */
+  contextWindowTokens: z.number().int().positive().optional(),
 }).superRefine((value, ctx) => {
   if (value.keepAlive !== undefined && value.provider !== "ollama") {
     ctx.addIssue({

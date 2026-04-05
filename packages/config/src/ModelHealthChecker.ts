@@ -8,6 +8,15 @@ export interface ModelHealthResult {
   latencyMs: number;
   /** Human-readable error message when `ok` is false. */
   error?: string;
+  /** Context window in tokens when known (best-effort). */
+  contextWindowTokens?: number;
+  /** Source for detected context window. */
+  contextWindowSource?: "config" | "ollama-show";
+}
+
+interface ContextWindowInfo {
+  contextWindowTokens?: number;
+  contextWindowSource?: "config" | "ollama-show";
 }
 
 /**
@@ -37,6 +46,8 @@ export class ModelHealthChecker {
    */
   async check(key: string): Promise<ModelHealthResult> {
     const start = Date.now();
+    const entry = this.registry.resolveEntry(key);
+    const contextWindow = await this.detectContextWindow(entry);
     try {
       const model = this.registry.get(key);
       const response = await model.invoke([
@@ -60,9 +71,15 @@ export class ModelHealthChecker {
             : "";
 
       if (!text) {
-        return { key, ok: false, latencyMs, error: "Empty response from model" };
+        return {
+          key,
+          ok: false,
+          latencyMs,
+          error: "Empty response from model",
+          ...contextWindow,
+        };
       }
-      return { key, ok: true, latencyMs };
+      return { key, ok: true, latencyMs, ...contextWindow };
     } catch (err) {
       const latencyMs = Date.now() - start;
       const error =
@@ -71,7 +88,7 @@ export class ModelHealthChecker {
           : typeof err === "string"
             ? err
             : "Unknown error";
-      return { key, ok: false, latencyMs, error };
+      return { key, ok: false, latencyMs, error, ...contextWindow };
     }
   }
 
@@ -90,5 +107,80 @@ export class ModelHealthChecker {
    */
   async checkKeys(keys: string[]): Promise<ModelHealthResult[]> {
     return Promise.all(keys.map((key) => this.check(key)));
+  }
+
+  private async detectContextWindow(
+    entry: ReturnType<ModelRegistry["resolveEntry"]>,
+  ): Promise<ContextWindowInfo> {
+    if (entry.contextWindowTokens) {
+      return {
+        contextWindowTokens: entry.contextWindowTokens,
+        contextWindowSource: "config",
+      };
+    }
+
+    if (entry.provider === "ollama") {
+      const inferred = await inferOllamaContextWindow(entry.model, entry.baseUrl);
+      if (inferred) {
+        return {
+          contextWindowTokens: inferred,
+          contextWindowSource: "ollama-show",
+        };
+      }
+    }
+
+    return {};
+  }
+}
+
+function parseContextWindowFromShowResponse(payload: unknown): number | undefined {
+  if (!payload || typeof payload !== "object") return undefined;
+  const obj = payload as Record<string, unknown>;
+
+  const details = obj["details"];
+  if (details && typeof details === "object") {
+    const maybeDetails = details as Record<string, unknown>;
+    const direct = maybeDetails["context_length"];
+    if (typeof direct === "number" && Number.isFinite(direct) && direct > 0) {
+      return Math.floor(direct);
+    }
+  }
+
+  const modelInfo = obj["model_info"];
+  if (modelInfo && typeof modelInfo === "object") {
+    const maybeInfo = modelInfo as Record<string, unknown>;
+    for (const [key, value] of Object.entries(maybeInfo)) {
+      if (!key.toLowerCase().includes("context_length")) continue;
+      if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
+      if (typeof value === "string") {
+        const parsed = Number.parseInt(value, 10);
+        if (Number.isFinite(parsed) && parsed > 0) return parsed;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+async function inferOllamaContextWindow(
+  model: string,
+  baseUrl?: string,
+): Promise<number | undefined> {
+  const root = (baseUrl ?? "http://localhost:11434").replace(/\/$/, "");
+  const url = `${root}/api/show`;
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+    });
+    if (!response.ok) return undefined;
+    const payload = (await response.json()) as unknown;
+    return parseContextWindowFromShowResponse(payload);
+  } catch {
+    return undefined;
   }
 }

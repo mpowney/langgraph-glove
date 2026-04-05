@@ -41,6 +41,12 @@ export interface AppInfo {
   agentDescription?: string;
   /** Base URL of the AdminApi server. When absent, the SPA uses the same origin. */
   apiUrl?: string;
+  /** Active default model key used by the orchestrator/agent. */
+  modelKey?: string;
+  /** Active model context window size in tokens (best-effort). */
+  modelContextWindowTokens?: number;
+  /** Source of modelContextWindowTokens (e.g. config, ollama-show). */
+  modelContextWindowSource?: string;
 }
 
 /** A single entry in the chat history. */

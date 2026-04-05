@@ -9,19 +9,19 @@
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a memory specialist. {tool-descriptions}. Rules: (1) For any recall or lookup request (\"do you remember\", \"what do you know about\", \"find\", \"search\"), call memory_search immediately — never ask the user if you should search. (2) If search returns results, report them. If no results are found, say so clearly. (3) For store/save requests, use memory_create. For updates, use memory_update or memory_append. Use precise tags and scopes.",
     "description": "Long-term memory storage, recall, indexing, and memory maintenance",
-    "tools": ["memory_create", "memory_append", "memory_update", "memory_get", "memory_list", "memory_search", "memory_reindex", "memory_config"]
+    "tools": ["memory_create", "memory_append", "memory_update", "memory_get", "memory_list", "memory_search", "memory_reindex", "memory_config", "glove_get_tool_payload"]
   },
   "researcher": {
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a web research specialist.\n {tool-descriptions}\n Always cite your sources with URLs. Close browser sessions when done.",
     "description": "Web research, finding information, browsing, websites and form interaction",
-    "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search"]
+    "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search", "glove_get_tool_payload"]
   },
   "weather": {
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a global weather specialist. {tool-descriptions}. Always include units and location details.",
     "description": "Global weather forecasts and conditions",
-    "tools": ["weather_au", "weather_eu", "weather_us", "rain_forecast_au"]
+    "tools": ["weather_au", "weather_eu", "weather_us", "rain_forecast_au", "glove_get_tool_payload"]
   },
   "macos-perception": {
     "modelKey": "ollama-vision",
@@ -33,7 +33,8 @@
       "macos_get_ui_subtree",
       "macos_find_element",
       "macos_get_focused_element",
-      "macos_take_screenshot"
+      "macos_take_screenshot",
+      "glove_get_tool_payload"
     ]
   },
   "macos-action": {
@@ -47,7 +48,8 @@
       "macos_click",
       "macos_type_text",
       "macos_press_key",
-      "macos_scroll"
+      "macos_scroll",
+      "glove_get_tool_payload"
     ]
   }
 }

@@ -20,6 +20,7 @@ import {
 } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
+import { storeToolPayload } from "./toolPayloadCache";
 
 // ---------------------------------------------------------------------------
 // Single-agent ReAct graph
@@ -57,21 +58,6 @@ const TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT = Number.parseInt(
   process.env.GLOVE_TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT ?? "1200",
   10,
 );
-const TOOL_MESSAGE_CACHE_MAX_ITEMS = Number.parseInt(
-  process.env.GLOVE_TOOL_MESSAGE_CACHE_MAX_ITEMS ?? "256",
-  10,
-);
-
-const oversizedToolPayloadCache = new Map<string, string>();
-
-function cacheOversizedToolPayload(ref: string, payload: string): void {
-  oversizedToolPayloadCache.set(ref, payload);
-  while (oversizedToolPayloadCache.size > TOOL_MESSAGE_CACHE_MAX_ITEMS) {
-    const oldestKey = oversizedToolPayloadCache.keys().next().value;
-    if (!oldestKey) break;
-    oversizedToolPayloadCache.delete(oldestKey);
-  }
-}
 
 function summarizeOversizedToolMessage(message: ToolMessage): ToolMessage {
   const text = messageText(message.content);
@@ -79,8 +65,7 @@ function summarizeOversizedToolMessage(message: ToolMessage): ToolMessage {
     return message;
   }
 
-  const ref = `tool_payload_${randomUUID()}`;
-  cacheOversizedToolPayload(ref, text);
+  const ref = storeToolPayload(text);
 
   const preview = text.slice(0, TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT);
   const summary = [

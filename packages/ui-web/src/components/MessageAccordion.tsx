@@ -30,6 +30,11 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontFamily: "ui-monospace, 'Cascadia Code', Consolas, monospace",
   },
+  accordionHeaderField: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    fontFamily: "ui-monospace, 'Cascadia Code', Consolas, monospace",
+  },
   metadataSection: {
     marginTop: tokens.spacingVerticalM,
     borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
@@ -157,6 +162,7 @@ export interface MessageAccordionProps {
   className: string;
   itemValue: string;
   headerText: string;
+  headerPreTimestampText?: string;
   panelClassName: string;
   rawPayload: unknown;
   receivedAt?: string;
@@ -168,6 +174,7 @@ export function MessageAccordion({
   className,
   itemValue,
   headerText,
+  headerPreTimestampText,
   panelClassName,
   rawPayload,
   receivedAt,
@@ -188,6 +195,9 @@ export function MessageAccordion({
         <AccordionHeader size="small">
           <span className={styles.accordionHeaderRow}>
             <span>{headerText}</span>
+            {headerPreTimestampText ? (
+              <span className={styles.accordionHeaderField}>{headerPreTimestampText}</span>
+            ) : null}
             <span className={styles.accordionTimestamp}>
               {resolveDisplayTimestamp(checkpoint, receivedAt)}
             </span>

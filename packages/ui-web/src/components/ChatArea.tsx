@@ -26,9 +26,10 @@ interface ChatAreaProps {
   messages: ChatEntry[];
   myConversationId: string;
   showAll: boolean;
+  modelContextWindowTokens?: number;
 }
 
-export function ChatArea({ messages, myConversationId, showAll }: ChatAreaProps) {
+export function ChatArea({ messages, myConversationId, showAll, modelContextWindowTokens }: ChatAreaProps) {
   const styles = useStyles();
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -46,6 +47,7 @@ export function ChatArea({ messages, myConversationId, showAll }: ChatAreaProps)
         <ChatMessage
           key={entry.id}
           entry={entry}
+          modelContextWindowTokens={modelContextWindowTokens}
           sessionLabel={
             showAll && entry.conversationId !== myConversationId
               ? entry.conversationId.slice(0, 8)

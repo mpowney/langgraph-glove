@@ -39,7 +39,15 @@
   },
   "ollama-vision": {
     "provider": "ollama",
-    "model": "qwen3-vl:4b",
+    "model": "ibm/granite3.3-vision:2b",
+    "baseUrl": "{SECRET:ollama-host}",
+    "temperature": 0,
+    "think": false,
+    "keepAlive": "15m"
+  },
+  "ollama-text": {
+    "provider": "ollama",
+    "model": "granite4",
     "baseUrl": "{SECRET:ollama-host}",
     "temperature": 0,
     "think": false,

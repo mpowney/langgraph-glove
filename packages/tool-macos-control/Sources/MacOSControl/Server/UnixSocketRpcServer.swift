@@ -36,6 +36,7 @@ final class UnixSocketRpcServer {
     let socketPath: String
     private let registry: ToolRegistry
     private var serverFd: Int32 = -1
+    private let requestTimeoutMs: UInt64
     private let acceptQueue = DispatchQueue(
         label: "com.langgraph-glove.macos-control.unix-accept",
         qos: .userInteractive
@@ -54,6 +55,9 @@ final class UnixSocketRpcServer {
     init(name: String, registry: ToolRegistry) {
         self.socketPath = socketPathForTool(name)
         self.registry = registry
+        let rawTimeout = ProcessInfo.processInfo.environment["MACOS_CONTROL_RPC_TIMEOUT_MS"]
+        let parsedTimeout = rawTimeout.flatMap(UInt64.init) ?? 30_000
+        self.requestTimeoutMs = max(1_000, parsedTimeout)
     }
 
     // MARK: - Lifecycle
@@ -184,11 +188,30 @@ final class UnixSocketRpcServer {
                 // Fast path: skip empty lines without the allocation from trimmingCharacters.
                 guard !line.isEmpty, line.contains(where: { !$0.isWhitespace }) else { continue }
 
-                guard
-                    let data = line.data(using: .utf8),
-                    let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-                    let req = RpcRequest(json: json)
-                else { continue }
+                guard let data = line.data(using: .utf8) else {
+                    writeResponse(
+                        RpcResponse(id: "unknown", result: nil, error: "Invalid JSON-RPC request: invalid UTF-8"),
+                        to: fd
+                    )
+                    continue
+                }
+
+                guard let json = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                    writeResponse(
+                        RpcResponse(id: "unknown", result: nil, error: "Invalid JSON-RPC request: line is not a JSON object"),
+                        to: fd
+                    )
+                    continue
+                }
+
+                guard let req = RpcRequest(json: json) else {
+                    let requestId = json["id"] as? String ?? "unknown"
+                    writeResponse(
+                        RpcResponse(id: requestId, result: nil, error: "Invalid JSON-RPC request: missing required fields"),
+                        to: fd
+                    )
+                    continue
+                }
 
                 let rpcResp = await dispatch(req)
                 writeResponse(rpcResp, to: fd)
@@ -205,7 +228,10 @@ final class UnixSocketRpcServer {
             return RpcResponse(id: req.id, result: nil, error: "Unknown method: \(req.method)")
         }
         do {
-            let result = try await handler(req.params)
+            let result = try await runWithTimeout(
+                milliseconds: requestTimeoutMs,
+                operation: { try await handler(req.params) }
+            )
             return RpcResponse(id: req.id, result: result, error: nil)
         } catch {
             return RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
@@ -221,5 +247,37 @@ final class UnixSocketRpcServer {
         line.withCString { ptr in
             _ = Darwin.write(fd, ptr, Darwin.strlen(ptr))
         }
+    }
+}
+
+private enum RpcTimeoutError: LocalizedError {
+    case timedOut(ms: UInt64)
+
+    var errorDescription: String? {
+        switch self {
+        case .timedOut(let ms):
+            return "Tool request timed out after \(ms)ms"
+        }
+    }
+}
+
+private func runWithTimeout<T>(
+    milliseconds: UInt64,
+    operation: @escaping () async throws -> T
+) async throws -> T {
+    try await withThrowingTaskGroup(of: T.self) { group in
+        group.addTask {
+            try await operation()
+        }
+        group.addTask {
+            try await Task.sleep(nanoseconds: milliseconds * 1_000_000)
+            throw RpcTimeoutError.timedOut(ms: milliseconds)
+        }
+
+        guard let first = try await group.next() else {
+            throw RpcTimeoutError.timedOut(ms: milliseconds)
+        }
+        group.cancelAll()
+        return first
     }
 }
