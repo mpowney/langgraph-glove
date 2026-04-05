@@ -36,7 +36,7 @@
   },
   "macos-control": {
     "transport": "http",
-    "url": "http://mm24:3020",
+    "url": "{SECRET:macos-tool-endpoint}",
     "socketName": "macos-control",
     "enabled": true
   }
