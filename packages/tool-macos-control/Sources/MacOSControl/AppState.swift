@@ -226,6 +226,7 @@ final class AppState: ObservableObject {
         registerLoggedTool(in: registry, metadata: listRunningAppsMetadata, handler: handleListRunningApps)
         registerLoggedTool(in: registry, metadata: launchAppMetadata, handler: handleLaunchApp)
         registerLoggedTool(in: registry, metadata: getUITreeMetadata, handler: handleGetUITree)
+        registerLoggedTool(in: registry, metadata: getUISubtreeMetadata, handler: handleGetUISubtree)
         registerLoggedTool(in: registry, metadata: findElementMetadata, handler: handleFindElement)
         registerLoggedTool(in: registry, metadata: getFocusedElementMetadata, handler: handleGetFocusedElement)
         registerLoggedTool(in: registry, metadata: clickMetadata, handler: handleClick)

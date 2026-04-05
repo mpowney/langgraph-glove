@@ -130,7 +130,8 @@ Provides an HTTP/1.1 JSON-RPC server on a configurable TCP port (default `3020`)
 | `macos_get_frontmost_app` | Name, bundle ID and PID of the current frontmost app |
 | `macos_list_running_apps` | All running applications |
 | `macos_launch_app` | Launch an app by bundle ID or display name |
-| `macos_get_ui_tree` | Full accessibility element tree of the frontmost (or specified) app |
+| `macos_get_ui_tree` | Accessibility element tree with optional compact/pruned output controls |
+| `macos_get_ui_subtree` | Expand a focused subtree by child-index path for progressive retrieval |
 | `macos_find_element` | Search the accessibility tree by role / title / value / description |
 | `macos_get_focused_element` | Details of the currently keyboard-focused element |
 | `macos_click` | Left-click, right-click or double-click at screen coordinates |
@@ -138,6 +139,49 @@ Provides an HTTP/1.1 JSON-RPC server on a configurable TCP port (default `3020`)
 | `macos_press_key` | Press a key or keyboard shortcut (e.g. `⌘C`, `Escape`, `Return`) |
 | `macos_scroll` | Scroll at screen coordinates |
 | `macos_take_screenshot` | Capture the screen as a base64 PNG |
+
+### `macos_get_ui_tree` efficiency options
+
+`macos_get_ui_tree` now supports progressive retrieval controls so callers can reduce large payloads while keeping action-critical fidelity.
+
+| Parameter | Type | Default | Notes |
+|---|---|---|---|
+| `bundleId` | string | frontmost app | Target app bundle identifier |
+| `maxDepth` | integer | `4` | Traversal depth cap (max `10`) |
+| `mode` | string | `"full"` | `"full"` includes all standard attributes, `"compact"` uses action-focused defaults |
+| `attributes` | string[] | mode defaults | Whitelist of fields: `role`, `title`, `value`, `description`, `isEnabled`, `position`, `size` |
+| `interactiveOnly` | boolean | `false` | Keeps interactive controls and container branches needed to preserve matching descendants |
+| `includeDisabled` | boolean | `true` | If `false`, disabled elements are removed unless needed for matched descendants |
+| `roleFilter` | string[] | `[]` | Role substring filter(s), e.g. `["AXButton", "AXTextField"]` |
+| `maxNodes` | integer | unlimited | Hard cap on visited nodes to prevent oversized responses |
+
+The response includes a `_meta` object with traversal details (`visitedNodes`, `truncated`, applied options).
+
+### `macos_get_ui_subtree` targeted expansion
+
+Use `macos_get_ui_subtree` when you already know the branch to inspect and want to avoid returning a full app tree again.
+
+Required parameter:
+
+- `path`: child-index path from the app root (example: `[0,2,1]` means `root.children[0].children[2].children[1]`)
+
+Other parameters mirror `macos_get_ui_tree` (`mode`, `attributes`, `interactiveOnly`, `includeDisabled`, `roleFilter`, `maxDepth`, `maxNodes`).
+
+Example compact request:
+
+```json
+{
+  "id": "req-ui-compact-1",
+  "method": "macos_get_ui_tree",
+  "params": {
+    "mode": "compact",
+    "maxDepth": 5,
+    "interactiveOnly": true,
+    "roleFilter": ["AXButton", "AXTextField", "AXMenuItem"],
+    "maxNodes": 1200
+  }
+}
+```
 
 ---
 
@@ -163,7 +207,7 @@ To activate, set `"enabled": true`.  To use HTTP instead:
 }
 ```
 
-The sample `macos` agent in `config/agents.json` is already configured with all 11 tools.
+The sample `macos` agent in `config/agents.json` is already configured with all 12 tools.
 
 ---
 
@@ -198,6 +242,7 @@ MacOSControlApp (@main, SwiftUI)
     ├── ListRunningAppsTool   macos_list_running_apps
     ├── LaunchAppTool         macos_launch_app
     ├── GetUITreeTool         macos_get_ui_tree
+    ├── GetUISubtreeTool      macos_get_ui_subtree
     ├── FindElementTool       macos_find_element
     ├── GetFocusedElementTool macos_get_focused_element
     ├── ClickTool             macos_click

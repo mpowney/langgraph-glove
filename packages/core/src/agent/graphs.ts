@@ -49,6 +49,70 @@ const TOOL_ERROR_MARKERS = [
   "connection refused",
 ];
 
+const TOOL_MESSAGE_SUMMARY_CHAR_LIMIT = Number.parseInt(
+  process.env.GLOVE_TOOL_MESSAGE_SUMMARY_CHAR_LIMIT ?? "12000",
+  10,
+);
+const TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT = Number.parseInt(
+  process.env.GLOVE_TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT ?? "1200",
+  10,
+);
+const TOOL_MESSAGE_CACHE_MAX_ITEMS = Number.parseInt(
+  process.env.GLOVE_TOOL_MESSAGE_CACHE_MAX_ITEMS ?? "256",
+  10,
+);
+
+const oversizedToolPayloadCache = new Map<string, string>();
+
+function cacheOversizedToolPayload(ref: string, payload: string): void {
+  oversizedToolPayloadCache.set(ref, payload);
+  while (oversizedToolPayloadCache.size > TOOL_MESSAGE_CACHE_MAX_ITEMS) {
+    const oldestKey = oversizedToolPayloadCache.keys().next().value;
+    if (!oldestKey) break;
+    oversizedToolPayloadCache.delete(oldestKey);
+  }
+}
+
+function summarizeOversizedToolMessage(message: ToolMessage): ToolMessage {
+  const text = messageText(message.content);
+  if (!text || text.length <= TOOL_MESSAGE_SUMMARY_CHAR_LIMIT) {
+    return message;
+  }
+
+  const ref = `tool_payload_${randomUUID()}`;
+  cacheOversizedToolPayload(ref, text);
+
+  const preview = text.slice(0, TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT);
+  const summary = [
+    "[tool output summarized for context window efficiency]",
+    `payloadRef=${ref}`,
+    `originalChars=${text.length}`,
+    `previewChars=${preview.length}`,
+    "preview:",
+    preview,
+  ].join("\n");
+
+  const typed = message as ToolMessage & {
+    tool_call_id?: string;
+    name?: string;
+  };
+
+  return new ToolMessage({
+    content: summary,
+    tool_call_id: typed.tool_call_id,
+    name: typed.name,
+  });
+}
+
+function summarizeMessagesForModel(messages: BaseMessage[]): BaseMessage[] {
+  return messages.map((message) => {
+    if (message instanceof ToolMessage) {
+      return summarizeOversizedToolMessage(message);
+    }
+    return message;
+  });
+}
+
 function stripCodeFence(text: string): string {
   const trimmed = text.trim();
   const fenced = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -196,9 +260,10 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
   const toolNames = new Set(tools.map((t) => t.name));
 
   const callAgent = async (state: typeof MessagesAnnotation.State) => {
-    const messages: BaseMessage[] = systemPrompt
+    const rawMessages: BaseMessage[] = systemPrompt
       ? [new SystemMessage(systemPrompt), ...state.messages]
       : [...state.messages];
+    const messages = summarizeMessagesForModel(rawMessages);
     const response = await modelWithTools.invoke(messages);
 
     // Some local models emit JSON tool intents as plain text instead of native
@@ -387,9 +452,10 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
 
   // -- Orchestrator node ----------------------------------------------------
   const orchestratorNode = async (state: typeof MessagesAnnotation.State) => {
-    const messages: BaseMessage[] = orchestrator.systemPrompt
+    const rawMessages: BaseMessage[] = orchestrator.systemPrompt
       ? [new SystemMessage(orchestrator.systemPrompt), ...state.messages]
       : [...state.messages];
+    const messages = summarizeMessagesForModel(rawMessages);
 
     const response = await orchestratorModelWithTools.invoke(messages);
 

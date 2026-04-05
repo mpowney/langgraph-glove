@@ -54,6 +54,7 @@ private struct ToolListView: View {
         ("macos_list_running_apps", "List all running applications"),
         ("macos_launch_app",        "Launch an application by name or bundle ID"),
         ("macos_get_ui_tree",       "Get the accessibility tree of an app"),
+        ("macos_get_ui_subtree",    "Expand a focused accessibility subtree by node path"),
         ("macos_find_element",      "Find a UI element by role / title / value"),
         ("macos_get_focused_element", "Get details of the currently focused element"),
         ("macos_click",             "Click at screen coordinates"),

@@ -1,9 +1,9 @@
 import AppKit
 import ApplicationServices
 
-let getUITreeMetadata = ToolMetadata(
-    name: "macos_get_ui_tree",
-    description: "Return the accessibility element tree of the frontmost application (or a specified app). Useful for understanding the structure of a UI before clicking or typing.",
+let getUISubtreeMetadata = ToolMetadata(
+    name: "macos_get_ui_subtree",
+    description: "Expand and return a focused accessibility subtree from an app using a child-index path (for progressive retrieval).",
     parameters: [
         "type": "object",
         "properties": [
@@ -11,9 +11,14 @@ let getUITreeMetadata = ToolMetadata(
                 "type": "string",
                 "description": "Bundle identifier of the target application. Defaults to the frontmost app."
             ] as [String: Any],
+            "path": [
+                "type": "array",
+                "description": "Child-index path from the app root, e.g. [0,2,1]",
+                "items": ["type": "integer", "minimum": 0] as [String: Any]
+            ] as [String: Any],
             "maxDepth": [
                 "type": "integer",
-                "description": "Maximum tree depth to traverse (default: 4, max: 10)."
+                "description": "Maximum subtree depth to traverse from the target node (default: 4, max: 10)."
             ] as [String: Any],
             "mode": [
                 "type": "string",
@@ -46,18 +51,18 @@ let getUITreeMetadata = ToolMetadata(
                 "description": "Optional hard cap on visited nodes. Useful to avoid very large payloads."
             ] as [String: Any],
         ] as [String: Any],
-        "required": [] as [String]
+        "required": ["path"] as [String]
     ]
 )
 
-private let allowedAttributes: Set<String> = [
+private let subtreeAllowedAttributes: Set<String> = [
     "role", "title", "value", "description", "isEnabled", "position", "size"
 ]
 
-private let fullModeAttributes: Set<String> = allowedAttributes
-private let compactModeAttributes: Set<String> = ["role", "title", "isEnabled", "position", "size"]
+private let subtreeFullModeAttributes: Set<String> = subtreeAllowedAttributes
+private let subtreeCompactModeAttributes: Set<String> = ["role", "title", "isEnabled", "position", "size"]
 
-func handleGetUITree(_ params: [String: Any]) async throws -> Any {
+func handleGetUISubtree(_ params: [String: Any]) async throws -> Any {
     guard AXIsProcessTrusted() else {
         throw ToolError.permissionDenied("Accessibility permission is required. Grant access in System Settings → Privacy & Security → Accessibility.")
     }
@@ -70,16 +75,24 @@ func handleGetUITree(_ params: [String: Any]) async throws -> Any {
     let roleFilter = params["roleFilter"] as? [String] ?? []
     let maxNodes = params["maxNodes"] as? Int
 
-    let requestedAttributes = Set((params["attributes"] as? [String] ?? []).filter { allowedAttributes.contains($0) })
+    guard let path = params["path"] as? [Int] else {
+        throw ToolError.missingParameter("path")
+    }
+
+    let requestedAttributes = Set((params["attributes"] as? [String] ?? []).filter { subtreeAllowedAttributes.contains($0) })
     let effectiveAttributes: Set<String>
     if requestedAttributes.isEmpty {
-        effectiveAttributes = mode == "compact" ? compactModeAttributes : fullModeAttributes
+        effectiveAttributes = mode == "compact" ? subtreeCompactModeAttributes : subtreeFullModeAttributes
     } else {
         effectiveAttributes = requestedAttributes
     }
 
     guard let appElement = AXHelper.appElement(bundleId: bundleId) else {
         throw ToolError.notFound("Could not obtain AXUIElement for the target application")
+    }
+
+    guard let target = AXHelper.element(atPath: path, from: appElement) else {
+        throw ToolError.notFound("No node found at path \(path)")
     }
 
     let options = AXHelper.TreeOptions(
@@ -91,17 +104,18 @@ func handleGetUITree(_ params: [String: Any]) async throws -> Any {
     let budget = AXHelper.TraversalBudget(maxNodes: maxNodes)
 
     guard var result = AXHelper.elementDict(
-        appElement,
+        target,
         maxDepth: maxDepth,
         options: options,
         budget: budget
     ) else {
-        throw ToolError.failed("UI tree traversal was truncated before the root node could be captured")
+        throw ToolError.failed("UI subtree traversal was truncated before the target node could be captured")
     }
 
     var metadata: [String: Any] = [
         "mode": mode,
         "maxDepth": maxDepth,
+        "path": path,
         "visitedNodes": budget.visitedNodes,
         "truncated": budget.truncated,
     ]
@@ -116,6 +130,5 @@ func handleGetUITree(_ params: [String: Any]) async throws -> Any {
     metadata["attributes"] = Array(effectiveAttributes).sorted()
 
     result["_meta"] = metadata
-
     return result
 }
