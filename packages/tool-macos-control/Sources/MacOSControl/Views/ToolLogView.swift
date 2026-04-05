@@ -1,5 +1,95 @@
 import SwiftUI
 
+// ---------------------------------------------------------------------------
+// Individual accordion row
+// ---------------------------------------------------------------------------
+
+private struct ToolLogRow: View {
+    let entry: ToolLogEntry
+    let dateFormatter: DateFormatter
+    @State private var isExpanded: Bool = false
+
+    // ~7 lines of .caption monospaced ≈ 7 × 16 pt
+    private let detailMaxHeight: CGFloat = 112
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // ── Header (always visible, acts as tap target) ──────────────────
+            Button {
+                withAnimation(.easeInOut(duration: 0.18)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 12)
+
+                    Text(entry.headerText)
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(color(for: entry.kind))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+
+                    Spacer()
+
+                    Text(dateFormatter.string(from: entry.timestamp))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // ── Detail pane (collapsible) ────────────────────────────────────
+            if isExpanded {
+                ScrollView(.vertical) {
+                    Text(entry.detail)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 10)
+                }
+                .frame(maxHeight: detailMaxHeight)
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(backgroundColor(for: entry.kind))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(color(for: entry.kind).opacity(0.35), lineWidth: 1)
+        )
+    }
+
+    private func color(for kind: ToolLogKind) -> Color {
+        switch kind {
+        case .toolCall:   return .yellow
+        case .toolResult: return .green
+        case .error:      return .red
+        }
+    }
+
+    private func backgroundColor(for kind: ToolLogKind) -> Color {
+        switch kind {
+        case .toolCall:   return Color.yellow.opacity(0.14)
+        case .toolResult: return Color.green.opacity(0.14)
+        case .error:      return Color.red.opacity(0.14)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Log window
+// ---------------------------------------------------------------------------
+
 struct ToolLogView: View {
     @EnvironmentObject var appState: AppState
     @State private var maxVisibleEntries: Int = 200
@@ -62,33 +152,9 @@ struct ToolLogView: View {
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 10) {
+                        LazyVStack(alignment: .leading, spacing: 6) {
                             ForEach(visibleEntries) { entry in
-                                VStack(alignment: .leading, spacing: 8) {
-                                    HStack {
-                                        Text(entry.headerText)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(color(for: entry.kind))
-                                        Spacer()
-                                        Text(dateFormatter.string(from: entry.timestamp))
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                    }
-
-                                    Text(entry.detail)
-                                        .font(.system(.caption, design: .monospaced))
-                                        .textSelection(.enabled)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                                .padding(10)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .fill(backgroundColor(for: entry.kind))
-                                )
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 8)
-                                        .stroke(color(for: entry.kind).opacity(0.35), lineWidth: 1)
-                                )
+                                ToolLogRow(entry: entry, dateFormatter: dateFormatter)
                             }
                             Color.clear
                                 .frame(height: 1)
@@ -121,28 +187,6 @@ struct ToolLogView: View {
             withAnimation(.easeOut(duration: 0.12)) {
                 proxy.scrollTo(bottomAnchorId, anchor: .bottom)
             }
-        }
-    }
-
-    private func color(for kind: ToolLogKind) -> Color {
-        switch kind {
-        case .toolCall:
-            return .yellow
-        case .toolResult:
-            return .green
-        case .error:
-            return .red
-        }
-    }
-
-    private func backgroundColor(for kind: ToolLogKind) -> Color {
-        switch kind {
-        case .toolCall:
-            return Color.yellow.opacity(0.14)
-        case .toolResult:
-            return Color.green.opacity(0.14)
-        case .error:
-            return Color.red.opacity(0.14)
         }
     }
 }

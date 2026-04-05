@@ -35,7 +35,8 @@
     "enabled": true
   },
   "macos-control": {
-    "transport": "unix-socket",
+    "transport": "http",
+    "url": "http://mm24:3020",
     "socketName": "macos-control",
     "enabled": true
   }

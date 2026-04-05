@@ -155,7 +155,7 @@ private struct EndpointRow: View {
                 .foregroundStyle(methodColor)
                 .clipShape(RoundedRectangle(cornerRadius: 3))
 
-            Text("http://localhost:\(port)\(path)")
+            Text(verbatim: "http://localhost:\(port)\(path)")
                 .font(.system(.caption, design: .monospaced))
 
             Text("—")
