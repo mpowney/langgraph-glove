@@ -1,1 +1,1 @@
-export { handleDateTime, dateTimeToolMetadata } from "./tools/DateTimeTool.js";
+export { handleDateTime, dateTimeToolMetadata } from "./tools/DateTimeTool";
