@@ -5,6 +5,51 @@ import { z } from "zod";
 import type { RpcClient } from "../rpc/RpcClient";
 import type { ToolMetadata } from "../rpc/RpcProtocol";
 
+const DEFAULT_MAX_INLINE_TOOL_RESULT_BYTES = 2_000_000;
+
+function maxInlineToolResultBytes(): number {
+  const raw = process.env["GLOVE_MAX_INLINE_TOOL_RESULT_BYTES"];
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_MAX_INLINE_TOOL_RESULT_BYTES;
+}
+
+function utf8Size(value: string): number {
+  return Buffer.byteLength(value, "utf8");
+}
+
+function maybeCompactLargePayload(result: unknown, maxBytes: number): string | null {
+  if (typeof result === "string") {
+    const size = utf8Size(result);
+    if (size <= maxBytes) return null;
+    return JSON.stringify({
+      truncated: true,
+      reason: "tool_result_exceeded_max_inline_bytes",
+      maxInlineBytes: maxBytes,
+      originalSizeBytes: size,
+      preview: result.slice(0, 800),
+    });
+  }
+
+  if (!result || typeof result !== "object") return null;
+  const objectResult = result as Record<string, unknown>;
+  if (typeof objectResult["data"] !== "string") return null;
+
+  const data = objectResult["data"] as string;
+  const payloadSize = utf8Size(data);
+  if (payloadSize <= maxBytes) return null;
+
+  const compact = {
+    ...objectResult,
+    data: "[omitted: oversized base64 payload]",
+    omittedData: true,
+    dataSizeBytes: payloadSize,
+    maxInlineBytes: maxBytes,
+  };
+  return JSON.stringify(compact);
+}
+
 /** Configuration passed when constructing a {@link RemoteTool}. */
 export interface RemoteToolConfig {
   /** Unique name for the tool — must match the name registered on the server. */
@@ -136,8 +181,20 @@ export class RemoteTool extends StructuredTool {
     }
 
     const result = await this.rpcClient.call(this.name, args);
+
+    const maxBytes = maxInlineToolResultBytes();
+    const compact = maybeCompactLargePayload(result, maxBytes);
+    if (compact) return compact;
+
     if (typeof result === "string") return result;
-    return JSON.stringify(result);
+    const serialized = JSON.stringify(result);
+    if (utf8Size(serialized) <= maxBytes) return serialized;
+    return JSON.stringify({
+      truncated: true,
+      reason: "serialized_tool_result_exceeded_max_inline_bytes",
+      maxInlineBytes: maxBytes,
+      originalSizeBytes: utf8Size(serialized),
+    });
   }
 
   /**

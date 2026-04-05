@@ -35,7 +35,7 @@ export interface OutgoingMessage {
    * corresponding tool output; `"agent-transfer"` is a handoff from the
    * orchestrator to a sub-agent.
    */
-  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer";
+  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "error";
 }
 
 /** Callback invoked by the channel for every incoming message. */

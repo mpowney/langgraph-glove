@@ -18,6 +18,7 @@ Requires **Node.js 22+** (pinned via `.nvmrc`).
 | `@langgraph-glove/tool-weather-au` | Mock Australian weather tools (HTTP or Unix socket) |
 | `@langgraph-glove/tool-weather-eu` | Mock European weather tools (HTTP or Unix socket) |
 | `@langgraph-glove/tool-weather-us` | Mock US weather tools (HTTP or Unix socket) |
+| `tool-macos-control` *(Swift, macOS only)* | macOS UI-control tool server — accessibility, click, type, screenshot |
 
 ---
 
@@ -240,7 +241,63 @@ cd ../..
 pnpm build
 ```
 
-`packages/tool-browse-session` uses Playwright and needs its browser binaries installed once on first setup before you run `tool-browse-session`.
+### macOS Control Tool (Swift, optional)
+
+`tool-macos-control` is a native Swift/SwiftUI app and is built separately from the Node.js packages above. It runs on **macOS 13 (Ventura) or later** and requires **Swift 5.9+**.
+
+**Prerequisites:**
+- **Command-line only:** Install Xcode Command Line Tools — `xcode-select --install` — which includes the Swift compiler and Swift Package Manager. No full Xcode install required.
+- **Full Xcode:** Install [Xcode 15+](https://apps.apple.com/app/xcode/id497799835) from the Mac App Store (includes command-line tools).
+
+#### Build, bundle, and run from the command line
+
+```bash
+cd packages/tool-macos-control
+
+# Build and launch the control panel (debug):
+swift run
+
+# Release build only:
+swift build -c release
+
+# Run the pre-built binary:
+.build/release/MacOSControl
+```
+
+#### Bundle as a macOS app (.app)
+
+Create a standalone macOS application bundle with proper Info.plist and code signing:
+
+```bash
+# From the workspace root, bundle the app:
+pnpm macos:bundle
+
+# Bundle and open in Finder:
+pnpm macos:bundle:open
+
+# Or manually from packages/tool-macos-control:
+bash ../../scripts/macos-bundle-control-app.sh --open
+```
+
+The bundled app is created at `packages/tool-macos-control/dist/MacOSControl.app` and can be launched via:
+- **Finder:** Double-click the .app bundle
+- **Terminal:** `open packages/tool-macos-control/dist/MacOSControl.app`
+- **Direct invocation:** `packages/tool-macos-control/dist/MacOSControl.app/Contents/MacOS/MacOSControl`
+
+#### Build and run with Xcode (alternative)
+
+```bash
+# Open the Swift package in Xcode from the repository root:
+xed packages/tool-macos-control
+```
+
+In Xcode, select the **MacOSControl** scheme and **My Mac** destination, then press **⌘R** to build and launch.
+
+After launching, grant **Accessibility** and **Screen Recording** permissions when prompted, then set `"enabled": true` on the `macos-control` entry in `config/tools.json`.
+
+> See [`packages/tool-macos-control/README.md`](packages/tool-macos-control/README.md) for the full reference, including transport options (Unix socket / HTTP), available tools, and gateway config.
+
+
 
 ### Running via the Gateway (recommended)
 

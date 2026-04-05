@@ -12,3 +12,10 @@ data/
 memories/
 
 logs/
+
+# Swift build artifacts
+packages/tool-macos-control/.build/
+packages/tool-macos-control/.swiftpm/
+
+# Apple system files
+.DS_Store

@@ -20,6 +20,7 @@ import {
 } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
+import { storeToolPayload } from "./toolPayloadCache";
 
 // ---------------------------------------------------------------------------
 // Single-agent ReAct graph
@@ -36,6 +37,65 @@ export interface SingleAgentGraphConfig {
 interface ParsedTextToolCall {
   name: string;
   args: Record<string, unknown>;
+}
+
+const TOOL_ERROR_MARKERS = [
+  "error",
+  "failed",
+  "exception",
+  "invalid",
+  "timed out",
+  "timeout",
+  "unavailable",
+  "connection refused",
+];
+
+const TOOL_MESSAGE_SUMMARY_CHAR_LIMIT = Number.parseInt(
+  process.env.GLOVE_TOOL_MESSAGE_SUMMARY_CHAR_LIMIT ?? "12000",
+  10,
+);
+const TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT = Number.parseInt(
+  process.env.GLOVE_TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT ?? "1200",
+  10,
+);
+
+function summarizeOversizedToolMessage(message: ToolMessage): ToolMessage {
+  const text = messageText(message.content);
+  if (!text || text.length <= TOOL_MESSAGE_SUMMARY_CHAR_LIMIT) {
+    return message;
+  }
+
+  const ref = storeToolPayload(text);
+
+  const preview = text.slice(0, TOOL_MESSAGE_SUMMARY_PREVIEW_CHAR_LIMIT);
+  const summary = [
+    "[tool output summarized for context window efficiency]",
+    `payloadRef=${ref}`,
+    `originalChars=${text.length}`,
+    `previewChars=${preview.length}`,
+    "preview:",
+    preview,
+  ].join("\n");
+
+  const typed = message as ToolMessage & {
+    tool_call_id?: string;
+    name?: string;
+  };
+
+  return new ToolMessage({
+    content: summary,
+    tool_call_id: typed.tool_call_id,
+    name: typed.name,
+  });
+}
+
+function summarizeMessagesForModel(messages: BaseMessage[]): BaseMessage[] {
+  return messages.map((message) => {
+    if (message instanceof ToolMessage) {
+      return summarizeOversizedToolMessage(message);
+    }
+    return message;
+  });
 }
 
 function stripCodeFence(text: string): string {
@@ -90,6 +150,80 @@ function extractTextToolCall(
   }
 }
 
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (typeof part === "string") return part;
+        if (part && typeof part === "object" && "text" in part) {
+          const text = (part as { text?: unknown }).text;
+          return typeof text === "string" ? text : "";
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (content == null) return "";
+  try {
+    return JSON.stringify(content);
+  } catch {
+    return String(content);
+  }
+}
+
+function normalizeErrorMessage(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\b(call|id|run|request|tool)_?[a-z0-9_-]*\b/g, "")
+    .trim();
+}
+
+function isToolErrorMessage(message: BaseMessage): message is ToolMessage {
+  if (!(message instanceof ToolMessage)) return false;
+  const text = messageText(message.content).toLowerCase();
+  if (!text) return false;
+  return TOOL_ERROR_MARKERS.some((marker) => text.includes(marker));
+}
+
+function hasRepeatedRecentToolFailure(messages: BaseMessage[]): boolean {
+  const last = messages.at(-1);
+  if (!last || !isToolErrorMessage(last)) return false;
+
+  const normalizedLast = normalizeErrorMessage(messageText(last.content));
+  let recentErrors = 1;
+
+  // Look back over the most recent turns for another matching failure.
+  for (let i = messages.length - 2; i >= 0 && i >= messages.length - 10; i -= 1) {
+    const candidate = messages[i];
+    if (!isToolErrorMessage(candidate)) continue;
+
+    recentErrors += 1;
+    const normalizedCandidate = normalizeErrorMessage(messageText(candidate.content));
+    if (normalizedCandidate && normalizedCandidate === normalizedLast) {
+      return true;
+    }
+  }
+
+  return recentErrors >= 3;
+}
+
+function buildToolFailureResponse(messages: BaseMessage[]): AIMessage {
+  const last = messages.at(-1);
+  const detail =
+    last instanceof ToolMessage
+      ? messageText(last.content).trim().slice(0, 280)
+      : "";
+
+  const content = detail
+    ? `I stopped retrying because tool calls are repeatedly failing. Last error: ${detail}`
+    : "I stopped retrying because tool calls are repeatedly failing. Please verify the tool input or tool availability and try again.";
+
+  return new AIMessage({ content });
+}
+
 /**
  * Build a standard ReAct agent graph: agent → tools → agent → … → END.
  *
@@ -111,9 +245,10 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
   const toolNames = new Set(tools.map((t) => t.name));
 
   const callAgent = async (state: typeof MessagesAnnotation.State) => {
-    const messages: BaseMessage[] = systemPrompt
+    const rawMessages: BaseMessage[] = systemPrompt
       ? [new SystemMessage(systemPrompt), ...state.messages]
       : [...state.messages];
+    const messages = summarizeMessagesForModel(rawMessages);
     const response = await modelWithTools.invoke(messages);
 
     // Some local models emit JSON tool intents as plain text instead of native
@@ -144,12 +279,24 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
     return last.tool_calls?.length ? "tools" : END;
   };
 
+  const toolFailureStopNode = async (state: typeof MessagesAnnotation.State) => {
+    return { messages: [buildToolFailureResponse(state.messages)] };
+  };
+
+  const routeAfterTools = (
+    state: typeof MessagesAnnotation.State,
+  ): "agent" | "tool_failure_stop" => {
+    return hasRepeatedRecentToolFailure(state.messages) ? "tool_failure_stop" : "agent";
+  };
+
   return new StateGraph(MessagesAnnotation)
     .addNode("agent", callAgent)
     .addNode("tools", toolNode)
+    .addNode("tool_failure_stop", toolFailureStopNode)
     .addEdge(START, "agent")
     .addConditionalEdges("agent", routeAfterAgent)
-    .addEdge("tools", "agent")
+    .addConditionalEdges("tools", routeAfterTools)
+    .addEdge("tool_failure_stop", END)
     .compile({ checkpointer });
 }
 
@@ -290,9 +437,10 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
 
   // -- Orchestrator node ----------------------------------------------------
   const orchestratorNode = async (state: typeof MessagesAnnotation.State) => {
-    const messages: BaseMessage[] = orchestrator.systemPrompt
+    const rawMessages: BaseMessage[] = orchestrator.systemPrompt
       ? [new SystemMessage(orchestrator.systemPrompt), ...state.messages]
       : [...state.messages];
+    const messages = summarizeMessagesForModel(rawMessages);
 
     const response = await orchestratorModelWithTools.invoke(messages);
 

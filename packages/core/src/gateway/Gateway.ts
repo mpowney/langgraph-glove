@@ -12,6 +12,7 @@ import {
   type GloveConfig,
   type AgentEntry,
   type ToolServerEntry,
+  type ModelHealthResult,
 } from "@langgraph-glove/config";
 import { GloveAgent } from "../agent/Agent";
 import { buildSingleAgentGraph, buildOrchestratorGraph, type SubAgentDef } from "../agent/graphs";
@@ -21,9 +22,11 @@ import { HttpRpcClient } from "../rpc/HttpRpcClient";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import type { RpcClient } from "../rpc/RpcClient";
 import { RemoteTool } from "../tools/RemoteTool";
+import { getToolPayloadRefTool } from "../tools/ToolPayloadRefTool";
 import { AdminApi } from "../api/AdminApi";
 import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
+import { WebChannel } from "../channels/WebChannel";
 
 const logger = new Logger("Gateway");
 
@@ -105,7 +108,8 @@ export class Gateway extends EventEmitter {
       this.models = new ModelRegistry(this.config.models);
 
       // 3. Model health checks — probe only models used by configured agents
-      await this.checkModelHealth(this.models, this.config);
+      const modelHealth = await this.checkModelHealth(this.models, this.config);
+      this.updateWebChannelModelInfo(this.config, modelHealth);
 
       // 4. Persistence
       const dbPath = this.config.gateway.dbPath ?? "data/checkpoints.sqlite";
@@ -238,7 +242,7 @@ export class Gateway extends EventEmitter {
    * warning but does NOT abort startup — the intent is to surface problems
    * early, not to gate the whole system on a transient provider outage.
    */
-  private async checkModelHealth(models: ModelRegistry, config: GloveConfig): Promise<void> {
+  private async checkModelHealth(models: ModelRegistry, config: GloveConfig): Promise<ModelHealthResult[]> {
     const agents = config.agents as Record<string, AgentEntry>;
     const usedKeys = new Set(
       Object.values(agents)
@@ -246,7 +250,7 @@ export class Gateway extends EventEmitter {
         .filter((k) => models.keys().includes(k)),
     );
 
-    if (usedKeys.size === 0) return;
+    if (usedKeys.size === 0) return [];
 
     logger.info(`Model health checks: probing [${[...usedKeys].join(", ")}]…`);
     const checker = new ModelHealthChecker(models);
@@ -254,9 +258,47 @@ export class Gateway extends EventEmitter {
 
     for (const result of results) {
       if (result.ok) {
-        logger.info(`  ✓ ${result.key} (${result.latencyMs}ms)`);
+        const contextPart = result.contextWindowTokens
+          ? `, ctx=${result.contextWindowTokens}${result.contextWindowSource ? ` (${result.contextWindowSource})` : ""}`
+          : "";
+        logger.info(`  ✓ ${result.key} (${result.latencyMs}ms${contextPart})`);
       } else {
-        logger.warn(`  ✗ ${result.key} — ${result.error ?? "unknown error"} (${result.latencyMs}ms)`);
+        const contextPart = result.contextWindowTokens
+          ? `, ctx=${result.contextWindowTokens}${result.contextWindowSource ? ` (${result.contextWindowSource})` : ""}`
+          : "";
+        logger.warn(`  ✗ ${result.key} — ${result.error ?? "unknown error"} (${result.latencyMs}ms${contextPart})`);
+      }
+    }
+
+    return results;
+  }
+
+  private updateWebChannelModelInfo(
+    config: GloveConfig,
+    modelHealth: ModelHealthResult[],
+  ): void {
+    const agents = config.agents as Record<string, AgentEntry>;
+    const defaultEntry = resolveConfigEntry(agents, "default");
+    const defaultModelKey = defaultEntry.modelKey ?? "default";
+    const defaultModelHealth = modelHealth.find((result) => result.key === defaultModelKey);
+
+    const appInfoPatch: {
+      modelKey: string;
+      modelContextWindowTokens?: number;
+      modelContextWindowSource?: string;
+    } = {
+      modelKey: defaultModelKey,
+      ...(defaultModelHealth?.contextWindowTokens
+        ? { modelContextWindowTokens: defaultModelHealth.contextWindowTokens }
+        : {}),
+      ...(defaultModelHealth?.contextWindowSource
+        ? { modelContextWindowSource: defaultModelHealth.contextWindowSource }
+        : {}),
+    };
+
+    for (const channel of this.options.channels ?? []) {
+      if (channel instanceof WebChannel) {
+        channel.setAppInfo(appInfoPatch);
       }
     }
   }
@@ -357,7 +399,7 @@ export class Gateway extends EventEmitter {
   private async discoverTools(
     toolsConfig: Record<string, ToolServerEntry>,
   ): Promise<StructuredToolInterface[]> {
-    const allTools: StructuredToolInterface[] = [];
+    const allTools: StructuredToolInterface[] = [getToolPayloadRefTool];
 
     const entries = Object.entries(toolsConfig).filter(
       ([, entry]) => entry.enabled !== false,

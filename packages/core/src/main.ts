@@ -20,7 +20,7 @@
  */
 
 import path from "node:path";
-import { ConfigLoader } from "@langgraph-glove/config";
+import { ConfigLoader, resolveConfigEntry, type AgentEntry, type ModelEntry } from "@langgraph-glove/config";
 import { Gateway } from "./gateway/Gateway";
 import { LogService } from "./logging/LogService";
 import { FileSubscriber } from "./logging/FileSubscriber";
@@ -65,9 +65,21 @@ const secretsDir = path.resolve(process.env["GLOVE_SECRETS_DIR"] ?? "secrets");
 
 let defaultAgentDescription: string | undefined;
 let checkpointDbPath: string | undefined;
+let defaultModelKey: string | undefined;
+let defaultModelContextWindowTokens: number | undefined;
 try {
   const earlyConfig = new ConfigLoader(configDir, secretsDir).load();
   defaultAgentDescription = earlyConfig.agents["default"]?.description;
+  const defaultAgent = resolveConfigEntry(
+    earlyConfig.agents as Record<string, AgentEntry>,
+    "default",
+  );
+  defaultModelKey = defaultAgent.modelKey ?? "default";
+  const defaultModel = resolveConfigEntry(
+    earlyConfig.models as Record<string, ModelEntry>,
+    defaultModelKey,
+  );
+  defaultModelContextWindowTokens = defaultModel.contextWindowTokens;
   checkpointDbPath = path.resolve(earlyConfig.gateway.dbPath ?? "data/checkpoints.sqlite");
 } catch {
   // Config will be validated properly inside Gateway.start() - ignore here
@@ -126,6 +138,9 @@ if (useWeb) {
         name: "LangGraph Glove",
         agentDescription: defaultAgentDescription,
         apiUrl: `http://${apiHost}:${apiPort}`,
+        modelKey: defaultModelKey,
+        modelContextWindowTokens: defaultModelContextWindowTokens,
+        ...(defaultModelContextWindowTokens ? { modelContextWindowSource: "config" } : {}),
       },
       checkpointDbPath,
     }),

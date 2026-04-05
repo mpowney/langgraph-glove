@@ -38,6 +38,20 @@ export const ModelEntrySchema = z.object({
   temperature: z.number().min(0).max(2).optional(),
   /** API version passed as ?api-version=<value> (required for Azure Foundry endpoints). */
   apiVersion: z.string().optional(),
+  /** Ollama thinking mode. When true, prefer thinking traces; when false, disable them. */
+  think: z.boolean().optional(),
+  /** Ollama model residency duration after a request (maps to Ollama `keep_alive`). */
+  keepAlive: z.union([z.string(), z.number()]).optional(),
+  /** Optional known model context window size in tokens. */
+  contextWindowTokens: z.number().int().positive().optional(),
+}).superRefine((value, ctx) => {
+  if (value.keepAlive !== undefined && value.provider !== "ollama") {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["keepAlive"],
+      message: '"keepAlive" is only supported when provider is "ollama"',
+    });
+  }
 });
 export type ModelEntry = z.infer<typeof ModelEntrySchema>;
 

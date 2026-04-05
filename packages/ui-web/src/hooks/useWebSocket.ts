@@ -159,8 +159,8 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
           {
             id: crypto.randomUUID(),
             conversationId: msg.conversationId,
-            role: "agent",
-            content: `⚠ ${msg.message}`,
+            role: "error",
+            content: msg.message,
             isStreaming: false,
             receivedAt,
             checkpoint: msg.checkpoint,

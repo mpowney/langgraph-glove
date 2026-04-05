@@ -38,7 +38,87 @@ type ContentSegment =
   | { kind: "text"; content: string }
   | { kind: "image"; src: string; alt: string };
 
+interface StructuredImagePayload {
+  width?: number;
+  height?: number;
+  data: string;
+  format: string;
+  encoding?: string;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return isRecord(value);
+}
+
+function normalizeImageFormat(format: string): string | null {
+  const normalized = format.trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === "jpg") return "jpeg";
+  if (normalized === "svg") return "svg+xml";
+  const supportedFormats = new Set(["png", "jpeg", "gif", "webp", "bmp", "svg+xml"]);
+  return supportedFormats.has(normalized) ? normalized : null;
+}
+
+function toStructuredImagePayload(value: unknown): StructuredImagePayload | null {
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed.startsWith("{")) return null;
+    try {
+      return toStructuredImagePayload(JSON.parse(trimmed));
+    } catch {
+      return null;
+    }
+  }
+
+  if (!isRecord(value)) return null;
+  if (typeof value.data !== "string" || typeof value.format !== "string") return null;
+  if (value.encoding != null && value.encoding !== "base64") return null;
+  if (value.width != null && typeof value.width !== "number") return null;
+  if (value.height != null && typeof value.height !== "number") return null;
+
+  const format = normalizeImageFormat(value.format);
+  if (!format) return null;
+
+  return {
+    data: value.data.replace(/\s+/g, ""),
+    format,
+    encoding: typeof value.encoding === "string" ? value.encoding : "base64",
+    width: typeof value.width === "number" ? value.width : undefined,
+    height: typeof value.height === "number" ? value.height : undefined,
+  };
+}
+
+function getStructuredImageSource(content: string): string | null {
+  const directImage = toStructuredImagePayload(content);
+  if (directImage) {
+    return `data:image/${directImage.format};base64,${directImage.data}`;
+  }
+
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (isRecord(parsed) && "content" in parsed) {
+      const nestedImage = toStructuredImagePayload(parsed.content);
+      if (nestedImage) {
+        return `data:image/${nestedImage.format};base64,${nestedImage.data}`;
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
+}
+
 function splitContentWithImages(content: string): ContentSegment[] {
+  const structuredImageSrc = getStructuredImageSource(content);
+  if (structuredImageSrc) {
+    return [{ kind: "image", src: structuredImageSrc, alt: "" }];
+  }
+
   const segments: ContentSegment[] = [];
   let lastIndex = 0;
   DATA_IMAGE_RE.lastIndex = 0;
@@ -204,6 +284,13 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
+  errorAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorPaletteRedBorder1}`,
+    backgroundColor: tokens.colorPaletteRedBackground1,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
   toolPanel: {
     maxHeight: "300px",
     overflowY: "auto",
@@ -220,10 +307,8 @@ interface ChatMessageProps {
   entry: ChatEntry;
   /** Shown as a small muted label when viewing all conversations. */
   sessionLabel?: string;
-}
-
-function isObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
+  /** Active model context window tokens for prompt-context estimation. */
+  modelContextWindowTokens?: number;
 }
 
 function toDisplayJson(value: unknown, fallback: string): string {
@@ -258,7 +343,24 @@ function tryFormatJsonString(value: string): string {
   }
 }
 
-export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
+const APPROX_CHARS_PER_TOKEN = 4;
+const DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000;
+
+function estimatePromptContextUsage(content: string, contextWindowTokens?: number): string {
+  const chars = content.length;
+  const approxTokens = Math.max(1, Math.ceil(chars / APPROX_CHARS_PER_TOKEN));
+  const denominator =
+    typeof contextWindowTokens === "number" && contextWindowTokens > 0
+      ? contextWindowTokens
+      : DEFAULT_CONTEXT_WINDOW_TOKENS;
+  const ratio = (approxTokens / denominator) * 100;
+  const ratioLabel = ratio < 0.1 ? "<0.1" : ratio.toFixed(1);
+  const tokenLabel = new Intl.NumberFormat().format(approxTokens);
+  const windowLabel = new Intl.NumberFormat().format(denominator);
+  return `~${tokenLabel} tokens (${ratioLabel}% of ${windowLabel} ctx)`;
+}
+
+export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: ChatMessageProps) {
   const styles = useStyles();
 
   if (entry.role === "user") {
@@ -277,6 +379,7 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
   }
 
   if (entry.role === "prompt") {
+    const contextUsageEstimate = estimatePromptContextUsage(entry.content, modelContextWindowTokens);
     return (
       <div className={styles.promptWrapper}>
         <div>
@@ -287,6 +390,7 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
             className={styles.promptAccordion}
             itemValue="prompt"
             headerText="Prompt context"
+            headerPreTimestampText={contextUsageEstimate}
             panelClassName={styles.promptPanel}
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}
@@ -420,6 +524,30 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
       </div>
     );
   }
+
+  // agent
+    if (entry.role === "error") {
+      return (
+        <div className={styles.promptWrapper}>
+          <div>
+            {sessionLabel && (
+              <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
+            )}
+            <MessageAccordion
+              className={styles.errorAccordion}
+              itemValue="error"
+              headerText="Error"
+              panelClassName={styles.toolPanel}
+              rawPayload={entry.content}
+              receivedAt={entry.receivedAt}
+              checkpoint={entry.checkpoint}
+            >
+              {entry.content}
+            </MessageAccordion>
+          </div>
+        </div>
+      );
+    }
 
   // agent
   return (

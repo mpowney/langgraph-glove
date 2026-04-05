@@ -74,6 +74,12 @@ export interface WebChannelConfig extends ChannelConfig {
      * (conversation browser, etc.) instead of the same origin.
      */
     apiUrl?: string;
+    /** Active default model key used for prompt context estimation. */
+    modelKey?: string;
+    /** Active model context window size in tokens (best-effort). */
+    modelContextWindowTokens?: number;
+    /** Source of context window value (e.g. config, ollama-show). */
+    modelContextWindowSource?: string;
   };
   /** Optional path to the SQLite checkpointer database for checkpoint metadata. */
   checkpointDbPath?: string;
@@ -108,7 +114,7 @@ export class WebChannel extends Channel {
   private wss?: WebSocketServer;
   private readonly port: number;
   private readonly host: string;
-  private readonly appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
+  private appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
 
@@ -127,6 +133,9 @@ export class WebChannel extends Channel {
       name: config.appInfo?.name ?? "LangGraph Glove",
       agentDescription: config.appInfo?.agentDescription ?? "",
       apiUrl: config.appInfo?.apiUrl ?? "",
+      modelKey: config.appInfo?.modelKey ?? "",
+      modelContextWindowTokens: config.appInfo?.modelContextWindowTokens ?? 0,
+      modelContextWindowSource: config.appInfo?.modelContextWindowSource ?? "",
     };
     this.checkpointDbPath = config.checkpointDbPath;
     this.authService = config.authService;
@@ -158,6 +167,15 @@ export class WebChannel extends Channel {
         ...(this.appInfo.apiUrl && {
           apiUrl: this.appInfo.apiUrl,
         }),
+        ...(this.appInfo.modelKey && {
+          modelKey: this.appInfo.modelKey,
+        }),
+        ...(this.appInfo.modelContextWindowTokens > 0 && {
+          modelContextWindowTokens: this.appInfo.modelContextWindowTokens,
+        }),
+        ...(this.appInfo.modelContextWindowSource && {
+          modelContextWindowSource: this.appInfo.modelContextWindowSource,
+        }),
       });
     });
 
@@ -173,6 +191,15 @@ export class WebChannel extends Channel {
    */
   setAuthService(svc: AuthService): void {
     this.authService = svc;
+  }
+
+  setAppInfo(partial: Partial<NonNullable<WebChannelConfig["appInfo"]>>): void {
+    this.appInfo = {
+      ...this.appInfo,
+      ...partial,
+      modelContextWindowTokens:
+        partial.modelContextWindowTokens ?? this.appInfo.modelContextWindowTokens,
+    };
   }
 
   async start(): Promise<void> {
@@ -229,6 +256,17 @@ export class WebChannel extends Channel {
       const payload: ServerMessage = {
         type: "prompt",
         text: message.text,
+        conversationId: message.conversationId,
+        checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+      };
+      this.broadcast(message.conversationId, payload);
+      return;
+    }
+
+    if (message.role === "error") {
+      const payload: ServerMessage = {
+        type: "error",
+        message: message.text,
         conversationId: message.conversationId,
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
       };
