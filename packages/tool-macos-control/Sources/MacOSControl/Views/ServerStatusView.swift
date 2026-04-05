@@ -86,7 +86,7 @@ struct ServerStatusView: View {
         HStack {
             Text("Port")
                 .foregroundStyle(.secondary)
-            TextField("Port", value: $appState.serverPort, format: .number)
+            TextField("Port", value: $appState.serverPort, format: .number.grouping(.never))
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 70)
                 .disabled(appState.serverRunning)
