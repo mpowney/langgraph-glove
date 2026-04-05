@@ -50,6 +50,10 @@ final class AppState: ObservableObject {
     @Published var activeConnections: Int = 0
     /// Time of the most recent JSON-RPC request (any transport).
     @Published var lastRequestDate: Date? = nil
+    /// In-memory tool activity log for the Tool Request Log window.
+    @Published var toolLogEntries: [ToolLogEntry] = []
+    /// Absolute path to the persistent log file.
+    @Published var toolLogFilePath: String = ""
 
     /// True when the gateway appears to be connected / recently active.
     /// - Unix socket: at least one open connection.
@@ -69,6 +73,7 @@ final class AppState: ObservableObject {
 
     private var httpServer: RpcServer?
     private var unixServer: UnixSocketRpcServer?
+    private let toolLogManager = ToolRequestLogManager()
 
     /// Derived socket path — always in sync with `socketName`.
     var currentSocketPath: String { socketPathForTool(socketName) }
@@ -85,6 +90,18 @@ final class AppState: ObservableObject {
             socketName = name
         }
         checkPermissions()
+        Task { [weak self] in
+            guard let self else { return }
+            await toolLogManager.setEventSink { event in
+                Task { @MainActor [weak self] in
+                    self?.appendToolLogEvent(event)
+                }
+            }
+            let path = await toolLogManager.logFilePath()
+            await MainActor.run { [weak self] in
+                self?.toolLogFilePath = path
+            }
+        }
         // Auto-start the server so the gateway can connect immediately.
         startServer()
     }
@@ -205,16 +222,49 @@ final class AppState: ObservableObject {
     // MARK: - Tool registration
 
     private func registerAllTools(in registry: ToolRegistry) {
-        registry.register(metadata: getFrontmostAppMetadata, handler: handleGetFrontmostApp)
-        registry.register(metadata: listRunningAppsMetadata, handler: handleListRunningApps)
-        registry.register(metadata: launchAppMetadata, handler: handleLaunchApp)
-        registry.register(metadata: getUITreeMetadata, handler: handleGetUITree)
-        registry.register(metadata: findElementMetadata, handler: handleFindElement)
-        registry.register(metadata: getFocusedElementMetadata, handler: handleGetFocusedElement)
-        registry.register(metadata: clickMetadata, handler: handleClick)
-        registry.register(metadata: typeTextMetadata, handler: handleTypeText)
-        registry.register(metadata: pressKeyMetadata, handler: handlePressKey)
-        registry.register(metadata: scrollMetadata, handler: handleScroll)
-        registry.register(metadata: takeScreenshotMetadata, handler: handleTakeScreenshot)
+        registerLoggedTool(in: registry, metadata: getFrontmostAppMetadata, handler: handleGetFrontmostApp)
+        registerLoggedTool(in: registry, metadata: listRunningAppsMetadata, handler: handleListRunningApps)
+        registerLoggedTool(in: registry, metadata: launchAppMetadata, handler: handleLaunchApp)
+        registerLoggedTool(in: registry, metadata: getUITreeMetadata, handler: handleGetUITree)
+        registerLoggedTool(in: registry, metadata: findElementMetadata, handler: handleFindElement)
+        registerLoggedTool(in: registry, metadata: getFocusedElementMetadata, handler: handleGetFocusedElement)
+        registerLoggedTool(in: registry, metadata: clickMetadata, handler: handleClick)
+        registerLoggedTool(in: registry, metadata: typeTextMetadata, handler: handleTypeText)
+        registerLoggedTool(in: registry, metadata: pressKeyMetadata, handler: handlePressKey)
+        registerLoggedTool(in: registry, metadata: scrollMetadata, handler: handleScroll)
+        registerLoggedTool(in: registry, metadata: takeScreenshotMetadata, handler: handleTakeScreenshot)
+    }
+
+    private func registerLoggedTool(
+        in registry: ToolRegistry,
+        metadata: ToolMetadata,
+        handler: @escaping ToolHandler
+    ) {
+        let logger = toolLogManager
+        registry.register(metadata: metadata) { params in
+            await logger.logToolCall(toolName: metadata.name, payload: params)
+            do {
+                let result = try await handler(params)
+                await logger.logToolResult(toolName: metadata.name, response: result)
+                return result
+            } catch {
+                await logger.logToolError(toolName: metadata.name, error: error)
+                throw error
+            }
+        }
+    }
+
+    private func appendToolLogEvent(_ event: ToolLogEvent) {
+        toolLogEntries.append(ToolLogEntry(from: event))
+        // Keep the in-memory list bounded so the UI remains responsive.
+        let maxInMemoryEntries = 2_000
+        if toolLogEntries.count > maxInMemoryEntries {
+            toolLogEntries.removeFirst(toolLogEntries.count - maxInMemoryEntries)
+        }
+    }
+
+    func revealToolLogFileInFinder() {
+        guard !toolLogFilePath.isEmpty else { return }
+        NSWorkspace.shared.selectFile(toolLogFilePath, inFileViewerRootedAtPath: "")
     }
 }

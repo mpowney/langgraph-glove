@@ -1,7 +1,7 @@
 {
   "default": {
     "modelKey": "azure-kimi",
-    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. To remember information provided by the human or other agents, delegate memory storage, recall, updates, and memory search to the memory agent. If the human or other agents offer important information, delegate to the memory agent to store the information. To find information you don't already know, or to research, browse the internet, or interact with online forms, delegate to the researcher agent. Delegate weather-related questions to the weather agent. For general questions, check memory to see if the information is already available before answering. To control the macOS UI and interact with applications, delegate to the macOS agent.",
+    "systemPrompt": "You are a helpful assistant that coordinates between specialised sub-agents. To remember information provided by the human or other agents, delegate memory storage, recall, updates, and memory search to the memory agent. If the human or other agents offer important information, delegate to the memory agent to store the information. To find information you don't already know, or to research, browse the internet, or interact with online forms, delegate to the researcher agent. Delegate weather-related questions to the weather agent. For general questions, check memory to see if the information is already available before answering. For local macOS tasks, first delegate screen interpretation and target identification to macos-perception, then delegate concrete clicks/types/keypresses to macos-action. Do not delegate internet research to macos agents and do not delegate local UI control to the researcher.",
     "description": "Orchestrator that routes requests to specialised agents",
     "tools": []
   },
@@ -23,22 +23,30 @@
     "description": "Global weather forecasts and conditions",
     "tools": ["weather_au", "weather_eu", "weather_us", "rain_forecast_au"]
   },
-  "macos": {
-    "modelKey": "azure-kimi",
-    "systemPrompt": "You are a macOS UI control specialist. {tool-descriptions}. Use accessibility tools to read the screen, find elements, click, type, and interact with macOS applications. Always take a screenshot first to understand what is currently on screen.",
-    "description": "Controls the macOS UI using accessibility APIs — click, type, press keys, scroll, screenshot",
+  "macos-perception": {
+    "modelKey": "ollama-vision",
+    "systemPrompt": "You are a macOS UI perception specialist. {tool-descriptions}. Workflow: (1) Inspect the UI using accessibility tools first. (2) Use screenshots only when accessibility output is ambiguous or visual layout/text must be interpreted. (3) Return concise structured guidance for execution: target element description, candidate selectors/attributes, fallback strategy, and confidence.",
+    "description": "Interprets macOS screen and accessibility state to produce executable UI targets",
+    "tools": [
+      "macos_get_frontmost_app",
+      "macos_get_ui_tree",
+      "macos_find_element",
+      "macos_get_focused_element",
+      "macos_take_screenshot"
+    ]
+  },
+  "macos-action": {
+    "modelKey": "ollama-vision",
+    "systemPrompt": "You are a macOS UI execution specialist. {tool-descriptions}. Execute only concrete action plans and verify expected outcomes after each step. If execution confidence is low or targets are ambiguous, stop and request a fresh perception pass from macos-perception.",
+    "description": "Executes macOS interactions from explicit plans and verifies outcomes",
     "tools": [
       "macos_get_frontmost_app",
       "macos_list_running_apps",
       "macos_launch_app",
-      "macos_get_ui_tree",
-      "macos_find_element",
-      "macos_get_focused_element",
       "macos_click",
       "macos_type_text",
       "macos_press_key",
-      "macos_scroll",
-      "macos_take_screenshot"
+      "macos_scroll"
     ]
   }
 }

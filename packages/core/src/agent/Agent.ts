@@ -250,12 +250,17 @@ export class GloveAgent {
         await this.dispatchMessage(message, channel).catch(async (err) => {
           const detail = formatError(err);
           logger.error(`Error handling message on channel "${channel.name}": ${detail}`, err);
-          await channel
-            .sendMessage({
-              conversationId: message.conversationId,
-              text: `Sorry, an error occurred processing your message`,
-            })
-            .catch((e: unknown) => logger.error("Failed to send error reply", e));
+          const receiveAllOthers = this.channels.filter((ch) => ch.receiveAll && ch !== channel);
+          const errorTargets = [channel, ...receiveAllOthers];
+          for (const ch of errorTargets) {
+            await ch
+              .sendMessage({
+                conversationId: message.conversationId,
+                role: "error",
+                text: detail,
+              })
+              .catch((e: unknown) => logger.error("Failed to send error reply", e));
+          }
         });
       });
 

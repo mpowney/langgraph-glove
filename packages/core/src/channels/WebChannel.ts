@@ -236,6 +236,17 @@ export class WebChannel extends Channel {
       return;
     }
 
+    if (message.role === "error") {
+      const payload: ServerMessage = {
+        type: "error",
+        message: message.text,
+        conversationId: message.conversationId,
+        checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+      };
+      this.broadcast(message.conversationId, payload);
+      return;
+    }
+
     if (message.role === "tool-call" || message.role === "tool-result" || message.role === "agent-transfer") {
       const payload: ServerMessage = {
         type: "tool_event",

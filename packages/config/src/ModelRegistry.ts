@@ -51,7 +51,7 @@ export class ModelRegistry {
   }
 
   private createModel(entry: ModelEntry): BaseChatModel {
-    const { provider, model, apiKey, baseUrl, temperature, apiVersion } = entry;
+    const { provider, model, apiKey, baseUrl, temperature, apiVersion, think, keepAlive } = entry;
     const temp = temperature ?? 0;
 
     const factory = MODEL_FACTORIES[provider];
@@ -61,7 +61,7 @@ export class ModelRegistry {
           `Supported: ${Object.keys(MODEL_FACTORIES).join(", ")}`,
       );
     }
-    return factory(model, temp, apiKey, baseUrl, apiVersion);
+    return factory(model, temp, apiKey, baseUrl, apiVersion, think, keepAlive);
   }
 }
 
@@ -75,6 +75,8 @@ type ModelFactory = (
   apiKey?: string,
   baseUrl?: string,
   apiVersion?: string,
+  think?: boolean,
+  keepAlive?: string | number,
 ) => BaseChatModel;
 
 const MODEL_FACTORIES: Record<ModelProvider, ModelFactory> = {
@@ -99,12 +101,15 @@ const MODEL_FACTORIES: Record<ModelProvider, ModelFactory> = {
     return new ChatGoogleGenerativeAI(opts);
   },
 
-  ollama: (model, temperature, _apiKey, baseUrl) => {
-    return new ChatOllama({
+  ollama: (model, temperature, _apiKey, baseUrl, _apiVersion, think, keepAlive) => {
+    const opts: ConstructorParameters<typeof ChatOllama>[0] = {
       model,
       temperature,
       baseUrl: baseUrl ?? "http://localhost:11434",
-    });
+    };
+    if (think !== undefined) opts.think = think;
+    if (keepAlive !== undefined) opts.keepAlive = keepAlive;
+    return new ChatOllama(opts);
   },
 
   "openai-compatible": (model, temperature, apiKey, baseUrl, apiVersion) => {

@@ -284,6 +284,13 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
+  errorAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorPaletteRedBorder1}`,
+    backgroundColor: tokens.colorPaletteRedBackground1,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
   toolPanel: {
     maxHeight: "300px",
     overflowY: "auto",
@@ -496,6 +503,30 @@ export function ChatMessage({ entry, sessionLabel }: ChatMessageProps) {
       </div>
     );
   }
+
+  // agent
+    if (entry.role === "error") {
+      return (
+        <div className={styles.promptWrapper}>
+          <div>
+            {sessionLabel && (
+              <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
+            )}
+            <MessageAccordion
+              className={styles.errorAccordion}
+              itemValue="error"
+              headerText="Error"
+              panelClassName={styles.toolPanel}
+              rawPayload={entry.content}
+              receivedAt={entry.receivedAt}
+              checkpoint={entry.checkpoint}
+            >
+              {entry.content}
+            </MessageAccordion>
+          </div>
+        </div>
+      );
+    }
 
   // agent
   return (

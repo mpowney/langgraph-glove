@@ -102,8 +102,10 @@ export class UnixSocketRpcClient extends RpcClient {
   }
 
   async call(method: string, params: Record<string, unknown>): Promise<unknown> {
+    // Automatically reconnect if the socket is not currently connected.
+    // This handles cases where the tool server restarted or the connection was lost.
     if (!this.socket) {
-      throw new Error("UnixSocketRpcClient: not connected — call connect() first");
+      await this.connect();
     }
 
     const id = uuidv4();

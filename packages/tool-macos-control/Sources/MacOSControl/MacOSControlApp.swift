@@ -3,10 +3,39 @@ import SwiftUI
 import AppKit
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    private var appearanceObserver: NSObjectProtocol?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         // When launched from a terminal, the terminal retains key focus.
         // Activate explicitly so keyboard input goes to our windows.
         NSApp.activate(ignoringOtherApps: true)
+        updateApplicationIconForAppearance()
+
+        appearanceObserver = DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("AppleInterfaceThemeChangedNotification"),
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.updateApplicationIconForAppearance()
+        }
+    }
+
+    deinit {
+        if let observer = appearanceObserver {
+            DistributedNotificationCenter.default().removeObserver(observer)
+        }
+    }
+
+    private func updateApplicationIconForAppearance() {
+        let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let iconName = isDarkMode ? "AppIcon-Dark" : "AppIcon-Light"
+        guard
+            let iconURL = Bundle.main.url(forResource: iconName, withExtension: "png"),
+            let iconImage = NSImage(contentsOf: iconURL)
+        else {
+            return
+        }
+        NSApplication.shared.applicationIconImage = iconImage
     }
 }
 
@@ -26,13 +55,13 @@ struct MacOSControlApp: App {
 
     var body: some Scene {
         // ── Main control panel ───────────────────────────────────────────
-        WindowGroup("macOS Control — langgraph-glove") {
+        Window("macOS Control — langgraph-glove", id: "main") {
             ContentView()
                 .environmentObject(appState)
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified)
-        .defaultSize(width: 540, height: 480)
+        .defaultSize(width: 540, height: 720)
 
         // ── Settings / Configure window (opened from menu-bar extra) ─────
         Window("Configure macOS Control", id: "settings") {
@@ -40,14 +69,21 @@ struct MacOSControlApp: App {
                 .environmentObject(appState)
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: 440, height: 360)
+        .defaultSize(width: 440, height: 520)
+
+        // ── Tool request log window ──────────────────────────────────────
+        Window("Tool Request Log", id: "tool-log") {
+            ToolLogView()
+                .environmentObject(appState)
+        }
+        .defaultSize(width: 760, height: 520)
 
         // ── Menu-bar extra ───────────────────────────────────────────────
         MenuBarExtra {
             MenuBarView()
                 .environmentObject(appState)
         } label: {
-            Image(systemName: "macwindow.and.cursorarrow")
+            MenuBarIconLabel()
         }
         .menuBarExtraStyle(.menu)
     }

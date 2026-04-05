@@ -41,9 +41,19 @@ struct MenuBarView: View {
         Divider()
 
         // ── Actions ─────────────────────────────────────────────────────────
+        Button("Open Main Window") {
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+
         Button("Configure…") {
             openWindow(id: "settings")
             // Bring the app forward so the settings window is visible.
+            NSApp.activate(ignoringOtherApps: true)
+        }
+
+        Button("Tool Request Log…") {
+            openWindow(id: "tool-log")
             NSApp.activate(ignoringOtherApps: true)
         }
 
@@ -81,5 +91,41 @@ struct MenuBarView: View {
         case .unixSocket:
             return appState.currentSocketPath
         }
+    }
+}
+
+struct MenuBarIconLabel: View {
+    @State private var appearanceTick: Int = 0
+
+    var body: some View {
+        Group {
+            if let icon = loadMenuBarIconImage() {
+                Image(nsImage: icon)
+                    .renderingMode(.original)
+            } else {
+                Image(systemName: "macwindow.and.cursorarrow")
+            }
+        }
+        .onReceive(
+            DistributedNotificationCenter.default().publisher(
+                for: Notification.Name("AppleInterfaceThemeChangedNotification")
+            )
+        ) { _ in
+            appearanceTick &+= 1
+        }
+    }
+
+    private func loadMenuBarIconImage() -> NSImage? {
+        _ = appearanceTick
+        let isDarkMode = NSApp.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        let resource = isDarkMode ? "MenuBarIcon-Dark" : "MenuBarIcon-Light"
+        guard
+            let url = Bundle.main.url(forResource: resource, withExtension: "png"),
+            let image = NSImage(contentsOf: url)
+        else {
+            return nil
+        }
+        image.size = NSSize(width: 18, height: 18)
+        return image
     }
 }

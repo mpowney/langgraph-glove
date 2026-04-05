@@ -47,7 +47,7 @@ export interface AppInfo {
 export interface ChatEntry {
   id: string;
   conversationId: string;
-  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer";
+  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "error";
   content: string;
   isStreaming?: boolean;
   /** ISO timestamp of when the payload was received/created by the browser. */
