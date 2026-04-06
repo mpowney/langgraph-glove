@@ -20,6 +20,7 @@ import { InputBar } from "./components/InputBar";
 import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
+import { ConfigAdmin } from "./components/ConfigAdmin";
 import { AuthGate } from "./components/AuthGate";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
@@ -95,6 +96,7 @@ function App() {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
+  const [configAdminOpen, setConfigAdminOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [pendingConversationSwitchId, setPendingConversationSwitchId] = useState<string | null>(null);
 
@@ -177,6 +179,11 @@ function App() {
     : configuredToolsBaseUrl
       ? `${configuredToolsBaseUrl.replace(/\/$/, "")}/_memory`
       : legacyMemoryToolUrl;
+  const configToolUrl = import.meta.env.DEV
+    ? "/api/tools/_config"
+    : configuredToolsBaseUrl
+      ? `${configuredToolsBaseUrl.replace(/\/$/, "")}/_config`
+      : "";
 
   useEffect(() => {
     let active = true;
@@ -292,6 +299,7 @@ function App() {
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
           onOpenBrowser={() => setBrowserOpen(true)}
           onOpenToolsPanel={() => setToolsPanelOpen(true)}
+          onOpenConfigAdmin={() => setConfigAdminOpen(true)}
           personalToken={personalToken}
           onSetPersonalToken={setPersonalToken}
           passkeyEnabled={auth.passkeyRegistered}
@@ -332,6 +340,14 @@ function App() {
           memoryToolUrl={memoryToolUrl}
           authToken={auth.token ?? undefined}
           personalToken={personalToken}
+        />
+        <ConfigAdmin
+          open={configAdminOpen}
+          onClose={() => setConfigAdminOpen(false)}
+          configToolUrl={configToolUrl}
+          privilegeGrantId={privilegedGrantId}
+          conversationId={conversationId}
+          authToken={auth.token ?? undefined}
         />
       </div>
       <Dialog

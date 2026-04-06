@@ -25,6 +25,7 @@ import {
   ArrowReset24Regular,
   Brain24Regular,
   Chat24Regular,
+  DocumentEdit24Regular,
   LockClosed24Regular,
   LockClosed24Filled,
   Wrench24Regular,
@@ -131,6 +132,7 @@ interface AppHeaderProps {
   onOpenMemoryAdmin: () => void;
   onOpenBrowser: () => void;
   onOpenToolsPanel: () => void;
+  onOpenConfigAdmin: () => void;
   /** Currently active personal token (empty string = none). */
   personalToken: string;
   onSetPersonalToken: (token: string) => void;
@@ -158,6 +160,7 @@ export function AppHeader({
   onOpenMemoryAdmin,
   onOpenBrowser,
   onOpenToolsPanel,
+  onOpenConfigAdmin,
   personalToken,
   onSetPersonalToken,
   passkeyEnabled = false,
@@ -372,6 +375,15 @@ export function AppHeader({
             onClick={onOpenToolsPanel}
             style={{ color: tokens.colorNeutralForegroundOnBrand }}
             aria-label="Tools and agents reference"
+          />
+        </Tooltip>
+        <Tooltip content="Config editor" relationship="label">
+          <Button
+            appearance="subtle"
+            icon={<DocumentEdit24Regular />}
+            onClick={onOpenConfigAdmin}
+            style={{ color: tokens.colorNeutralForegroundOnBrand }}
+            aria-label="Config editor"
           />
         </Tooltip>
         <Tooltip

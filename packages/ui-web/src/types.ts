@@ -185,3 +185,31 @@ export interface MemorySearchResult {
   indexingStrategy: "immediate" | "deferred";
   results: MemorySearchResultItem[];
 }
+
+// ---------------------------------------------------------------------------
+// Config admin API types
+// ---------------------------------------------------------------------------
+
+export interface ConfigFileSummary {
+  name: string;
+  sizeBytes: number;
+  modifiedAt: string;
+}
+
+export interface ConfigVersionSummary {
+  id: string;
+  filename: string;
+  savedAt: string;
+  description?: string;
+  contentLength: number;
+}
+
+export interface ConfigVersion extends ConfigVersionSummary {
+  content: string;
+}
+
+export interface ConfigValidationIssue {
+  path: string;
+  message: string;
+  severity: "error" | "warning";
+}

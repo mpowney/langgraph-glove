@@ -44,5 +44,10 @@
     "transport": "unix-socket",
     "url": "http://localhost:3014",
     "socketName": "admin"
+  },
+  "config": {
+    "transport": "http",
+    "url": "http://localhost:3015",
+    "enabled": true
   }
 }
