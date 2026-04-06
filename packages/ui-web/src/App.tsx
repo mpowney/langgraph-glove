@@ -1,5 +1,16 @@
 import React, { useMemo, useState, useCallback, useEffect } from "react";
-import { FluentProvider, makeStyles } from "@fluentui/react-components";
+import {
+  FluentProvider,
+  makeStyles,
+  Dialog,
+  DialogSurface,
+  DialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
+  Text,
+} from "@fluentui/react-components";
 import { useWebSocket } from "./hooks/useWebSocket";
 import { useAppInfo } from "./hooks/useAppInfo";
 import { useTheme } from "./hooks/useTheme";
@@ -24,8 +35,6 @@ function getOrCreateConversationId(): string {
   return generated;
 }
 
-const conversationId = getOrCreateConversationId();
-
 const useStyles = makeStyles({
   shell: {
     display: "flex",
@@ -43,7 +52,7 @@ function App() {
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
-  const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
+  const [conversationId, setConversationId] = useState<string>(() => getOrCreateConversationId());
   const [privilegedGrantId, setPrivilegedGrantId] = useState<string>("");
   const [privilegedExpiresAt, setPrivilegedExpiresAt] = useState<string | null>(null);
   const shouldConnect = !auth.loading;
@@ -64,6 +73,7 @@ function App() {
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
+  const [pendingConversationSwitchId, setPendingConversationSwitchId] = useState<string | null>(null);
 
   const setShowAllPersisted = useCallback((value: boolean) => {
     localStorage.setItem("showAll", String(value));
@@ -89,7 +99,7 @@ function App() {
     setPrivilegedGrantId(activation.grantId);
     setPrivilegedExpiresAt(activation.expiresAt);
     return true;
-  }, [auth]);
+  }, [auth, conversationId]);
 
   const activatePrivilegedAccessWithPasskey = useCallback(async (): Promise<boolean> => {
     const activation = await auth.activatePrivilegedAccess(conversationId, { usePasskey: true });
@@ -97,13 +107,13 @@ function App() {
     setPrivilegedGrantId(activation.grantId);
     setPrivilegedExpiresAt(activation.expiresAt);
     return true;
-  }, [auth]);
+  }, [auth, conversationId]);
 
   const disablePrivilegedAccess = useCallback(async (): Promise<void> => {
     await auth.revokePrivilegedAccess(conversationId);
     setPrivilegedGrantId("");
     setPrivilegedExpiresAt(null);
-  }, [auth]);
+  }, [auth, conversationId]);
 
   useEffect(() => {
     if (!privilegedExpiresAt) return;
@@ -184,7 +194,7 @@ function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [auth.token, auth.getPrivilegedAccessStatus]);
+  }, [auth.token, auth.getPrivilegedAccessStatus, conversationId]);
 
   const visibleMessages = useMemo(
     () => showAll ? messages : messages.filter((m) => m.conversationId === myConversationId),
@@ -192,7 +202,25 @@ function App() {
   );
 
   const handleStartNewConversation = useCallback(() => {
-    setConversationId(crypto.randomUUID());
+    const nextConversationId = crypto.randomUUID();
+    localStorage.setItem(CONVERSATION_ID_KEY, nextConversationId);
+    setConversationId(nextConversationId);
+  }, []);
+
+  const handleSwitchConversation = useCallback((targetConversationId: string) => {
+    if (targetConversationId === conversationId) return;
+    setPendingConversationSwitchId(targetConversationId);
+  }, [conversationId]);
+
+  const handleConfirmSwitchConversation = useCallback(() => {
+    if (!pendingConversationSwitchId) return;
+    localStorage.setItem(CONVERSATION_ID_KEY, pendingConversationSwitchId);
+    setConversationId(pendingConversationSwitchId);
+    setPendingConversationSwitchId(null);
+  }, [pendingConversationSwitchId]);
+
+  const handleCancelSwitchConversation = useCallback(() => {
+    setPendingConversationSwitchId(null);
   }, []);
 
   if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup || auth.promptPrivilegeTokenSetup)
@@ -251,6 +279,7 @@ function App() {
           messages={visibleMessages}
           myConversationId={myConversationId}
           showAll={showAll}
+          onRequestSwitchConversation={handleSwitchConversation}
           modelContextWindowTokens={appInfo?.modelContextWindowTokens}
         />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
@@ -274,6 +303,38 @@ function App() {
           personalToken={personalToken}
         />
       </div>
+      <Dialog
+        open={Boolean(pendingConversationSwitchId)}
+        onOpenChange={(_, data) => {
+          if (!data.open) {
+            handleCancelSwitchConversation();
+          }
+        }}
+      >
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>Switch conversation?</DialogTitle>
+            <DialogContent>
+              <Text block>
+                {pendingConversationSwitchId
+                  ? `Switch to session ${pendingConversationSwitchId.slice(0, 8)}?`
+                  : "Switch to this conversation?"}
+              </Text>
+              <Text block>
+                Future messages and actions will use that conversation context.
+              </Text>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={handleCancelSwitchConversation}>
+                Cancel
+              </Button>
+              <Button appearance="primary" onClick={handleConfirmSwitchConversation}>
+                Switch conversation
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
     </FluentProvider>
   );
 }
