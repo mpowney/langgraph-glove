@@ -48,6 +48,7 @@ normalize_tool_name() {
 
 tool_exists() {
   local tool_name="$1"
+  # echo "Checking for $tool_name... in path $PACKAGES_DIR/$tool_name/src/main.ts"
   [[ -d "$PACKAGES_DIR/$tool_name" && -f "$PACKAGES_DIR/$tool_name/src/main.ts" ]]
 }
 
@@ -61,7 +62,7 @@ remove_pid_entries_for_tool() {
 
 collect_target_tools() {
   if [[ ${#TARGET_ARGS[@]} -eq 0 ]]; then
-    find "$PACKAGES_DIR" -mindepth 1 -maxdepth 1 -type d -name "tool-*" | sort
+    find "$PACKAGES_DIR" -mindepth 1 -maxdepth 1 -type d -name "tool-*" -exec basename {} \; | sort
     return 0
   fi
 
@@ -94,6 +95,7 @@ invalid=0
 
 while IFS= read -r tool_name; do
   [[ -z "${tool_name:-}" ]] && continue
+  tool_name="${tool_name##*/}"
 
   # Only launch actual tool servers with a main entrypoint.
   if ! tool_exists "$tool_name"; then
