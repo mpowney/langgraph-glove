@@ -106,10 +106,10 @@ export async function handleConfigReadFile(
 ): Promise<string> {
   await validatePrivilegeGrant(params, adminApiUrl);
 
-  const file = params["file"] as string;
+  const file = params["file"];
   if (typeof file !== "string" || !ALLOWED_FILES.has(path.basename(file))) {
     throw new Error(
-      `config_read_file: '${file}' is not an allowed config file. ` +
+      `config_read_file: '${String(file)}' is not an allowed config file. ` +
         `Allowed: ${Array.from(ALLOWED_FILES).join(", ")}`,
     );
   }
@@ -159,15 +159,15 @@ export async function handleConfigWriteFile(
 ): Promise<string> {
   await validatePrivilegeGrant(params, adminApiUrl);
 
-  const file = params["file"] as string;
-  const content = params["content"] as string;
+  const file = params["file"];
+  const content = params["content"];
   const description = typeof params["description"] === "string"
     ? params["description"]
     : undefined;
 
   if (typeof file !== "string" || !ALLOWED_FILES.has(path.basename(file))) {
     throw new Error(
-      `config_write_file: '${file}' is not an allowed config file. ` +
+      `config_write_file: '${String(file)}' is not an allowed config file. ` +
         `Allowed: ${Array.from(ALLOWED_FILES).join(", ")}`,
     );
   }
@@ -233,9 +233,9 @@ export async function handleConfigListHistory(
 ): Promise<string> {
   await validatePrivilegeGrant(params, adminApiUrl);
 
-  const file = params["file"] as string;
+  const file = params["file"];
   if (typeof file !== "string" || !ALLOWED_FILES.has(path.basename(file))) {
-    throw new Error(`config_list_history: '${file}' is not an allowed config file.`);
+    throw new Error(`config_list_history: '${String(file)}' is not an allowed config file.`);
   }
 
   const versions = store.listVersions(path.basename(file));

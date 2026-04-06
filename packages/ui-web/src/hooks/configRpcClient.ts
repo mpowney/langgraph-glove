@@ -21,8 +21,9 @@ export async function callConfigTool<T>(
   }
 
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (authToken?.trim()) {
-    headers.Authorization = `Bearer ${authToken.trim()}`;
+  const trimmedToken = authToken?.trim();
+  if (trimmedToken) {
+    headers.Authorization = `Bearer ${trimmedToken}`;
   }
 
   const res = await fetch(`${configToolUrl}/rpc`, {
