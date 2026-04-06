@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, useMemo } from "react";
+import React, { lazy, Suspense, useCallback, useEffect, useState, useMemo, useRef } from "react";
 import {
   makeStyles,
   tokens,
@@ -23,6 +23,11 @@ import {
   Field,
   Textarea,
 } from "@fluentui/react-components";
+
+// Monaco editor is large — lazy-load it so it doesn't bloat the initial bundle
+const MonacoJsonEditor = lazy(() =>
+  import("./MonacoJsonEditor").then((m) => ({ default: m.MonacoJsonEditor })),
+);
 import {
   Dismiss24Regular,
   DocumentEdit24Regular,
@@ -31,7 +36,6 @@ import {
   Save24Regular,
   ArrowReset24Regular,
   ChevronRight24Regular,
-  Warning24Regular,
   ErrorCircle24Regular,
 } from "@fluentui/react-icons";
 import type {
@@ -109,25 +113,10 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
   },
-  rawEditorRoot: {
+  monacoWrapper: {
     flex: 1,
     minHeight: 0,
-    width: "100%",
-    borderRadius: 0,
-    border: "none",
-    backgroundColor: tokens.colorNeutralBackground2,
-  },
-  rawEditorTextarea: {
-    flex: 1,
-    minHeight: 0,
-    fontFamily: "Consolas, 'Courier New', monospace",
-    fontSize: tokens.fontSizeBase200,
-    lineHeight: "1.5",
-    resize: "none",
-    overflow: "auto",
-    backgroundColor: tokens.colorNeutralBackground2,
-    color: tokens.colorNeutralForeground1,
-    padding: tokens.spacingHorizontalM,
+    overflow: "hidden",
   },
   friendlyEditorScroll: {
     flex: 1,
@@ -156,22 +145,6 @@ const useStyles = makeStyles({
     height: "100%",
     gap: tokens.spacingVerticalM,
     color: tokens.colorNeutralForeground3,
-  },
-  issueList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-    maxHeight: "120px",
-    overflowY: "auto",
-    borderTop: `1px solid ${tokens.colorNeutralStroke1}`,
-    backgroundColor: tokens.colorNeutralBackground2,
-  },
-  issueItem: {
-    display: "flex",
-    alignItems: "flex-start",
-    gap: tokens.spacingHorizontalXS,
-    fontSize: tokens.fontSizeBase100,
   },
   historyList: {
     display: "flex",
@@ -397,6 +370,25 @@ export function ConfigAdmin({
     setSaveNotice(null);
   }, [fileContent]);
 
+  // Live validation — run with debounce on every draft change to keep Monaco
+  // markers up-to-date without blocking keystrokes.
+  const liveValidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (!selectedFile) return;
+    if (liveValidationTimerRef.current !== null) {
+      clearTimeout(liveValidationTimerRef.current);
+    }
+    liveValidationTimerRef.current = setTimeout(() => {
+      const issues = validateContent(selectedFile, draftContent);
+      setValidationIssues(issues);
+    }, 400);
+    return () => {
+      if (liveValidationTimerRef.current !== null) {
+        clearTimeout(liveValidationTimerRef.current);
+      }
+    };
+  }, [selectedFile, draftContent, validateContent]);
+
   const handleSelectFile = useCallback(
     (filename: string) => {
       if (isDirty) {
@@ -416,6 +408,7 @@ export function ConfigAdmin({
 
   const handleCheck = useCallback(() => {
     if (!selectedFile) return;
+    // Run validation immediately (don't wait for debounce) and show dialog
     const issues = validateContent(selectedFile, draftContent);
     setValidationIssues(issues);
     setShowValidation(true);
@@ -517,34 +510,16 @@ export function ConfigAdmin({
 
     if (editorTab === "raw") {
       return (
-        <>
-          <Textarea
-            className={styles.rawEditorRoot}
-            textarea={{ className: styles.rawEditorTextarea }}
-            value={draftContent}
-            onChange={(_, data) => handleEditorChange(data.value)}
-            spellCheck={false}
-            aria-label={`Raw JSON editor for ${selectedFile}`}
-            resize="none"
-            appearance="filled-darker"
-          />
-          {showValidation && validationIssues.length > 0 && (
-            <div className={styles.issueList}>
-              {validationIssues.map((issue, i) => (
-                <div key={i} className={styles.issueItem}>
-                  {issue.severity === "error" ? (
-                    <ErrorCircle24Regular style={{ color: tokens.colorPaletteRedForeground1, flexShrink: 0 }} />
-                  ) : (
-                    <Warning24Regular style={{ color: tokens.colorPaletteYellowForeground1, flexShrink: 0 }} />
-                  )}
-                  <Text size={200}>
-                    <strong>{issue.path}</strong>: {issue.message}
-                  </Text>
-                </div>
-              ))}
-            </div>
-          )}
-        </>
+        <div className={styles.monacoWrapper}>
+          <Suspense fallback={<div className={styles.emptyState}><Spinner size="large" /><Text>Loading editor…</Text></div>}>
+            <MonacoJsonEditor
+              value={draftContent}
+              onChange={handleEditorChange}
+              validationIssues={validationIssues}
+              filename={selectedFile}
+            />
+          </Suspense>
+        </div>
       );
     }
 
