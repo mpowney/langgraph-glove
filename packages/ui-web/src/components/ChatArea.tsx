@@ -26,6 +26,7 @@ interface ChatAreaProps {
   messages: ChatEntry[];
   myConversationId: string;
   showAll: boolean;
+  showAccordionAndSubAgentMessages: boolean;
   onRequestSwitchConversation?: (conversationId: string) => void;
   modelContextWindowTokens?: number;
 }
@@ -34,6 +35,7 @@ export function ChatArea({
   messages,
   myConversationId,
   showAll,
+  showAccordionAndSubAgentMessages,
   onRequestSwitchConversation,
   modelContextWindowTokens,
 }: ChatAreaProps) {
@@ -45,18 +47,32 @@ export function ChatArea({
       && entry.isStreaming
       && entry.streamSource !== "sub-agent",
   );
+  const filteredMessages = showAccordionAndSubAgentMessages
+    ? messages
+    : messages.filter((entry) => {
+        const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
+        const isAccordionMessage =
+          entry.role === "prompt"
+          || entry.role === "tool-call"
+          || entry.role === "tool-result"
+          || entry.role === "agent-transfer"
+          || entry.role === "model-call"
+          || entry.role === "model-response"
+          || entry.role === "error";
+        return !isSubAgentMessage && !isAccordionMessage;
+      });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  if (messages.length === 0) {
+  if (filteredMessages.length === 0) {
     return <div className={styles.empty}>Start a conversation…</div>;
   }
 
   return (
     <div className={styles.root} role="log" aria-live="polite" aria-label="Chat messages">
-      {messages.map((entry) => {
+      {filteredMessages.map((entry) => {
         const isForeignConversation = showAll && entry.conversationId !== myConversationId;
         return (
         <ChatMessage
