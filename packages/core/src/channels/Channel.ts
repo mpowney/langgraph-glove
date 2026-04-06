@@ -140,7 +140,9 @@ export abstract class Channel extends EventEmitter {
    * `supportsStreaming === true` for a real streaming experience.
    *
    * @param conversationId - The thread the response belongs to.
-   * @param stream         - An async iterable of text chunks.
+   * @param stream         - An async iterable of `OutgoingStreamChunk` objects,
+   * containing chunk `text`, its `source` (`"main"` or `"sub-agent"`), and
+   * an optional `agentKey` when the chunk originates from a sub-agent stream.
    */
   async sendStream(conversationId: string, stream: AsyncIterable<OutgoingStreamChunk>): Promise<void> {
     let text = "";
