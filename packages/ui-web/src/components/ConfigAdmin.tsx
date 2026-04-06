@@ -109,19 +109,25 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
   },
-  rawEditor: {
+  rawEditorRoot: {
     flex: 1,
+    minHeight: 0,
+    width: "100%",
+    borderRadius: 0,
+    border: "none",
+    backgroundColor: tokens.colorNeutralBackground2,
+  },
+  rawEditorTextarea: {
+    flex: 1,
+    minHeight: 0,
     fontFamily: "Consolas, 'Courier New', monospace",
     fontSize: tokens.fontSizeBase200,
-    padding: tokens.spacingHorizontalM,
-    border: "none",
-    outline: "none",
+    lineHeight: "1.5",
     resize: "none",
+    overflow: "auto",
     backgroundColor: tokens.colorNeutralBackground2,
     color: tokens.colorNeutralForeground1,
-    lineHeight: "1.5",
-    width: "100%",
-    boxSizing: "border-box",
+    padding: tokens.spacingHorizontalM,
   },
   friendlyEditorScroll: {
     flex: 1,
@@ -512,12 +518,15 @@ export function ConfigAdmin({
     if (editorTab === "raw") {
       return (
         <>
-          <textarea
-            className={styles.rawEditor}
+          <Textarea
+            className={styles.rawEditorRoot}
+            textarea={{ className: styles.rawEditorTextarea }}
             value={draftContent}
-            onChange={(e) => handleEditorChange(e.target.value)}
+            onChange={(_, data) => handleEditorChange(data.value)}
             spellCheck={false}
             aria-label={`Raw JSON editor for ${selectedFile}`}
+            resize="none"
+            appearance="filled-darker"
           />
           {showValidation && validationIssues.length > 0 && (
             <div className={styles.issueList}>
