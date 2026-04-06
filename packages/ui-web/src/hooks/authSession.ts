@@ -26,7 +26,8 @@ export function clearStoredPersonalToken(): void {
 }
 
 export function clearStoredAuth(clearPersonalToken = false): boolean {
-  const hadToken = Boolean(sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY));
+  const rawToken = sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+  const hadToken = (rawToken?.trim().length ?? 0) > 0;
   sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
   if (clearPersonalToken) {
     clearStoredPersonalToken();
