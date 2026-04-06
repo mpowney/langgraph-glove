@@ -42,6 +42,15 @@ export function useWebSocket(
   const wsRef = useRef<WebSocket | null>(null);
   // Whether the last message in the list is currently streaming
   const streamingIdRef = useRef<string | null>(null);
+  // Refs so ws.onopen always sees the latest token values without needing them
+  // in the WebSocket effect's dependency array.
+  const personalTokenRef = useRef(personalToken);
+  const privilegeGrantIdRef = useRef(privilegeGrantId);
+  // Track last-sent token values so we can send explicit null only on clear.
+  const lastSyncedPersonalTokenRef = useRef<string | undefined>(personalToken);
+  const lastSyncedPrivilegeGrantIdRef = useRef<string | undefined>(privilegeGrantId);
+  personalTokenRef.current = personalToken;
+  privilegeGrantIdRef.current = privilegeGrantId;
 
   useEffect(() => {
     // `active` lets cleanup signal that this effect instance has been torn
@@ -62,6 +71,22 @@ export function useWebSocket(
         return;
       }
       setStatus("connected");
+      // Proactively register any active tokens with the server-side conversation
+      // context so they are available before the first message is sent, and so
+      // that switching to an existing conversation immediately restores them.
+      const pt = personalTokenRef.current;
+      const pg = privilegeGrantIdRef.current;
+      if (pt !== undefined || pg !== undefined) {
+        const contextFrame: ClientMessage = {
+          type: "context",
+          conversationId,
+          ...(pt !== undefined ? { personalToken: pt } : {}),
+          ...(pg !== undefined ? { privilegeGrantId: pg } : {}),
+        };
+        ws.send(JSON.stringify(contextFrame));
+      }
+      lastSyncedPersonalTokenRef.current = pt;
+      lastSyncedPrivilegeGrantIdRef.current = pg;
     };
 
     ws.onmessage = ({ data }: MessageEvent<string>) => {
@@ -219,6 +244,44 @@ export function useWebSocket(
     };
   }, [conversationId, authToken]);
 
+  // When tokens change on an already-open socket, push a context frame so the
+  // server-side conversation context stays in sync without waiting for the next
+  // message. Fires after connection changes too, but the readyState guard
+  // makes those a no-op (onopen handles the post-connect send instead).
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const contextFrame: ClientMessage = {
+      type: "context",
+      conversationId,
+    };
+
+    let shouldSend = false;
+
+    if (personalToken !== undefined) {
+      contextFrame.personalToken = personalToken;
+      shouldSend = true;
+    } else if (lastSyncedPersonalTokenRef.current !== undefined) {
+      contextFrame.personalToken = null;
+      shouldSend = true;
+    }
+
+    if (privilegeGrantId !== undefined) {
+      contextFrame.privilegeGrantId = privilegeGrantId;
+      shouldSend = true;
+    } else if (lastSyncedPrivilegeGrantIdRef.current !== undefined) {
+      contextFrame.privilegeGrantId = null;
+      shouldSend = true;
+    }
+
+    if (shouldSend) {
+      ws.send(JSON.stringify(contextFrame));
+    }
+
+    lastSyncedPersonalTokenRef.current = personalToken;
+    lastSyncedPrivilegeGrantIdRef.current = privilegeGrantId;
+  }, [conversationId, personalToken, privilegeGrantId]);
+
   const sendMessage = useCallback(
     (text: string) => {
       const ws = wsRef.current;
@@ -235,8 +298,8 @@ export function useWebSocket(
         type: "message",
         text,
         conversationId,
-        personalToken: personalToken ?? null,
-        ...(privilegeGrantId ? { privilegeGrantId } : {}),
+        ...(personalToken !== undefined ? { personalToken } : {}),
+        ...(privilegeGrantId !== undefined ? { privilegeGrantId } : {}),
       };
       ws.send(JSON.stringify(payload));
     },

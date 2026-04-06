@@ -12,19 +12,30 @@ import type { AuthService } from "../auth/AuthService";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
 /** Messages sent from browser client → server. */
-interface ClientMessage {
-  type: "message";
-  text: string;
-  conversationId: string;
-  /**
-   * Optional personal token supplied by the browser for encrypted personal
-   * memory operations. Stored in-memory per conversation and never logged
-   * or persisted to disk.
-   */
-  personalToken?: string | null;
-  /** Optional short-lived privilege grant supplied by the browser. */
-  privilegeGrantId?: string | null;
-}
+type ClientMessage =
+  | {
+      type: "message";
+      text: string;
+      conversationId: string;
+      /**
+       * Optional personal token supplied by the browser for encrypted personal
+       * memory operations. Stored in-memory per conversation and never logged
+       * or persisted to disk.
+       */
+      personalToken?: string | null;
+      /** Optional short-lived privilege grant supplied by the browser. */
+      privilegeGrantId?: string | null;
+    }
+  | {
+      /**
+       * Context-only frame: updates server-side per-conversation token state
+       * without dispatching a message to the agent.
+       */
+      type: "context";
+      conversationId: string;
+      personalToken?: string | null;
+      privilegeGrantId?: string | null;
+    };
 
 /** Messages sent from server → browser client. */
 interface CheckpointMetadata {
@@ -122,13 +133,6 @@ export class WebChannel extends Channel {
   private appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
-
-  /**
-   * Per-conversation personal tokens, held only in memory for the lifetime of
-   * the server process. Never written to disk or included in any log output.
-   */
-  private readonly personalTokens = new Map<string, string>();
-  private readonly privilegeGrantIds = new Map<string, string>();
   private authService?: AuthService;
 
   constructor(config: WebChannelConfig = {}) {
@@ -346,23 +350,38 @@ export class WebChannel extends Channel {
         return;
       }
 
-      if (parsed.type !== "message" || !parsed.text || !this.handler) return;
+      if (parsed.type !== "message" && parsed.type !== "context") return;
 
-      // Update the in-memory personal token cache for this conversation.
-      if (typeof parsed.personalToken === "string" && parsed.personalToken) {
-        this.personalTokens.set(parsed.conversationId, parsed.personalToken);
-      } else if (parsed.personalToken === null) {
-        this.personalTokens.delete(parsed.conversationId);
+      const metadata: Record<string, unknown> = {
+        ...(Object.prototype.hasOwnProperty.call(parsed, "personalToken")
+          ? { personalToken: parsed.personalToken }
+          : {}),
+        ...(Object.prototype.hasOwnProperty.call(parsed, "privilegeGrantId")
+          ? { privilegeGrantId: parsed.privilegeGrantId }
+          : {}),
+      };
+
+      if (parsed.type === "context") {
+        if (!this.handler) return;
+
+        const contextMessage: IncomingMessage = {
+          id: uuidv4(),
+          conversationId: parsed.conversationId,
+          text: "",
+          sender: `ws:${parsed.conversationId}`,
+          timestamp: new Date(),
+          metadata: {
+            ...metadata,
+            contextOnly: true,
+          },
+        };
+
+        await this.handler(contextMessage);
+        return;
       }
 
-      if (typeof parsed.privilegeGrantId === "string" && parsed.privilegeGrantId) {
-        this.privilegeGrantIds.set(parsed.conversationId, parsed.privilegeGrantId);
-      } else if (parsed.privilegeGrantId === null) {
-        this.privilegeGrantIds.delete(parsed.conversationId);
-      }
+      if (!parsed.text || !this.handler) return;
 
-      const personalToken = this.personalTokens.get(parsed.conversationId);
-      const privilegeGrantId = this.privilegeGrantIds.get(parsed.conversationId);
 
       const message: IncomingMessage = {
         id: uuidv4(),
@@ -370,16 +389,7 @@ export class WebChannel extends Channel {
         text: parsed.text,
         sender: `ws:${parsed.conversationId}`,
         timestamp: new Date(),
-        ...(
-          personalToken !== undefined || privilegeGrantId !== undefined
-            ? {
-                metadata: {
-                  ...(personalToken !== undefined ? { personalToken } : {}),
-                  ...(privilegeGrantId !== undefined ? { privilegeGrantId } : {}),
-                },
-              }
-            : {}
-        ),
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
       };
 
       // Tag the socket with its conversationId for targeted broadcast
