@@ -44,7 +44,7 @@ export const updateConfigToolMetadata: ToolMetadata = {
           "New file content as a JSON string. Omit to read the current content.",
       },
     },
-    required: ["conversationId", "privilegeGrantId", "file"],
+    required: ["file"],
   },
 };
 

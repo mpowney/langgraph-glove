@@ -36,7 +36,7 @@ export const shellCommandToolMetadata: ToolMetadata = {
         description: `Maximum execution time in seconds. Defaults to ${DEFAULT_TIMEOUT_SECONDS}. Maximum ${MAX_TIMEOUT_SECONDS}.`,
       },
     },
-    required: ["conversationId", "privilegeGrantId", "command"],
+    required: ["command"],
   },
 };
 

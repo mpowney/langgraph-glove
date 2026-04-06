@@ -74,7 +74,7 @@ export const restartProcessToolMetadata: ToolMetadata = {
         description: "Signal to send. Defaults to SIGTERM.",
       },
     },
-    required: ["conversationId", "privilegeGrantId", "process"],
+    required: ["process"],
   },
 };
 
@@ -108,7 +108,7 @@ export const stopProcessToolMetadata: ToolMetadata = {
         description: "Signal to send. Defaults to SIGTERM.",
       },
     },
-    required: ["conversationId", "privilegeGrantId", "process"],
+    required: ["process"],
   },
 };
 
