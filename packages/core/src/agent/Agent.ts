@@ -1,6 +1,6 @@
 import { HumanMessage, AIMessageChunk, ToolMessage } from "@langchain/core/messages";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
-import type { Channel, IncomingMessage } from "../channels/Channel";
+import type { Channel, IncomingMessage, OutgoingStreamChunk, StreamSource } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
@@ -78,6 +78,69 @@ function mergeArgumentFragment(existing: string | undefined, incoming: string): 
   return `${existing}${incoming}`;
 }
 
+const MIN_OVERLAP_DEDUP_CHARS = 8;
+
+/**
+ * Normalize streamed model text to a pure delta.
+ *
+ * Some providers emit cumulative snapshots ("Hel", "Hello", "Hello world")
+ * while others emit true deltas ("Hel", "lo", " world"). This helper accepts
+ * either style and always returns only the newly-added suffix. It also guards
+ * against duplicate/retransmitted chunks by trimming substantial overlap with
+ * the current full text.
+ */
+function normalizeStreamTextDelta(previous: string | undefined, incoming: string): {
+  fullText: string;
+  delta: string;
+} {
+  if (!previous) {
+    return { fullText: incoming, delta: incoming };
+  }
+  if (!incoming) {
+    return { fullText: previous, delta: "" };
+  }
+
+  // Cumulative snapshot mode.
+  if (incoming.startsWith(previous)) {
+    return {
+      fullText: incoming,
+      delta: incoming.slice(previous.length),
+    };
+  }
+
+  // Duplicate / out-of-order snapshot.
+  if (previous.startsWith(incoming)) {
+    return { fullText: previous, delta: "" };
+  }
+
+  // Retransmitted/overlapping chunk mode: trim the largest suffix/prefix
+  // overlap so repeated websocket chunks don't duplicate rendered text.
+  const maxOverlap = Math.min(previous.length, incoming.length);
+  let overlap = 0;
+  for (let i = maxOverlap; i >= MIN_OVERLAP_DEDUP_CHARS; i -= 1) {
+    if (previous.slice(-i) === incoming.slice(0, i)) {
+      overlap = i;
+      break;
+    }
+  }
+  if (overlap > 0) {
+    const delta = incoming.slice(overlap);
+    if (!delta) {
+      return { fullText: previous, delta: "" };
+    }
+    return {
+      fullText: `${previous}${delta}`,
+      delta,
+    };
+  }
+
+  // Delta mode (or mixed mode): append incoming to previous.
+  return {
+    fullText: `${previous}${incoming}`,
+    delta: incoming,
+  };
+}
+
 function isGenericToolName(value: string): boolean {
   const normalized = value.trim().toLowerCase();
   return normalized.length === 0 || ["tool", "structuredtool", "dynamictool", "remotetool"].includes(normalized);
@@ -115,6 +178,45 @@ function resolveToolName(
   }
 
   return "tool";
+}
+
+function resolveChunkStreamSource(
+  langgraphNode: string | undefined,
+  activeSubAgent?: string,
+): { source: StreamSource; agentKey?: string } {
+  const node = langgraphNode?.trim();
+  const nodeLower = node?.toLowerCase();
+  const activeLower = activeSubAgent?.toLowerCase();
+
+  if (nodeLower === "orchestrator" || nodeLower === "orchestrator_tools") {
+    return { source: "main" };
+  }
+
+  // In orchestrator mode, nested sub-graphs often surface generic node names
+  // like "agent"/"tools". When a handoff is active, attribute those chunks
+  // to the active sub-agent so the UI can keep streams separate.
+  if (activeSubAgent) {
+    if (!nodeLower || nodeLower === "agent" || nodeLower === "tools" || nodeLower === "tool_failure_stop") {
+      return { source: "sub-agent", agentKey: activeSubAgent };
+    }
+    if (
+      activeLower
+      && (
+        nodeLower === activeLower
+        || nodeLower.startsWith(`${activeLower}.`)
+        || nodeLower.startsWith(`${activeLower}:`)
+        || nodeLower.includes(`.${activeLower}.`)
+      )
+    ) {
+      return { source: "sub-agent", agentKey: activeSubAgent };
+    }
+  }
+
+  if (!nodeLower || nodeLower === "agent") {
+    return { source: "main" };
+  }
+
+  return { source: "sub-agent", agentKey: node };
 }
 
 function extractArgsFromRawToolCall(rawCall: unknown): unknown {
@@ -381,8 +483,10 @@ export class GloveAgent {
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, metadata?: ToolEventMetadata) => void,
     personalToken?: string,
     privilegeGrantId?: string,
-  ): AsyncGenerator<string> {
+  ): AsyncGenerator<OutgoingStreamChunk> {
     const streamedToolArgsByKey = new Map<string, string>();
+    const streamedTextBySourceKey = new Map<string, string>();
+    let activeSubAgent: string | undefined;
 
     const toolCallKey = (tool: { id?: string; name?: string }, toolIndex: number): string => {
       if (typeof tool.id === "string" && tool.id.trim().length > 0) {
@@ -472,7 +576,7 @@ export class GloveAgent {
       },
     );
 
-    for await (const [chunk, _metadata] of streamResult as AsyncIterable<
+    for await (const [chunk, metadata] of streamResult as AsyncIterable<
       [unknown, { langgraph_node?: string }]
     >) {
       if (chunk instanceof AIMessageChunk) {
@@ -514,6 +618,7 @@ export class GloveAgent {
               if (tc.name.startsWith("transfer_to_")) {
                 // Orchestrator handoff to a sub-agent
                 const targetAgent = tc.name.replace(/^transfer_to_/, "");
+                activeSubAgent = targetAgent;
                 const request =
                   typeof resolvedArgs === "object" && resolvedArgs !== null && "request" in resolvedArgs
                     ? (() => {
@@ -532,7 +637,26 @@ export class GloveAgent {
             }
           }
         } else if (typeof chunk.content === "string" && chunk.content) {
-          yield chunk.content;
+          const source = resolveChunkStreamSource(metadata?.langgraph_node, activeSubAgent);
+          if (source.source === "main" && metadata?.langgraph_node?.trim().toLowerCase() === "orchestrator") {
+            // Once orchestrator resumes normal text generation, the delegated
+            // sub-agent phase is complete.
+            activeSubAgent = undefined;
+          }
+          const sourceKey = source.source === "sub-agent"
+            ? `sub-agent:${source.agentKey ?? "unknown"}`
+            : "main";
+          const previousText = streamedTextBySourceKey.get(sourceKey);
+          const normalized = normalizeStreamTextDelta(previousText, chunk.content);
+          streamedTextBySourceKey.set(sourceKey, normalized.fullText);
+          if (!normalized.delta) {
+            continue;
+          }
+          yield {
+            text: normalized.delta,
+            source: source.source,
+            ...(source.agentKey ? { agentKey: source.agentKey } : {}),
+          };
         }
       } else if (chunk instanceof ToolMessage && onToolEvent) {
         const toolName = chunk.name ?? undefined;
@@ -783,9 +907,9 @@ export class GloveAgent {
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
-      async function* teedStream(): AsyncGenerator<string> {
+      async function* teedStream(): AsyncGenerator<OutgoingStreamChunk> {
         for await (const chunk of baseStream) {
-          fullText += chunk;
+          fullText += chunk.text;
           yield chunk;
         }
       }

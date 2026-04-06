@@ -124,6 +124,8 @@ interface AppHeaderProps {
   status: ConnectionStatus;
   showAll: boolean;
   onToggleShowAll: (value: boolean) => void;
+  showAccordionAndSubAgentMessages: boolean;
+  onToggleShowAccordionAndSubAgentMessages: (value: boolean) => void;
   onStartNewConversation: () => void;
   memoryAdminEnabled: boolean;
   onOpenMemoryAdmin: () => void;
@@ -149,6 +151,8 @@ export function AppHeader({
   status,
   showAll,
   onToggleShowAll,
+  showAccordionAndSubAgentMessages,
+  onToggleShowAccordionAndSubAgentMessages,
   onStartNewConversation,
   memoryAdminEnabled,
   onOpenMemoryAdmin,
@@ -338,6 +342,11 @@ export function AppHeader({
           checked={showAll}
           onChange={(_, data) => onToggleShowAll(data.checked)}
           label={<Text size={100} className={styles.switchLabel}>All conversations</Text>}
+        />
+        <Switch
+          checked={showAccordionAndSubAgentMessages}
+          onChange={(_, data) => onToggleShowAccordionAndSubAgentMessages(data.checked)}
+          label={<Text size={100} className={styles.switchLabel}>Agent processing details</Text>}
         />
         <Button
           appearance="secondary"

@@ -26,6 +26,7 @@ import { useAuth } from "./hooks/useAuth";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
+const SHOW_DETAILS_KEY = "glove_show_accordion_and_sub_agents";
 
 function getOrCreateConversationId(): string {
   const existing = localStorage.getItem(CONVERSATION_ID_KEY)?.trim();
@@ -69,6 +70,9 @@ function App() {
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
   );
+  const [showAccordionAndSubAgentMessages, setShowAccordionAndSubAgentMessages] = useState(
+    () => localStorage.getItem(SHOW_DETAILS_KEY) !== "false",
+  );
   const [browserOpen, setBrowserOpen] = useState(false);
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
@@ -78,6 +82,11 @@ function App() {
   const setShowAllPersisted = useCallback((value: boolean) => {
     localStorage.setItem("showAll", String(value));
     setShowAll(value);
+  }, []);
+
+  const setShowAccordionAndSubAgentMessagesPersisted = useCallback((value: boolean) => {
+    localStorage.setItem(SHOW_DETAILS_KEY, String(value));
+    setShowAccordionAndSubAgentMessages(value);
   }, []);
 
   const setPersonalToken = useCallback((token: string) => {
@@ -257,6 +266,8 @@ function App() {
           status={status}
           showAll={showAll}
           onToggleShowAll={setShowAllPersisted}
+          showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
+          onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
           onStartNewConversation={handleStartNewConversation}
           memoryAdminEnabled={memoryAvailable}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
@@ -279,6 +290,7 @@ function App() {
           messages={visibleMessages}
           myConversationId={myConversationId}
           showAll={showAll}
+          showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
           onRequestSwitchConversation={handleSwitchConversation}
           modelContextWindowTokens={appInfo?.modelContextWindowTokens}
         />

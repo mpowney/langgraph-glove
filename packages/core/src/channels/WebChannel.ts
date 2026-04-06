@@ -7,7 +7,7 @@ import { WebSocketServer, WebSocket } from "ws";
 import Database from "better-sqlite3";
 import { distPath } from "@langgraph-glove/ui-web";
 import { Channel } from "./Channel";
-import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk, StreamSource } from "./Channel";
 import type { AuthService } from "../auth/AuthService";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
@@ -49,6 +49,8 @@ type ServerMessage =
       text: string;
       conversationId: string;
       role?: "user" | "agent";
+      streamSource?: StreamSource;
+      streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
@@ -324,13 +326,15 @@ export class WebChannel extends Channel {
    */
   override async sendStream(
     conversationId: string,
-    stream: AsyncIterable<string>,
+    stream: AsyncIterable<OutgoingStreamChunk>,
   ): Promise<void> {
     for await (const chunk of stream) {
       this.broadcast(conversationId, {
         type: "chunk",
-        text: chunk,
+        text: chunk.text,
         conversationId,
+        streamSource: chunk.source,
+        ...(chunk.agentKey ? { streamAgentKey: chunk.agentKey } : {}),
         checkpoint: this.lookupCheckpointMetadata(conversationId),
       });
     }
