@@ -47,8 +47,11 @@ export function useWebSocket(
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const disconnectNoticeShownRef = useRef(false);
-  // Current streaming entry and stream source key (main or sub-agent:<name>).
-  const streamingRef = useRef<{ id: string; sourceKey: string } | null>(null);
+  // Streaming state per conversationId: maps each conversation to its active
+  // streaming entry ({ id, sourceKey }).  Keying by conversationId prevents a
+  // chunk or done frame for conversation B from corrupting the streaming state
+  // of conversation A when the WebSocket services multiple conversations.
+  const streamingRef = useRef<Map<string, { id: string; sourceKey: string }>>(new Map());
   // Refs so ws.onopen always sees the latest token values without needing them
   // in the WebSocket effect's dependency array.
   const personalTokenRef = useRef(personalToken);
@@ -142,11 +145,12 @@ export function useWebSocket(
         const sourceKey = streamSource === "sub-agent"
           ? `sub-agent:${msg.streamAgentKey ?? "unknown"}`
           : "main";
-        const currentStreaming = streamingRef.current;
+        const convId = msg.conversationId;
+        const currentStreaming = streamingRef.current.get(convId) ?? null;
 
         if (!currentStreaming || currentStreaming.sourceKey !== sourceKey) {
           const nextStream = { id: crypto.randomUUID(), sourceKey };
-          streamingRef.current = nextStream;
+          streamingRef.current.set(convId, nextStream);
 
           setMessages((prev) => {
             const withPreviousStopped = currentStreaming
@@ -218,9 +222,10 @@ export function useWebSocket(
           },
         ]);
       } else if (msg.type === "done") {
-        if (streamingRef.current) {
-          const finishedId = streamingRef.current.id;
-          streamingRef.current = null;
+        const convStreaming = streamingRef.current.get(msg.conversationId);
+        if (convStreaming) {
+          const finishedId = convStreaming.id;
+          streamingRef.current.delete(msg.conversationId);
           setMessages((prev) =>
             updateMessageToEnd(
               prev,
@@ -249,9 +254,10 @@ export function useWebSocket(
         ]);
       } else if (msg.type === "error") {
         // Remove any in-progress streaming entry and add an error message
-        if (streamingRef.current) {
-          const errId = streamingRef.current.id;
-          streamingRef.current = null;
+        const convStreaming = streamingRef.current.get(msg.conversationId);
+        if (convStreaming) {
+          const errId = convStreaming.id;
+          streamingRef.current.delete(msg.conversationId);
           setMessages((prev) => prev.filter((e) => e.id !== errId));
         }
         setMessages((prev) => [
@@ -283,16 +289,20 @@ export function useWebSocket(
         if (wsRef.current !== ws) return;
         wsRef.current = null;
         setStatus("disconnected");
-        if (streamingRef.current) {
-          const id = streamingRef.current.id;
-          streamingRef.current = null;
-          setMessages((prev) =>
-            updateMessageToEnd(
-              prev,
-              id,
-              (message) => ({ ...message, isStreaming: false }),
-            ),
-          );
+        if (streamingRef.current.size > 0) {
+          const activeEntries = [...streamingRef.current.values()];
+          streamingRef.current.clear();
+          setMessages((prev) => {
+            let updated = prev;
+            for (const { id } of activeEntries) {
+              updated = updateMessageToEnd(
+                updated,
+                id,
+                (message) => ({ ...message, isStreaming: false }),
+              );
+            }
+            return updated;
+          });
         }
         if (!disconnectNoticeShownRef.current) {
           disconnectNoticeShownRef.current = true;
