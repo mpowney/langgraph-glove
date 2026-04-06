@@ -180,6 +180,26 @@ export class RemoteTool extends StructuredTool {
       args.personalToken = (config.configurable as Record<string, unknown>).personalToken;
     }
 
+    if (
+      "privilegeGrantId" in this.schema.shape &&
+      !args.privilegeGrantId &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).privilegeGrantId === "string"
+    ) {
+      args.privilegeGrantId = (config.configurable as Record<string, unknown>).privilegeGrantId;
+    }
+
+    if (
+      "conversationId" in this.schema.shape &&
+      !args.conversationId &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).thread_id === "string"
+    ) {
+      args.conversationId = (config.configurable as Record<string, unknown>).thread_id;
+    }
+
     const result = await this.rpcClient.call(this.name, args);
 
     const maxBytes = maxInlineToolResultBytes();

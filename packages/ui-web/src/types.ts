@@ -67,6 +67,8 @@ export interface ClientMessage {
    * Pass `null` to explicitly clear the server-side token for this conversation.
    */
   personalToken?: string | null;
+  /** Optional short-lived privilege grant for admin tool execution. */
+  privilegeGrantId?: string | null;
 }
 
 /** App metadata served by the backend `/api/info` endpoint. */

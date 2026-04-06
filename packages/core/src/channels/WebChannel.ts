@@ -22,6 +22,8 @@ interface ClientMessage {
    * or persisted to disk.
    */
   personalToken?: string | null;
+  /** Optional short-lived privilege grant supplied by the browser. */
+  privilegeGrantId?: string | null;
 }
 
 /** Messages sent from server → browser client. */
@@ -126,6 +128,7 @@ export class WebChannel extends Channel {
    * the server process. Never written to disk or included in any log output.
    */
   private readonly personalTokens = new Map<string, string>();
+  private readonly privilegeGrantIds = new Map<string, string>();
   private authService?: AuthService;
 
   constructor(config: WebChannelConfig = {}) {
@@ -352,7 +355,14 @@ export class WebChannel extends Channel {
         this.personalTokens.delete(parsed.conversationId);
       }
 
+      if (typeof parsed.privilegeGrantId === "string" && parsed.privilegeGrantId) {
+        this.privilegeGrantIds.set(parsed.conversationId, parsed.privilegeGrantId);
+      } else if (parsed.privilegeGrantId === null) {
+        this.privilegeGrantIds.delete(parsed.conversationId);
+      }
+
       const personalToken = this.personalTokens.get(parsed.conversationId);
+      const privilegeGrantId = this.privilegeGrantIds.get(parsed.conversationId);
 
       const message: IncomingMessage = {
         id: uuidv4(),
@@ -360,7 +370,16 @@ export class WebChannel extends Channel {
         text: parsed.text,
         sender: `ws:${parsed.conversationId}`,
         timestamp: new Date(),
-        ...(personalToken !== undefined ? { metadata: { personalToken } } : {}),
+        ...(
+          personalToken !== undefined || privilegeGrantId !== undefined
+            ? {
+                metadata: {
+                  ...(personalToken !== undefined ? { personalToken } : {}),
+                  ...(privilegeGrantId !== undefined ? { privilegeGrantId } : {}),
+                },
+              }
+            : {}
+        ),
       };
 
       // Tag the socket with its conversationId for targeted broadcast

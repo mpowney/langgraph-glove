@@ -52,6 +52,23 @@ function parseJsonMaybe(value: unknown): unknown {
   }
 }
 
+function redactSensitiveArgs(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSensitiveArgs(entry));
+  }
+  if (!isObject(value)) return value;
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (/token|grant/i.test(key)) {
+      redacted[key] = "[REDACTED]";
+      continue;
+    }
+    redacted[key] = redactSensitiveArgs(entry);
+  }
+  return redacted;
+}
+
 function mergeArgumentFragment(existing: string | undefined, incoming: string): string {
   if (!existing) return incoming;
   if (!incoming) return existing;
@@ -293,6 +310,7 @@ export class GloveAgent {
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     personalToken?: string,
+    privilegeGrantId?: string,
   ): Promise<string> {
     const result = await this.graph.invoke(
       { messages: [new HumanMessage(text)] },
@@ -300,6 +318,7 @@ export class GloveAgent {
         configurable: {
           thread_id: conversationId,
           ...(personalToken ? { personalToken } : {}),
+          ...(privilegeGrantId ? { privilegeGrantId } : {}),
         },
         recursionLimit: this.config.recursionLimit ?? 25,
         callbacks,
@@ -326,6 +345,7 @@ export class GloveAgent {
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, metadata?: ToolEventMetadata) => void,
     personalToken?: string,
+    privilegeGrantId?: string,
   ): AsyncGenerator<string> {
     const streamedToolArgsByKey = new Map<string, string>();
 
@@ -408,6 +428,7 @@ export class GloveAgent {
         configurable: {
           thread_id: conversationId,
           ...(personalToken ? { personalToken } : {}),
+          ...(privilegeGrantId ? { privilegeGrantId } : {}),
         },
         streamMode: "messages",
         recursionLimit: this.config.recursionLimit ?? 25,
@@ -582,7 +603,7 @@ export class GloveAgent {
               "tool-call",
               JSON.stringify({
                 name: toolName,
-                args,
+                args: redactSensitiveArgs(args),
                 ...(toolCallId ? { id: toolCallId } : {}),
                 type: "tool_call",
               }),
@@ -600,7 +621,17 @@ export class GloveAgent {
       const personalToken = typeof message.metadata?.personalToken === "string"
         ? message.metadata.personalToken
         : undefined;
-      const baseStream = this.stream(message.text, message.conversationId, callbacks, onToolEvent, personalToken);
+      const privilegeGrantId = typeof message.metadata?.privilegeGrantId === "string"
+        ? message.metadata.privilegeGrantId
+        : undefined;
+      const baseStream = this.stream(
+        message.text,
+        message.conversationId,
+        callbacks,
+        onToolEvent,
+        personalToken,
+        privilegeGrantId,
+      );
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
@@ -635,6 +666,7 @@ export class GloveAgent {
           message.conversationId,
           callbacks,
           personalToken,
+          privilegeGrantId,
         );
 
         await sourceChannel.sendMessage({
@@ -653,7 +685,16 @@ export class GloveAgent {
       const personalToken = typeof message.metadata?.personalToken === "string"
         ? message.metadata.personalToken
         : undefined;
-      const response = await this.invoke(message.text, message.conversationId, callbacks, personalToken);
+      const privilegeGrantId = typeof message.metadata?.privilegeGrantId === "string"
+        ? message.metadata.privilegeGrantId
+        : undefined;
+      const response = await this.invoke(
+        message.text,
+        message.conversationId,
+        callbacks,
+        personalToken,
+        privilegeGrantId,
+      );
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
       for (const ch of mirrorTargets) {

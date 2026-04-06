@@ -12,11 +12,13 @@ import { updateConfigToolMetadata, handleUpdateConfig } from "./tools/UpdateConf
 import { restartProcessToolMetadata, handleRestartProcess } from "./tools/RestartProcessTool";
 import { shellCommandToolMetadata, handleShellCommand } from "./tools/ShellCommandTool";
 
+const adminApiUrl = process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081";
+
 await launchToolServer({
   toolKey: "admin",
   register(server) {
-    server.register(updateConfigToolMetadata, handleUpdateConfig);
-    server.register(restartProcessToolMetadata, handleRestartProcess);
-    server.register(shellCommandToolMetadata, handleShellCommand);
+    server.register(updateConfigToolMetadata, (params) => handleUpdateConfig(params, adminApiUrl));
+    server.register(restartProcessToolMetadata, (params) => handleRestartProcess(params, adminApiUrl));
+    server.register(shellCommandToolMetadata, (params) => handleShellCommand(params, adminApiUrl));
   },
 });

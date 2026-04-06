@@ -14,6 +14,17 @@ import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
+const CONVERSATION_ID_KEY = "glove_conversation_id";
+
+function getOrCreateConversationId(): string {
+  const existing = localStorage.getItem(CONVERSATION_ID_KEY)?.trim();
+  if (existing) return existing;
+  const generated = crypto.randomUUID();
+  localStorage.setItem(CONVERSATION_ID_KEY, generated);
+  return generated;
+}
+
+const conversationId = getOrCreateConversationId();
 
 const useStyles = makeStyles({
   shell: {
@@ -33,10 +44,18 @@ function App() {
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
   const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
+  const [privilegedGrantId, setPrivilegedGrantId] = useState<string>("");
+  const [privilegedExpiresAt, setPrivilegedExpiresAt] = useState<string | null>(null);
   const shouldConnect = !auth.loading;
   const webSocketPersonalToken = shouldConnect ? personalToken || undefined : undefined;
+  const webSocketPrivilegeGrantId = shouldConnect ? privilegedGrantId || undefined : undefined;
   const webSocketAuthToken = shouldConnect ? auth.token ?? undefined : undefined;
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(conversationId, webSocketPersonalToken, webSocketAuthToken);
+  const { messages, sendMessage, status, myConversationId } = useWebSocket(
+    conversationId,
+    webSocketPersonalToken,
+    webSocketPrivilegeGrantId,
+    webSocketAuthToken,
+  );
   const styles = useStyles();
   const [showAll, setShowAll] = useState(
     () => localStorage.getItem("showAll") === "true",
@@ -59,6 +78,52 @@ function App() {
     }
     setPersonalTokenState(token);
   }, []);
+
+  const registerPrivilegeToken = useCallback(async (newToken: string, currentToken?: string): Promise<boolean> => {
+    return auth.registerPrivilegeToken(newToken, currentToken);
+  }, [auth]);
+
+  const activatePrivilegedAccessWithToken = useCallback(async (token: string): Promise<boolean> => {
+    const activation = await auth.activatePrivilegedAccess(conversationId, { token });
+    if (!activation?.active) return false;
+    setPrivilegedGrantId(activation.grantId);
+    setPrivilegedExpiresAt(activation.expiresAt);
+    return true;
+  }, [auth]);
+
+  const activatePrivilegedAccessWithPasskey = useCallback(async (): Promise<boolean> => {
+    const activation = await auth.activatePrivilegedAccess(conversationId, { usePasskey: true });
+    if (!activation?.active) return false;
+    setPrivilegedGrantId(activation.grantId);
+    setPrivilegedExpiresAt(activation.expiresAt);
+    return true;
+  }, [auth]);
+
+  const disablePrivilegedAccess = useCallback(async (): Promise<void> => {
+    await auth.revokePrivilegedAccess(conversationId);
+    setPrivilegedGrantId("");
+    setPrivilegedExpiresAt(null);
+  }, [auth]);
+
+  useEffect(() => {
+    if (!privilegedExpiresAt) return;
+    const expiryMs = Date.parse(privilegedExpiresAt);
+    if (!Number.isFinite(expiryMs)) return;
+
+    const remaining = expiryMs - Date.now();
+    if (remaining <= 0) {
+      setPrivilegedGrantId("");
+      setPrivilegedExpiresAt(null);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setPrivilegedGrantId("");
+      setPrivilegedExpiresAt(null);
+    }, remaining + 50);
+
+    return () => window.clearTimeout(timer);
+  }, [privilegedExpiresAt]);
 
   const isStreaming = useMemo(
     () => messages.some((m) => m.isStreaming),
@@ -90,6 +155,37 @@ function App() {
     };
   }, [memoryToolUrl, auth.token]);
 
+  useEffect(() => {
+    let active = true;
+
+    const refreshPrivilegedStatus = async () => {
+      if (!auth.token) return;
+      const status = await auth.getPrivilegedAccessStatus(conversationId);
+      if (!active || !status) return;
+
+      if (!status.active) {
+        setPrivilegedGrantId("");
+        setPrivilegedExpiresAt(null);
+        return;
+      }
+
+      if (status.grantId) {
+        setPrivilegedGrantId(status.grantId);
+      }
+      setPrivilegedExpiresAt(status.expiresAt ?? null);
+    };
+
+    void refreshPrivilegedStatus();
+    const timer = window.setInterval(() => {
+      void refreshPrivilegedStatus();
+    }, 30_000);
+
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [auth.token, auth.getPrivilegedAccessStatus]);
+
   const visibleMessages = useMemo(
     () => showAll ? messages : messages.filter((m) => m.conversationId === myConversationId),
     [messages, showAll, myConversationId],
@@ -99,7 +195,8 @@ function App() {
     setConversationId(crypto.randomUUID());
   }, []);
 
-  if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup)) {
+  if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup || auth.promptPrivilegeTokenSetup)
+  ) {
     return (
       <FluentProvider theme={theme}>
         <AuthGate
@@ -107,14 +204,18 @@ function App() {
           setupRequired={auth.setupRequired}
           forcePasskeySetup={auth.promptPasskeySetup}
           passkeySetupRequired={auth.passkeySetupRequired}
+          forcePrivilegeTokenSetup={auth.promptPrivilegeTokenSetup}
           minPasswordLength={auth.minPasswordLength}
           passkeyRegistered={auth.passkeyRegistered}
+          privilegeTokenRegistered={auth.privilegeTokenRegistered}
           error={auth.error}
           onLogin={auth.login}
           onSetup={auth.setup}
           onLoginWithPasskey={auth.loginWithPasskey}
           onRegisterPasskey={auth.registerPasskey}
           onSkipPasskeySetup={auth.dismissPasskeySetupPrompt}
+          onRegisterPrivilegeToken={registerPrivilegeToken}
+          onSkipPrivilegeTokenSetup={auth.dismissPrivilegeTokenSetupPrompt}
         />
       </FluentProvider>
     );
@@ -137,6 +238,14 @@ function App() {
           onSetPersonalToken={setPersonalToken}
           passkeyEnabled={auth.passkeyRegistered}
           onGeneratePersonalTokenWithPasskey={auth.generatePersonalTokenWithPasskey}
+          privilegedAccessActive={Boolean(privilegedGrantId)}
+          privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+          onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+          onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+          onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+          privilegeTokenRegistered={auth.privilegeTokenRegistered}
+          onRegisterPrivilegeToken={registerPrivilegeToken}
+          authError={auth.error}
         />
         <ChatArea
           messages={visibleMessages}

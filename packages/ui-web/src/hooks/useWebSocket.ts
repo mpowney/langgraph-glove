@@ -31,7 +31,12 @@ function buildWsUrl(authToken?: string): string {
   return url.toString();
 }
 
-export function useWebSocket(conversationId: string, personalToken?: string, authToken?: string) {
+export function useWebSocket(
+  conversationId: string,
+  personalToken?: string,
+  privilegeGrantId?: string,
+  authToken?: string,
+) {
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
@@ -231,10 +236,11 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
         text,
         conversationId,
         personalToken: personalToken ?? null,
+        ...(privilegeGrantId ? { privilegeGrantId } : {}),
       };
       ws.send(JSON.stringify(payload));
     },
-    [conversationId, personalToken],
+    [conversationId, personalToken, privilegeGrantId],
   );
 
   return { messages, sendMessage, status, myConversationId: conversationId };

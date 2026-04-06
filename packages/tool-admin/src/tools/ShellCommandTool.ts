@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
+import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const MAX_TIMEOUT_SECONDS = 300;
@@ -16,6 +17,14 @@ export const shellCommandToolMetadata: ToolMetadata = {
   parameters: {
     type: "object",
     properties: {
+      conversationId: {
+        type: "string",
+        description: "Conversation thread ID associated with this privileged execution.",
+      },
+      privilegeGrantId: {
+        type: "string",
+        description: "Short-lived privileged-access grant ID.",
+      },
       command: {
         type: "string",
         description:
@@ -26,13 +35,16 @@ export const shellCommandToolMetadata: ToolMetadata = {
         description: `Maximum execution time in seconds. Defaults to ${DEFAULT_TIMEOUT_SECONDS}. Maximum ${MAX_TIMEOUT_SECONDS}.`,
       },
     },
-    required: ["command"],
+    required: ["conversationId", "privilegeGrantId", "command"],
   },
 };
 
 export async function handleShellCommand(
   params: Record<string, unknown>,
+  adminApiUrl: string,
 ): Promise<string> {
+  await validatePrivilegeGrant(params, adminApiUrl);
+
   const command = params["command"] as string;
   const timeoutSeconds = Math.min(
     typeof params["timeout"] === "number" ? params["timeout"] : DEFAULT_TIMEOUT_SECONDS,

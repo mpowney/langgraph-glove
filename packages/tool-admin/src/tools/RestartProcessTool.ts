@@ -3,6 +3,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
+import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
 
 const execFileAsync = promisify(execFile);
 
@@ -25,6 +26,14 @@ export const restartProcessToolMetadata: ToolMetadata = {
   parameters: {
     type: "object",
     properties: {
+      conversationId: {
+        type: "string",
+        description: "Conversation thread ID associated with this privileged execution.",
+      },
+      privilegeGrantId: {
+        type: "string",
+        description: "Short-lived privileged-access grant ID.",
+      },
       process: {
         type: "string",
         description:
@@ -37,13 +46,16 @@ export const restartProcessToolMetadata: ToolMetadata = {
         description: "Signal to send. Defaults to SIGTERM.",
       },
     },
-    required: ["process"],
+    required: ["conversationId", "privilegeGrantId", "process"],
   },
 };
 
 export async function handleRestartProcess(
   params: Record<string, unknown>,
+  adminApiUrl: string,
 ): Promise<string> {
+  await validatePrivilegeGrant(params, adminApiUrl);
+
   const processName = params["process"] as string;
   const signal = ((params["signal"] as string | undefined) ?? "SIGTERM") as NodeJS.Signals;
 

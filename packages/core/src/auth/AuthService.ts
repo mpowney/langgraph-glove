@@ -48,6 +48,20 @@ interface PasskeyChallengeRow {
   expires_at: string;
 }
 
+interface PrivilegeTokenRow {
+  token_hash: string;
+  user_id: string;
+}
+
+interface PrivilegeGrantRow {
+  grant_id: string;
+  grant_hash: string;
+  conversation_id: string;
+  user_id: string;
+  expires_at: string;
+  revoked_at: string | null;
+}
+
 interface AuthConfig {
   setupTokenTtlMinutes: number;
   sessionTtlMinutes: number;
@@ -65,6 +79,12 @@ export interface SetupTokenDetails {
 
 export interface SessionDetails {
   token: string;
+  expiresAt: string;
+}
+
+export interface PrivilegeGrantDetails {
+  grantId: string;
+  conversationId: string;
   expiresAt: string;
 }
 
@@ -95,11 +115,17 @@ export class AuthService {
     this.initSchema();
   }
 
-  getStatus(): { setupRequired: boolean; minPasswordLength: number; passkeyRegistered: boolean } {
+  getStatus(): {
+    setupRequired: boolean;
+    minPasswordLength: number;
+    passkeyRegistered: boolean;
+    privilegeTokenRegistered: boolean;
+  } {
     return {
       setupRequired: !this.hasUsers(),
       minPasswordLength: this.config.minPasswordLength,
       passkeyRegistered: this.hasPasskeys(),
+      privilegeTokenRegistered: this.hasPrivilegeToken(),
     };
   }
 
@@ -143,9 +169,186 @@ export class AuthService {
       this.db.prepare("DELETE FROM auth_users").run();
       this.db.prepare("DELETE FROM auth_setup_tokens").run();
       this.db.prepare("DELETE FROM auth_passkey_challenges").run();
+      this.db.prepare("DELETE FROM auth_privilege_tokens").run();
+      this.db.prepare("DELETE FROM auth_privilege_grants").run();
     })();
 
     return this.generateBootstrapToken();
+  }
+
+  registerPrivilegeToken(userId: string, token: string): void {
+    const trimmed = token.trim();
+    if (!trimmed) {
+      throw new Error("Privilege token is required");
+    }
+
+    const now = new Date().toISOString();
+    const tokenHash = hashToken(trimmed);
+    this.db.transaction(() => {
+      this.db
+        .prepare(`
+          DELETE FROM auth_privilege_tokens
+          WHERE user_id = ?
+        `)
+        .run(userId);
+
+      this.db
+        .prepare(`
+          INSERT INTO auth_privilege_tokens (token_hash, user_id, created_at)
+          VALUES (?, ?, ?)
+        `)
+        .run(tokenHash, userId, now);
+    })();
+  }
+
+  validatePrivilegeToken(token: string): boolean {
+    const trimmed = token.trim();
+    if (!trimmed) return false;
+
+    const expectedHash = hashToken(trimmed);
+    const rows = this.db
+      .prepare<[], Pick<PrivilegeTokenRow, "token_hash">>(`
+        SELECT token_hash
+        FROM auth_privilege_tokens
+      `)
+      .all();
+
+    const expected = Buffer.from(expectedHash, "utf8");
+    for (const row of rows) {
+      const candidate = Buffer.from(row.token_hash, "utf8");
+      if (candidate.length !== expected.length) continue;
+      if (timingSafeEqual(candidate, expected)) return true;
+    }
+
+    return false;
+  }
+
+  createPrivilegeGrant(
+    userId: string,
+    conversationId: string,
+    ttlMinutes = 10,
+  ): PrivilegeGrantDetails {
+    const convo = conversationId.trim();
+    if (!convo) {
+      throw new Error("conversationId is required");
+    }
+
+    this.pruneExpiredPrivilegeGrants();
+
+    const grantId = generateToken();
+    const grantHash = hashToken(grantId);
+    const now = new Date();
+    const nowIso = now.toISOString();
+    const expiresAt = new Date(now.getTime() + ttlMinutes * 60 * 1000).toISOString();
+
+    this.db.transaction(() => {
+      this.db
+        .prepare(`
+          UPDATE auth_privilege_grants
+          SET revoked_at = ?
+          WHERE conversation_id = ?
+            AND revoked_at IS NULL
+            AND expires_at > ?
+        `)
+        .run(nowIso, convo, nowIso);
+
+      this.db
+        .prepare(`
+          INSERT INTO auth_privilege_grants (
+            grant_id,
+            grant_hash,
+            conversation_id,
+            user_id,
+            created_at,
+            expires_at,
+            revoked_at
+          )
+          VALUES (?, ?, ?, ?, ?, ?, NULL)
+        `)
+        .run(grantId, grantHash, convo, userId, nowIso, expiresAt);
+    })();
+
+    return {
+      grantId,
+      conversationId: convo,
+      expiresAt,
+    };
+  }
+
+  validatePrivilegeGrant(grantId: string, conversationId: string): boolean {
+    const trimmedGrant = grantId.trim();
+    const trimmedConversation = conversationId.trim();
+    if (!trimmedGrant || !trimmedConversation) return false;
+
+    this.pruneExpiredPrivilegeGrants();
+
+    const row = this.db
+      .prepare<[string], PrivilegeGrantRow>(`
+        SELECT grant_id, grant_hash, conversation_id, user_id, expires_at, revoked_at
+        FROM auth_privilege_grants
+        WHERE conversation_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `)
+      .get(trimmedConversation);
+
+    if (!row) return false;
+    if (row.revoked_at !== null) return false;
+    if (Date.parse(row.expires_at) <= Date.now()) return false;
+
+    const expected = Buffer.from(hashToken(trimmedGrant), "utf8");
+    const candidate = Buffer.from(row.grant_hash, "utf8");
+    if (expected.length !== candidate.length) return false;
+    return timingSafeEqual(expected, candidate);
+  }
+
+  getPrivilegeGrantStatus(conversationId: string): { active: boolean; expiresAt?: string; grantId?: string } {
+    const trimmedConversation = conversationId.trim();
+    if (!trimmedConversation) return { active: false };
+
+    this.pruneExpiredPrivilegeGrants();
+
+    const row = this.db
+      .prepare<[string], Pick<PrivilegeGrantRow, "grant_id" | "expires_at" | "revoked_at">>(`
+        SELECT grant_id, expires_at, revoked_at
+        FROM auth_privilege_grants
+        WHERE conversation_id = ?
+        ORDER BY created_at DESC
+        LIMIT 1
+      `)
+      .get(trimmedConversation);
+
+    if (!row) return { active: false };
+    if (row.revoked_at !== null) return { active: false };
+    if (Date.parse(row.expires_at) <= Date.now()) return { active: false };
+    return { active: true, expiresAt: row.expires_at, grantId: row.grant_id };
+  }
+
+  revokePrivilegeGrant(conversationId: string): void {
+    const trimmedConversation = conversationId.trim();
+    if (!trimmedConversation) return;
+
+    const now = new Date().toISOString();
+    this.db
+      .prepare(`
+        UPDATE auth_privilege_grants
+        SET revoked_at = ?
+        WHERE conversation_id = ?
+          AND revoked_at IS NULL
+          AND expires_at > ?
+      `)
+      .run(now, trimmedConversation, now);
+  }
+
+  userHasPasskey(userId: string): boolean {
+    const count = this.db
+      .prepare<[string], { count: number }>(`
+        SELECT COUNT(*) AS count
+        FROM auth_passkeys
+        WHERE user_id = ?
+      `)
+      .get(userId)?.count ?? 0;
+    return count > 0;
   }
 
   completeSetup(input: { setupToken: string; password?: string }): { userId: string } {
@@ -497,6 +700,13 @@ export class AuthService {
     return count > 0;
   }
 
+  private hasPrivilegeToken(): boolean {
+    const count = this.db
+      .prepare<[], { count: number }>("SELECT COUNT(*) AS count FROM auth_privilege_tokens")
+      .get()?.count ?? 0;
+    return count > 0;
+  }
+
   private pruneExpiredPasskeyChallenges(): void {
     this.db
       .prepare("DELETE FROM auth_passkey_challenges WHERE expires_at <= ?")
@@ -567,6 +777,15 @@ export class AuthService {
       .run(new Date().toISOString());
   }
 
+  private pruneExpiredPrivilegeGrants(): void {
+    this.db
+      .prepare(`
+        DELETE FROM auth_privilege_grants
+        WHERE expires_at <= ? OR revoked_at IS NOT NULL
+      `)
+      .run(new Date().toISOString());
+  }
+
   private initSchema(): void {
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS auth_users (
@@ -614,6 +833,47 @@ export class AuthService {
 
       CREATE INDEX IF NOT EXISTS idx_auth_passkey_challenges_expires_at
       ON auth_passkey_challenges (expires_at);
+
+      CREATE TABLE IF NOT EXISTS auth_privilege_tokens (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_auth_privilege_tokens_user
+      ON auth_privilege_tokens (user_id);
+
+      CREATE TABLE IF NOT EXISTS auth_privilege_grants (
+        grant_id TEXT NOT NULL UNIQUE,
+        grant_hash TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        user_id TEXT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_auth_privilege_grants_conversation
+      ON auth_privilege_grants (conversation_id);
+
+      CREATE INDEX IF NOT EXISTS idx_auth_privilege_grants_expires
+      ON auth_privilege_grants (expires_at);
+    `);
+
+    // Migration for existing databases created before `grant_id` existed.
+    try {
+      this.db.exec("ALTER TABLE auth_privilege_grants ADD COLUMN grant_id TEXT;");
+    } catch {
+      // no-op when column already exists
+    }
+
+    this.db.exec(`
+      UPDATE auth_privilege_grants
+      SET grant_id = grant_hash
+      WHERE grant_id IS NULL OR grant_id = '';
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_auth_privilege_grants_id
+      ON auth_privilege_grants (grant_id);
     `);
   }
 }

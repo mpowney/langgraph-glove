@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
+import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
 
 /** Allowed config file names that may be read or overwritten. */
 const ALLOWED_FILES = new Set([
@@ -22,6 +23,14 @@ export const updateConfigToolMetadata: ToolMetadata = {
   parameters: {
     type: "object",
     properties: {
+      conversationId: {
+        type: "string",
+        description: "Conversation thread ID associated with this privileged execution.",
+      },
+      privilegeGrantId: {
+        type: "string",
+        description: "Short-lived privileged-access grant ID.",
+      },
       file: {
         type: "string",
         enum: Array.from(ALLOWED_FILES),
@@ -34,7 +43,7 @@ export const updateConfigToolMetadata: ToolMetadata = {
           "New file content as a JSON string. Omit to read the current content.",
       },
     },
-    required: ["file"],
+    required: ["conversationId", "privilegeGrantId", "file"],
   },
 };
 
@@ -45,7 +54,10 @@ function resolveConfigDir(): string {
 
 export async function handleUpdateConfig(
   params: Record<string, unknown>,
+  adminApiUrl: string,
 ): Promise<string> {
+  await validatePrivilegeGrant(params, adminApiUrl);
+
   const file = params["file"] as string;
   const content = params["content"] as string | undefined;
 
