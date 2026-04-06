@@ -9,7 +9,12 @@
 
 import { launchToolServer } from "@langgraph-glove/tool-server";
 import { updateConfigToolMetadata, handleUpdateConfig } from "./tools/UpdateConfigTool";
-import { restartProcessToolMetadata, handleRestartProcess } from "./tools/RestartProcessTool";
+import {
+  restartProcessToolMetadata,
+  handleRestartProcess,
+  stopProcessToolMetadata,
+  handleStopProcess,
+} from "./tools/RestartProcessTool";
 import { shellCommandToolMetadata, handleShellCommand } from "./tools/ShellCommandTool";
 
 const adminApiUrl = process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081";
@@ -19,6 +24,7 @@ await launchToolServer({
   register(server) {
     server.register(updateConfigToolMetadata, (params) => handleUpdateConfig(params, adminApiUrl));
     server.register(restartProcessToolMetadata, (params) => handleRestartProcess(params, adminApiUrl));
+    server.register(stopProcessToolMetadata, (params) => handleStopProcess(params, adminApiUrl));
     server.register(shellCommandToolMetadata, (params) => handleShellCommand(params, adminApiUrl));
   },
 });

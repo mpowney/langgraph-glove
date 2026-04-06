@@ -172,7 +172,6 @@ export class RemoteTool extends StructuredTool {
     // the browser-side personal token flows through automatically.
     if (
       "personalToken" in this.schema.shape &&
-      !args.personalToken &&
       typeof config?.configurable === "object" &&
       config.configurable !== null &&
       typeof (config.configurable as Record<string, unknown>).personalToken === "string"
@@ -182,7 +181,6 @@ export class RemoteTool extends StructuredTool {
 
     if (
       "privilegeGrantId" in this.schema.shape &&
-      !args.privilegeGrantId &&
       typeof config?.configurable === "object" &&
       config.configurable !== null &&
       typeof (config.configurable as Record<string, unknown>).privilegeGrantId === "string"
@@ -192,7 +190,6 @@ export class RemoteTool extends StructuredTool {
 
     if (
       "conversationId" in this.schema.shape &&
-      !args.conversationId &&
       typeof config?.configurable === "object" &&
       config.configurable !== null
     ) {
