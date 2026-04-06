@@ -14,6 +14,7 @@ import {
   Spinner,
 } from "@fluentui/react-components";
 import {
+  ArrowReset24Regular,
   Brain24Regular,
   Chat24Regular,
   LockClosed24Regular,
@@ -100,6 +101,7 @@ interface AppHeaderProps {
   status: ConnectionStatus;
   showAll: boolean;
   onToggleShowAll: (value: boolean) => void;
+  onStartNewConversation: () => void;
   memoryAdminEnabled: boolean;
   onOpenMemoryAdmin: () => void;
   onOpenBrowser: () => void;
@@ -116,6 +118,7 @@ export function AppHeader({
   status,
   showAll,
   onToggleShowAll,
+  onStartNewConversation,
   memoryAdminEnabled,
   onOpenMemoryAdmin,
   onOpenBrowser,
@@ -193,6 +196,14 @@ export function AppHeader({
           onChange={(_, data) => onToggleShowAll(data.checked)}
           label={<Text size={100} className={styles.switchLabel}>All conversations</Text>}
         />
+        <Button
+          appearance="secondary"
+          icon={<ArrowReset24Regular />}
+          onClick={onStartNewConversation}
+          size="small"
+        >
+          Start new conversation
+        </Button>
         <Tooltip content="Browse conversation history" relationship="label">
           <Button
             appearance="subtle"

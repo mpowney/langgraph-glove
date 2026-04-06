@@ -15,8 +15,6 @@ import { useAuth } from "./hooks/useAuth";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 
-const conversationId = crypto.randomUUID();
-
 const useStyles = makeStyles({
   shell: {
     display: "flex",
@@ -34,6 +32,7 @@ function App() {
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
+  const [conversationId, setConversationId] = useState<string>(() => crypto.randomUUID());
   const shouldConnect = !auth.loading;
   const webSocketPersonalToken = shouldConnect ? personalToken || undefined : undefined;
   const webSocketAuthToken = shouldConnect ? auth.token ?? undefined : undefined;
@@ -96,6 +95,10 @@ function App() {
     [messages, showAll, myConversationId],
   );
 
+  const handleStartNewConversation = useCallback(() => {
+    setConversationId(crypto.randomUUID());
+  }, []);
+
   if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup)) {
     return (
       <FluentProvider theme={theme}>
@@ -125,6 +128,7 @@ function App() {
           status={status}
           showAll={showAll}
           onToggleShowAll={setShowAllPersisted}
+          onStartNewConversation={handleStartNewConversation}
           memoryAdminEnabled={memoryAvailable}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
           onOpenBrowser={() => setBrowserOpen(true)}
