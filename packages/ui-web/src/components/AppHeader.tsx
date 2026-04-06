@@ -18,6 +18,7 @@ import {
   Chat24Regular,
   LockClosed24Regular,
   LockClosed24Filled,
+  Wrench24Regular,
 } from "@fluentui/react-icons";
 import type { AppInfo, ConnectionStatus } from "../types";
 
@@ -102,6 +103,7 @@ interface AppHeaderProps {
   memoryAdminEnabled: boolean;
   onOpenMemoryAdmin: () => void;
   onOpenBrowser: () => void;
+  onOpenToolsPanel: () => void;
   /** Currently active personal token (empty string = none). */
   personalToken: string;
   onSetPersonalToken: (token: string) => void;
@@ -117,6 +119,7 @@ export function AppHeader({
   memoryAdminEnabled,
   onOpenMemoryAdmin,
   onOpenBrowser,
+  onOpenToolsPanel,
   personalToken,
   onSetPersonalToken,
   passkeyEnabled = false,
@@ -197,6 +200,15 @@ export function AppHeader({
             onClick={onOpenBrowser}
             style={{ color: tokens.colorNeutralForegroundOnBrand }}
             aria-label="Browse conversation history"
+          />
+        </Tooltip>
+        <Tooltip content="Tools &amp; agents reference" relationship="label">
+          <Button
+            appearance="subtle"
+            icon={<Wrench24Regular />}
+            onClick={onOpenToolsPanel}
+            style={{ color: tokens.colorNeutralForegroundOnBrand }}
+            aria-label="Tools and agents reference"
           />
         </Tooltip>
         <Tooltip

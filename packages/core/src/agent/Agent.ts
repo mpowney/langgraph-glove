@@ -3,6 +3,7 @@ import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Channel, IncomingMessage } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
+import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
 
 const logger = new Logger("Agent.ts");
 
@@ -188,6 +189,13 @@ export interface AgentConfig {
    * Default: `25`.
    */
   recursionLimit?: number;
+  /**
+   * Optional lookup function that resolves a tool name to its full definition.
+   * When provided, structured metadata is attached to `tool-call` and
+   * `tool-result` outgoing messages so channels can surface parameter
+   * instructions to clients.
+   */
+  toolLookup?: (toolName: string) => ToolDefinition | undefined;
 }
 
 /**
@@ -316,7 +324,7 @@ export class GloveAgent {
     text: string,
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
-    onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string) => void,
+    onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, metadata?: ToolEventMetadata) => void,
     personalToken?: string,
   ): AsyncGenerator<string> {
     const streamedToolArgsByKey = new Map<string, string>();
@@ -470,11 +478,14 @@ export class GloveAgent {
           yield chunk.content;
         }
       } else if (chunk instanceof ToolMessage && onToolEvent) {
+        const toolName = chunk.name ?? undefined;
         const content =
           typeof chunk.content === "string"
             ? chunk.content
             : JSON.stringify(chunk.content);
-        onToolEvent("tool-result", JSON.stringify({ name: chunk.name ?? undefined, content }));
+        const toolDef = toolName && this.config.toolLookup ? this.config.toolLookup(toolName) : undefined;
+        const meta: ToolEventMetadata | undefined = toolDef ? { tool: toolDef } : undefined;
+        onToolEvent("tool-result", JSON.stringify({ name: toolName, content }), meta);
       }
     }
   }
@@ -508,14 +519,35 @@ export class GloveAgent {
           }
         }
       : undefined;
-    const handler = new LlmCallbackHandler(sendPrompt);
-
-    // Forward tool calls, results, and agent transfers to receiveAll channels.
-    const onToolEvent = observabilityTargets.length
-      ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string): void => {
+    const sendModelCall = observabilityTargets.length
+      ? (payload: Record<string, unknown>): void => {
+          const text = JSON.stringify(payload, null, 2);
           for (const ch of observabilityTargets) {
             ch
-              .sendMessage({ conversationId: message.conversationId, text, role })
+              .sendMessage({ conversationId: message.conversationId, text, role: "model-call" })
+              .catch((e: unknown) => logger.error(`Failed to send model call to channel "${ch.name}"`, e));
+          }
+        }
+      : undefined;
+    const sendModelResponse = observabilityTargets.length
+      ? (payload: Record<string, unknown>): void => {
+          const text = JSON.stringify(payload, null, 2);
+          for (const ch of observabilityTargets) {
+            ch
+              .sendMessage({ conversationId: message.conversationId, text, role: "model-response" })
+              .catch((e: unknown) => logger.error(`Failed to send model response to channel "${ch.name}"`, e));
+          }
+        }
+      : undefined;
+    const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
+
+    // Forward tool calls, results, and agent transfers to receiveAll channels.
+    const toolLookup = this.config.toolLookup;
+    const onToolEvent = observabilityTargets.length
+      ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolEventMetadata?: ToolEventMetadata): void => {
+          for (const ch of observabilityTargets) {
+            ch
+              .sendMessage({ conversationId: message.conversationId, text, role, toolEventMetadata })
               .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
           }
         }
@@ -542,6 +574,10 @@ export class GloveAgent {
               typeof toolCallId === "string" ? toolCallId : undefined,
             );
             const args = parseJsonMaybe(input);
+            const toolDef = toolLookup ? toolLookup(toolName) : undefined;
+            const meta: ToolEventMetadata | undefined = toolDef
+              ? { tool: toolDef }
+              : undefined;
             onToolEvent(
               "tool-call",
               JSON.stringify({
@@ -550,6 +586,7 @@ export class GloveAgent {
                 ...(toolCallId ? { id: toolCallId } : {}),
                 type: "tool_call",
               }),
+              meta,
             );
           },
         })

@@ -9,6 +9,7 @@ import { distPath } from "@langgraph-glove/ui-web";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
 import type { AuthService } from "../auth/AuthService";
+import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {
@@ -40,10 +41,12 @@ type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
+      /** Optional structured metadata carrying tool parameter schema and agent context. */
+      toolEventMetadata?: ToolEventMetadata;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
@@ -274,13 +277,20 @@ export class WebChannel extends Channel {
       return;
     }
 
-    if (message.role === "tool-call" || message.role === "tool-result" || message.role === "agent-transfer") {
+    if (
+      message.role === "tool-call"
+      || message.role === "tool-result"
+      || message.role === "agent-transfer"
+      || message.role === "model-call"
+      || message.role === "model-response"
+    ) {
       const payload: ServerMessage = {
         type: "tool_event",
         role: message.role,
         text: message.text,
         conversationId: message.conversationId,
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+        ...(message.toolEventMetadata ? { toolEventMetadata: message.toolEventMetadata } : {}),
       };
       this.broadcast(message.conversationId, payload);
       return;

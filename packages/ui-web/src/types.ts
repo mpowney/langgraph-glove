@@ -4,6 +4,39 @@ export interface CheckpointMetadata {
   timestamp?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Tool / agent capability types (mirrored from RpcProtocol, JSON-serialisable)
+// ---------------------------------------------------------------------------
+
+/** Full definition of a discovered tool (name, description, parameter schema). */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  /** JSON Schema object describing the tool's parameters. */
+  parameters: Record<string, unknown>;
+}
+
+/** Single agent/sub-agent entry with its allowed tool names. */
+export interface AgentCapabilityEntry {
+  key: string;
+  description: string;
+  modelKey: string;
+  /** Null means access to ALL tools; empty array means NO tools. */
+  tools: string[] | null;
+}
+
+/** Payload returned by `GET /api/agents/capabilities`. */
+export interface AgentCapabilityRegistry {
+  agents: AgentCapabilityEntry[];
+  tools: Record<string, ToolDefinition>;
+}
+
+/** Lightweight tool event metadata attached to live tool-call/tool-result entries. */
+export interface ToolEventMetadata {
+  tool: ToolDefinition;
+  agentKey?: string;
+}
+
 export type ServerMessage =
   | {
       type: "chunk";
@@ -15,10 +48,11 @@ export type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
+      toolEventMetadata?: ToolEventMetadata;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
@@ -53,13 +87,15 @@ export interface AppInfo {
 export interface ChatEntry {
   id: string;
   conversationId: string;
-  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "error";
+  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "error";
   content: string;
   isStreaming?: boolean;
   /** ISO timestamp of when the payload was received/created by the browser. */
   receivedAt?: string;
   /** Checkpoint metadata sent by server when available. */
   checkpoint?: CheckpointMetadata;
+  /** Tool parameter/schema metadata attached to tool-call and tool-result entries. */
+  toolEventMetadata?: ToolEventMetadata;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";

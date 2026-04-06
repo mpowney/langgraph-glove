@@ -27,6 +27,7 @@ import { AdminApi } from "../api/AdminApi";
 import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
 import { WebChannel } from "../channels/WebChannel";
+import type { ToolDefinition, AgentCapabilityEntry } from "../rpc/RpcProtocol";
 
 const logger = new Logger("Gateway");
 
@@ -72,6 +73,11 @@ export class Gateway extends EventEmitter {
   private adminApi: AdminApi | null = null;
   private authService: AuthService | null = null;
   private shutdownHandlers: (() => void)[] = [];
+
+  /** Discovered tool definitions, populated after `discoverTools()`. */
+  private toolRegistry: ToolDefinition[] = [];
+  /** Agent capability entries, populated after `buildAgentGraph()`. */
+  private agentCapabilities: AgentCapabilityEntry[] = [];
 
   constructor(private readonly options: GatewayOptions) {
     super();
@@ -136,11 +142,15 @@ export class Gateway extends EventEmitter {
       // 7. Build agent graph (single-agent or multi-agent orchestrator)
       const graph = this.buildAgentGraph(tools);
 
+      // Populate agent capability list from resolved agent config
+      this.agentCapabilities = this.buildAgentCapabilities(this.config);
+
       this.agent = new GloveAgent(graph, {
         recursionLimit: resolveConfigEntry(
           this.config.agents as Record<string, AgentEntry>,
           "default",
         ).recursionLimit,
+        toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
       });
 
       // 8. Channels
@@ -175,6 +185,8 @@ export class Gateway extends EventEmitter {
         dbPath: this.config.gateway.dbPath,
         authService: this.authService,
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
+        toolRegistry: this.toolRegistry,
+        agentCapabilities: this.agentCapabilities,
       });
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
@@ -401,6 +413,15 @@ export class Gateway extends EventEmitter {
   ): Promise<StructuredToolInterface[]> {
     const allTools: StructuredToolInterface[] = [getToolPayloadRefTool];
 
+    // Seed registry with the built-in tool payload ref tool so it appears in the catalog.
+    this.toolRegistry = [
+      {
+        name: getToolPayloadRefTool.name,
+        description: getToolPayloadRefTool.description,
+        parameters: {},
+      },
+    ];
+
     const entries = Object.entries(toolsConfig).filter(
       ([, entry]) => entry.enabled !== false,
     );
@@ -416,6 +437,9 @@ export class Gateway extends EventEmitter {
           logger.debug(`Tool server "${name}": connected, discovering tools...`);
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
+          // Also capture raw metadata for the registry so the UI can read parameter schemas.
+          const metadata = await client.listTools();
+          this.toolRegistry.push(...metadata);
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
         } catch (err) {
           logger.error(`Failed to connect to tool server "${name}"`, err);
@@ -440,6 +464,21 @@ export class Gateway extends EventEmitter {
       default:
         throw new Error(`Unknown transport "${entry.transport as string}" for tool server "${name}"`);
     }
+  }
+
+  /**
+   * Derive agent capability entries from the loaded config so the Admin API
+   * can serve `GET /api/agents/capabilities`.
+   */
+  private buildAgentCapabilities(config: GloveConfig): AgentCapabilityEntry[] {
+    const agents = config.agents as Record<string, AgentEntry>;
+    return Object.entries(agents).map(([key, entry]) => ({
+      key,
+      description: entry.description ?? key,
+      modelKey: entry.modelKey ?? "default",
+      // `undefined` means no restriction (all tools); empty array means none.
+      tools: entry.tools === undefined ? null : entry.tools,
+    }));
   }
 
   private installSignalHandlers(): void {
