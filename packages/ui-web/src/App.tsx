@@ -8,6 +8,7 @@ import { ChatArea } from "./components/ChatArea";
 import { InputBar } from "./components/InputBar";
 import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
+import { ToolsPanel } from "./components/ToolsPanel";
 import { AuthGate } from "./components/AuthGate";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
@@ -43,6 +44,7 @@ function App() {
   );
   const [browserOpen, setBrowserOpen] = useState(false);
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
+  const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
 
   const setShowAllPersisted = useCallback((value: boolean) => {
@@ -126,6 +128,7 @@ function App() {
           memoryAdminEnabled={memoryAvailable}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
           onOpenBrowser={() => setBrowserOpen(true)}
+          onOpenToolsPanel={() => setToolsPanelOpen(true)}
           personalToken={personalToken}
           onSetPersonalToken={setPersonalToken}
           passkeyEnabled={auth.passkeyRegistered}
@@ -141,6 +144,12 @@ function App() {
         <ConversationBrowser
           open={browserOpen}
           onClose={() => setBrowserOpen(false)}
+          apiBaseUrl={appInfo?.apiUrl}
+          authToken={auth.token ?? undefined}
+        />
+        <ToolsPanel
+          open={toolsPanelOpen}
+          onClose={() => setToolsPanelOpen(false)}
           apiBaseUrl={appInfo?.apiUrl}
           authToken={auth.token ?? undefined}
         />

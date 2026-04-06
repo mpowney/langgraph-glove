@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
 /** An incoming message received from a user via a channel. */
 export interface IncomingMessage {
@@ -36,6 +37,12 @@ export interface OutgoingMessage {
    * orchestrator to a sub-agent.
    */
   role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "error";
+  /**
+   * Optional structured metadata for `"tool-call"` and `"tool-result"` events.
+   * Carries the tool definition (parameter schema/descriptions) and the agent
+   * key that invoked the tool so the UI can render inline parameter instructions.
+   */
+  toolEventMetadata?: ToolEventMetadata;
 }
 
 /** Callback invoked by the channel for every incoming message. */

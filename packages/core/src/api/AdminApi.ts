@@ -5,6 +5,7 @@ import Database from "better-sqlite3";
 import type { Request } from "express";
 import type { ToolServerEntry } from "@langgraph-glove/config";
 import type { AuthService, AuthenticatedUser } from "../auth/AuthService";
+import type { ToolDefinition, AgentCapabilityEntry, AgentCapabilityRegistry } from "../rpc/RpcProtocol";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -114,6 +115,10 @@ export interface AdminApiConfig {
   authService?: AuthService;
   /** Tool server config map used for HTTP proxying under `/api/tools/_<name>`. */
   toolsConfig?: Record<string, ToolServerEntry>;
+  /** Discovered tool definitions served by `GET /api/tools/registry`. */
+  toolRegistry?: ToolDefinition[];
+  /** Agent capability entries served by `GET /api/agents/capabilities`. */
+  agentCapabilities?: AgentCapabilityEntry[];
 }
 
 /**
@@ -132,6 +137,8 @@ export class AdminApi {
   private readonly allowedOrigins: string;
   private readonly authService?: AuthService;
   private readonly toolsConfig: Record<string, ToolServerEntry>;
+  private readonly toolRegistry: ToolDefinition[];
+  private readonly agentCapabilities: AgentCapabilityEntry[];
   private readonly app: Express;
   private httpServer?: http.Server;
 
@@ -144,6 +151,8 @@ export class AdminApi {
     this.allowedOrigins = Array.isArray(origins) ? origins.join(", ") : (origins ?? "*");
     this.authService = config.authService;
     this.toolsConfig = config.toolsConfig ?? {};
+    this.toolRegistry = config.toolRegistry ?? [];
+    this.agentCapabilities = config.agentCapabilities ?? [];
 
     this.app = express();
     this.registerRoutes();
@@ -387,6 +396,30 @@ export class AdminApi {
         res.status(502).json({ error: err instanceof Error ? err.message : "Tool upstream unreachable" });
       }
     };
+
+    // -----------------------------------------------------------------------
+    // Tool registry — full parameter schemas for all discovered tools
+    // -----------------------------------------------------------------------
+    this.app.get("/api/tools/registry", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      res.json(this.toolRegistry);
+    });
+
+    // -----------------------------------------------------------------------
+    // Agent capability registry — agent/sub-agent to tool mapping
+    // -----------------------------------------------------------------------
+    this.app.get("/api/agents/capabilities", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      const toolsByName: Record<string, ToolDefinition> = {};
+      for (const t of this.toolRegistry) {
+        toolsByName[t.name] = t;
+      }
+      const payload: AgentCapabilityRegistry = {
+        agents: this.agentCapabilities,
+        tools: toolsByName,
+      };
+      res.json(payload);
+    });
 
     this.app.all("/api/tools/:toolPath", (req, res) => {
       void proxyToolRequest(req, res);

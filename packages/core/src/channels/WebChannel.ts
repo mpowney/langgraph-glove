@@ -9,6 +9,7 @@ import { distPath } from "@langgraph-glove/ui-web";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
 import type { AuthService } from "../auth/AuthService";
+import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
 /** Messages sent from browser client → server. */
 interface ClientMessage {
@@ -44,6 +45,8 @@ type ServerMessage =
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
+      /** Optional structured metadata carrying tool parameter schema and agent context. */
+      toolEventMetadata?: ToolEventMetadata;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
@@ -281,6 +284,7 @@ export class WebChannel extends Channel {
         text: message.text,
         conversationId: message.conversationId,
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+        ...(message.toolEventMetadata ? { toolEventMetadata: message.toolEventMetadata } : {}),
       };
       this.broadcast(message.conversationId, payload);
       return;

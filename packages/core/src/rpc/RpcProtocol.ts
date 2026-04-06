@@ -36,3 +36,48 @@ export interface ToolMetadata {
    */
   parameters: Record<string, unknown>;
 }
+
+// ---------------------------------------------------------------------------
+// UI-facing capability types (consumed by Admin API and clients)
+// ---------------------------------------------------------------------------
+
+/**
+ * Serialisable snapshot of a single discovered tool, safe to transmit to the
+ * browser.  Mirrors {@link ToolMetadata} exactly — kept as a separate alias
+ * so callers can reason about intent.
+ */
+export type ToolDefinition = ToolMetadata;
+
+/** Describes a single agent/sub-agent entry returned to UI clients. */
+export interface AgentCapabilityEntry {
+  /** Agent key (e.g. `"default"`, `"memory"`, `"researcher"`). */
+  key: string;
+  /** Short description of what this agent does. */
+  description: string;
+  /** Model key this agent uses. */
+  modelKey: string;
+  /**
+   * Names of the tools this agent is allowed to call.
+   * `null` means the agent has access to ALL tools (no restriction).
+   * An empty array means the agent has NO tools.
+   */
+  tools: string[] | null;
+}
+
+/** Full capability registry served by `GET /api/agents/capabilities`. */
+export interface AgentCapabilityRegistry {
+  agents: AgentCapabilityEntry[];
+  /** Full tool definitions keyed by name, for convenient cross-referencing. */
+  tools: Record<string, ToolDefinition>;
+}
+
+/**
+ * Lightweight metadata attached to a `tool-call` or `tool-result` WebSocket
+ * event so the UI can render parameter instructions inline.
+ */
+export interface ToolEventMetadata {
+  /** The tool definition at execution time. */
+  tool: ToolDefinition;
+  /** Agent key that invoked or received this tool (when known). */
+  agentKey?: string;
+}

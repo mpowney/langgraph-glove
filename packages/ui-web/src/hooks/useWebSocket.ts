@@ -145,6 +145,7 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
             isStreaming: false,
             receivedAt,
             checkpoint: msg.checkpoint,
+            ...(msg.toolEventMetadata ? { toolEventMetadata: msg.toolEventMetadata } : {}),
           },
         ]);
       } else if (msg.type === "error") {

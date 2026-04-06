@@ -4,6 +4,39 @@ export interface CheckpointMetadata {
   timestamp?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Tool / agent capability types (mirrored from RpcProtocol, JSON-serialisable)
+// ---------------------------------------------------------------------------
+
+/** Full definition of a discovered tool (name, description, parameter schema). */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  /** JSON Schema object describing the tool's parameters. */
+  parameters: Record<string, unknown>;
+}
+
+/** Single agent/sub-agent entry with its allowed tool names. */
+export interface AgentCapabilityEntry {
+  key: string;
+  description: string;
+  modelKey: string;
+  /** Null means access to ALL tools; empty array means NO tools. */
+  tools: string[] | null;
+}
+
+/** Payload returned by `GET /api/agents/capabilities`. */
+export interface AgentCapabilityRegistry {
+  agents: AgentCapabilityEntry[];
+  tools: Record<string, ToolDefinition>;
+}
+
+/** Lightweight tool event metadata attached to live tool-call/tool-result entries. */
+export interface ToolEventMetadata {
+  tool: ToolDefinition;
+  agentKey?: string;
+}
+
 export type ServerMessage =
   | {
       type: "chunk";
@@ -19,6 +52,7 @@ export type ServerMessage =
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
+      toolEventMetadata?: ToolEventMetadata;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
@@ -60,6 +94,8 @@ export interface ChatEntry {
   receivedAt?: string;
   /** Checkpoint metadata sent by server when available. */
   checkpoint?: CheckpointMetadata;
+  /** Tool parameter/schema metadata attached to tool-call and tool-result entries. */
+  toolEventMetadata?: ToolEventMetadata;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";

@@ -6,7 +6,8 @@ import {
 } from "@fluentui/react-components";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageAccordion } from "./MessageAccordion";
-import type { ChatEntry } from "../types";
+import { ParameterTable } from "./ParameterTable";
+import type { ChatEntry, ToolEventMetadata } from "../types";
 
 // Base64 prefixes that uniquely identify common image formats.
 // Each entry is the base64 encoding of the format's magic bytes.
@@ -301,6 +302,23 @@ const useStyles = makeStyles({
     whiteSpace: "pre-wrap",
     wordBreak: "break-all",
   },
+  toolMetaSection: {
+    marginTop: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  toolMetaLabel: {
+    marginBottom: tokens.spacingVerticalXXS,
+    color: tokens.colorNeutralForeground3,
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
+    fontFamily: "ui-monospace, 'Cascadia Code', Consolas, monospace",
+  },
+  toolMetaDesc: {
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+    marginBottom: tokens.spacingVerticalXS,
+  },
 });
 
 interface ChatMessageProps {
@@ -358,6 +376,25 @@ function estimatePromptContextUsage(content: string, contextWindowTokens?: numbe
   const tokenLabel = new Intl.NumberFormat().format(approxTokens);
   const windowLabel = new Intl.NumberFormat().format(denominator);
   return `~${tokenLabel} tokens (${ratioLabel}% of ${windowLabel} ctx)`;
+}
+
+function ToolMetaSection({ meta }: { meta: ToolEventMetadata }) {
+  const styles = useStyles();
+  const { tool } = meta;
+  const hasParams = tool.parameters != null && typeof tool.parameters === "object";
+  return (
+    <div className={styles.toolMetaSection}>
+      <Text block className={styles.toolMetaLabel}>Parameter instructions</Text>
+      {tool.description && (
+        <Text block className={styles.toolMetaDesc}>{tool.description}</Text>
+      )}
+      {hasParams ? (
+        <ParameterTable parameters={tool.parameters as Record<string, unknown>} />
+      ) : (
+        <Text block className={styles.toolMetaDesc} style={{ fontStyle: "italic" }}>No parameter schema available</Text>
+      )}
+    </div>
+  );
 }
 
 export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: ChatMessageProps) {
@@ -455,6 +492,9 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
             checkpoint={entry.checkpoint}
           >
             {toolArgs}
+            {entry.toolEventMetadata && (
+              <ToolMetaSection meta={entry.toolEventMetadata} />
+            )}
           </MessageAccordion>
         </div>
       </div>
@@ -487,6 +527,9 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
             checkpoint={entry.checkpoint}
           >
             {toolContent}
+            {entry.toolEventMetadata && (
+              <ToolMetaSection meta={entry.toolEventMetadata} />
+            )}
           </MessageAccordion>
         </div>
       </div>
