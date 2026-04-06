@@ -34,9 +34,12 @@ export interface OutgoingMessage {
    * `receiveAll` channels for observability); `"tool-call"` is a tool
    * invocation emitted to `receiveAll` channels; `"tool-result"` is the
    * corresponding tool output; `"agent-transfer"` is a handoff from the
-   * orchestrator to a sub-agent.
+  * orchestrator to a sub-agent; `"model-call"` carries redacted model
+  * invocation options (including tool definitions) for observability;
+  * `"model-response"` carries the redacted response payload returned from
+  * a model invocation.
    */
-  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "error";
+  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "error";
   /**
    * Optional structured metadata for `"tool-call"` and `"tool-result"` events.
    * Carries the tool definition (parameter schema/descriptions) and the agent

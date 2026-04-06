@@ -41,7 +41,7 @@ type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
@@ -277,7 +277,13 @@ export class WebChannel extends Channel {
       return;
     }
 
-    if (message.role === "tool-call" || message.role === "tool-result" || message.role === "agent-transfer") {
+    if (
+      message.role === "tool-call"
+      || message.role === "tool-result"
+      || message.role === "agent-transfer"
+      || message.role === "model-call"
+      || message.role === "model-response"
+    ) {
       const payload: ServerMessage = {
         type: "tool_event",
         role: message.role,

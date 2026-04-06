@@ -519,7 +519,27 @@ export class GloveAgent {
           }
         }
       : undefined;
-    const handler = new LlmCallbackHandler(sendPrompt);
+    const sendModelCall = observabilityTargets.length
+      ? (payload: Record<string, unknown>): void => {
+          const text = JSON.stringify(payload, null, 2);
+          for (const ch of observabilityTargets) {
+            ch
+              .sendMessage({ conversationId: message.conversationId, text, role: "model-call" })
+              .catch((e: unknown) => logger.error(`Failed to send model call to channel "${ch.name}"`, e));
+          }
+        }
+      : undefined;
+    const sendModelResponse = observabilityTargets.length
+      ? (payload: Record<string, unknown>): void => {
+          const text = JSON.stringify(payload, null, 2);
+          for (const ch of observabilityTargets) {
+            ch
+              .sendMessage({ conversationId: message.conversationId, text, role: "model-response" })
+              .catch((e: unknown) => logger.error(`Failed to send model response to channel "${ch.name}"`, e));
+          }
+        }
+      : undefined;
+    const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
 
     // Forward tool calls, results, and agent transfers to receiveAll channels.
     const toolLookup = this.config.toolLookup;
