@@ -1,9 +1,14 @@
-import React from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
   makeStyles,
   tokens,
   Text,
+  Accordion,
+  AccordionHeader,
+  AccordionItem,
+  AccordionPanel,
 } from "@fluentui/react-components";
+import type { CheckpointMetadata } from "../types";
 import { MarkdownContent } from "./MarkdownContent";
 import { MessageAccordion } from "./MessageAccordion";
 import { ParameterTable } from "./ParameterTable";
@@ -161,6 +166,22 @@ interface InlineContentProps {
   content: string;
 }
 
+function formatReceivedAtTimestamp(receivedAt?: string): string {
+  if (!receivedAt) return "unknown time";
+  const date = new Date(receivedAt);
+  if (Number.isNaN(date.getTime())) return receivedAt;
+  return date.toLocaleString();
+}
+
+function resolveSubAgentTimestamp(checkpoint?: CheckpointMetadata, receivedAt?: string): string {
+  if (checkpoint?.timestamp) {
+    const date = new Date(checkpoint.timestamp);
+    if (!Number.isNaN(date.getTime())) return date.toLocaleString();
+    return checkpoint.timestamp;
+  }
+  return formatReceivedAtTimestamp(receivedAt);
+}
+
 function InlineContent({ content }: InlineContentProps) {
   const segments = splitContentWithImages(content);
   if (segments.length === 1 && segments[0].kind === "text") {
@@ -218,6 +239,47 @@ const useStyles = makeStyles({
     borderBottomLeftRadius: tokens.borderRadiusSmall,
     backgroundColor: tokens.colorNeutralBackground1,
     boxShadow: tokens.shadow4,
+    wordBreak: "break-word",
+  },
+  subAgentContainer: {
+    width: "80vw",
+  },
+  subAgentAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    backgroundColor: tokens.colorNeutralBackground2,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
+  subAgentHeaderRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  subAgentHeaderLabel: {
+    // fontSize: tokens.fontSizeBase200,
+    fontWeight: tokens.fontWeightSemibold,
+  },
+  subAgentHeaderAgent: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    fontFamily: "ui-monospace, 'Cascadia Code', Consolas, monospace",
+  },
+  subAgentHeaderTimestamp: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground3,
+    fontFamily: "ui-monospace, 'Cascadia Code', Consolas, monospace",
+  },
+  subAgentPanel: {
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
+  },
+  subAgentBubble: {
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusXLarge,
+    borderBottomLeftRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground1,
+    boxShadow: tokens.shadow2,
     wordBreak: "break-word",
   },
 
@@ -348,6 +410,8 @@ const useStyles = makeStyles({
 
 interface ChatMessageProps {
   entry: ChatEntry;
+  /** Collapse sub-agent stream cards while main-agent stream is active. */
+  collapseSubAgentStream?: boolean;
   /** Shown as a small muted label when viewing all conversations. */
   sessionLabel?: string;
   /** Full conversation id for a foreign-session message label. */
@@ -428,12 +492,27 @@ function ToolMetaSection({ meta }: { meta: ToolEventMetadata }) {
 
 export function ChatMessage({
   entry,
+  collapseSubAgentStream,
   sessionLabel,
   sessionConversationId,
   onRequestSwitchConversation,
   modelContextWindowTokens,
 }: ChatMessageProps) {
   const styles = useStyles();
+  const isSubAgentEntry = entry.role === "agent" && entry.streamSource === "sub-agent";
+  const subAgentAccordionValue = useMemo(() => `sub-agent-${entry.id}`, [entry.id]);
+  const [isSubAgentOpen, setIsSubAgentOpen] = useState<boolean>(Boolean(entry.isStreaming));
+
+  useEffect(() => {
+    if (!isSubAgentEntry) return;
+    if (collapseSubAgentStream) {
+      setIsSubAgentOpen(false);
+      return;
+    }
+    if (entry.isStreaming) {
+      setIsSubAgentOpen(true);
+    }
+  }, [isSubAgentEntry, collapseSubAgentStream, entry.isStreaming, entry.id]);
 
   const renderSessionLabel = (textAlign?: "left" | "right") => {
     if (!sessionLabel) return null;
@@ -707,6 +786,50 @@ export function ChatMessage({
         </div>
       );
     }
+
+  if (isSubAgentEntry) {
+    const openItems = isSubAgentOpen ? [subAgentAccordionValue] : [];
+    return (
+      <div className={styles.agentWrapper}>
+        <div className={styles.subAgentContainer}>
+          {renderSessionLabel()}
+          <Accordion
+            collapsible
+            openItems={openItems}
+            onToggle={(_, data) => {
+              const next = Array.isArray(data.openItems)
+                ? data.openItems.includes(subAgentAccordionValue)
+                : data.openItems === subAgentAccordionValue;
+              setIsSubAgentOpen(next);
+            }}
+            className={styles.subAgentAccordion}
+          >
+            <AccordionItem value={subAgentAccordionValue}>
+              <AccordionHeader size="small">
+                <span className={styles.subAgentHeaderRow}>
+                  <span className={styles.subAgentHeaderLabel}>Sub-agent stream</span>
+                  {entry.streamAgentKey ? (
+                    <span className={styles.subAgentHeaderAgent}>{entry.streamAgentKey}</span>
+                  ) : null}
+                  <span className={styles.subAgentHeaderTimestamp}>
+                    {resolveSubAgentTimestamp(entry.checkpoint, entry.receivedAt)}
+                  </span>
+                </span>
+              </AccordionHeader>
+              <AccordionPanel>
+                <div className={styles.subAgentPanel}>
+                  <div className={styles.subAgentBubble}>
+                    <InlineContent content={entry.content} />
+                    {entry.isStreaming && <span className={styles.cursor} aria-hidden />}
+                  </div>
+                </div>
+              </AccordionPanel>
+            </AccordionItem>
+          </Accordion>
+        </div>
+      </div>
+    );
+  }
 
   // agent
   return (

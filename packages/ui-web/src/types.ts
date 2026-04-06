@@ -43,6 +43,8 @@ export type ServerMessage =
       text: string;
       conversationId: string;
       role?: "user" | "agent";
+      streamSource?: "main" | "sub-agent";
+      streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
@@ -106,6 +108,10 @@ export interface ChatEntry {
   role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "error";
   content: string;
   isStreaming?: boolean;
+  /** Source stream classification for agent chunks. */
+  streamSource?: "main" | "sub-agent";
+  /** Sub-agent key/name when streamSource is "sub-agent". */
+  streamAgentKey?: string;
   /** ISO timestamp of when the payload was received/created by the browser. */
   receivedAt?: string;
   /** Checkpoint metadata sent by server when available. */

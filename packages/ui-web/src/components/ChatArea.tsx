@@ -39,6 +39,12 @@ export function ChatArea({
 }: ChatAreaProps) {
   const styles = useStyles();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const mainAgentStreaming = messages.some(
+    (entry) =>
+      entry.role === "agent"
+      && entry.isStreaming
+      && entry.streamSource !== "sub-agent",
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -56,6 +62,7 @@ export function ChatArea({
         <ChatMessage
           key={entry.id}
           entry={entry}
+          collapseSubAgentStream={mainAgentStreaming}
           modelContextWindowTokens={modelContextWindowTokens}
           sessionLabel={
             isForeignConversation

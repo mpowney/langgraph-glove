@@ -2,7 +2,7 @@ import readline from "node:readline";
 import process from "node:process";
 import { v4 as uuidv4 } from "uuid";
 import { Channel } from "./Channel";
-import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk } from "./Channel";
 
 /**
  * A streaming channel that reads from `stdin` and writes to `stdout`.
@@ -95,11 +95,11 @@ export class CliChannel extends Channel {
    */
   override async sendStream(
     _conversationId: string,
-    stream: AsyncIterable<string>,
+    stream: AsyncIterable<OutgoingStreamChunk>,
   ): Promise<void> {
     process.stdout.write("\nAssistant: ");
     for await (const chunk of stream) {
-      process.stdout.write(chunk);
+      process.stdout.write(chunk.text);
     }
     process.stdout.write("\n\n");
   }

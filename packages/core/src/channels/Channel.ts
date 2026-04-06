@@ -1,6 +1,15 @@
 import { EventEmitter } from "node:events";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
+export type StreamSource = "main" | "sub-agent";
+
+export interface OutgoingStreamChunk {
+  text: string;
+  source: StreamSource;
+  /** Present when source is a sub-agent stream. */
+  agentKey?: string;
+}
+
 /** An incoming message received from a user via a channel. */
 export interface IncomingMessage {
   /** Unique message identifier (UUID). */
@@ -133,10 +142,10 @@ export abstract class Channel extends EventEmitter {
    * @param conversationId - The thread the response belongs to.
    * @param stream         - An async iterable of text chunks.
    */
-  async sendStream(conversationId: string, stream: AsyncIterable<string>): Promise<void> {
+  async sendStream(conversationId: string, stream: AsyncIterable<OutgoingStreamChunk>): Promise<void> {
     let text = "";
     for await (const chunk of stream) {
-      text += chunk;
+      text += chunk.text;
     }
     await this.sendMessage({ conversationId, text });
   }
