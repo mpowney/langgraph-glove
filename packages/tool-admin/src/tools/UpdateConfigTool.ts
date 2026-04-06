@@ -19,17 +19,18 @@ export const updateConfigToolMetadata: ToolMetadata = {
     "(agents.json, models.json, tools.json, gateway.json, memories.json). " +
     "To read a file omit the `content` parameter. " +
     "To overwrite a file supply valid JSON as the `content` string. " +
-    "Changes take effect after the relevant process is restarted.",
+    "Changes take effect after the relevant process is restarted. " +
+    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation and are injected from runtime privileged context. Do not ask the user to provide them.",
   parameters: {
     type: "object",
     properties: {
       conversationId: {
         type: "string",
-        description: "Conversation thread ID associated with this privileged execution.",
+        description: "Conversation thread ID for this privileged execution (auto-injected by runtime context).",
       },
       privilegeGrantId: {
         type: "string",
-        description: "Short-lived privileged-access grant ID.",
+        description: "Short-lived privileged-access grant ID (auto-injected by runtime context).",
       },
       file: {
         type: "string",

@@ -22,17 +22,18 @@ export const restartProcessToolMetadata: ToolMetadata = {
     "For tool servers pass the tool key as used in tools.json (e.g. 'weather-us', 'browse'). " +
     "Pass 'core' to restart the main gateway process. " +
     "The process receives SIGTERM so it can shut down gracefully; " +
-    "re-launch must be handled by the process manager or shell session.",
+    "re-launch must be handled by the process manager or shell session. " +
+    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation and are injected from runtime privileged context. Do not ask the user to provide them.",
   parameters: {
     type: "object",
     properties: {
       conversationId: {
         type: "string",
-        description: "Conversation thread ID associated with this privileged execution.",
+        description: "Conversation thread ID for this privileged execution (auto-injected by runtime context).",
       },
       privilegeGrantId: {
         type: "string",
-        description: "Short-lived privileged-access grant ID.",
+        description: "Short-lived privileged-access grant ID (auto-injected by runtime context).",
       },
       process: {
         type: "string",

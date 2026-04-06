@@ -13,17 +13,18 @@ export const shellCommandToolMetadata: ToolMetadata = {
     "stdout and stderr are both captured and returned. " +
     "The command is executed with /bin/sh so shell features such as pipes, " +
     "redirections, and environment variable expansion are available. " +
-    "Use with caution — this tool has full access to the host shell environment.",
+    "Use with caution — this tool has full access to the host shell environment. " +
+    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation and are injected from runtime privileged context. Do not ask the user to provide them.",
   parameters: {
     type: "object",
     properties: {
       conversationId: {
         type: "string",
-        description: "Conversation thread ID associated with this privileged execution.",
+        description: "Conversation thread ID for this privileged execution (auto-injected by runtime context).",
       },
       privilegeGrantId: {
         type: "string",
-        description: "Short-lived privileged-access grant ID.",
+        description: "Short-lived privileged-access grant ID (auto-injected by runtime context).",
       },
       command: {
         type: "string",

@@ -317,6 +317,7 @@ export class GloveAgent {
       {
         configurable: {
           thread_id: conversationId,
+          conversationId,
           ...(personalToken ? { personalToken } : {}),
           ...(privilegeGrantId ? { privilegeGrantId } : {}),
         },
@@ -427,6 +428,7 @@ export class GloveAgent {
       {
         configurable: {
           thread_id: conversationId,
+          conversationId,
           ...(personalToken ? { personalToken } : {}),
           ...(privilegeGrantId ? { privilegeGrantId } : {}),
         },

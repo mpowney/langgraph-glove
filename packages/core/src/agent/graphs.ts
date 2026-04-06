@@ -124,6 +124,76 @@ function normalizeToolArgs(args: unknown): Record<string, unknown> {
   return { input: args };
 }
 
+interface ToolExecutionContext {
+  conversationId?: string;
+  privilegeGrantId?: string;
+}
+
+interface ToolCallLike {
+  id?: string;
+  name: string;
+  args: Record<string, unknown>;
+}
+
+function readToolExecutionContext(config: unknown): ToolExecutionContext {
+  if (!config || typeof config !== "object") return {};
+  const configurable = (config as { configurable?: unknown }).configurable;
+  if (!configurable || typeof configurable !== "object") return {};
+
+  const typed = configurable as Record<string, unknown>;
+  const explicitConversationId =
+    typeof typed.conversationId === "string" ? typed.conversationId : undefined;
+  const threadId = typeof typed.thread_id === "string" ? typed.thread_id : undefined;
+  const conversationId = explicitConversationId ?? (threadId === "runtime" ? undefined : threadId);
+  const privilegeGrantId =
+    typeof typed.privilegeGrantId === "string" ? typed.privilegeGrantId : undefined;
+
+  return { conversationId, privilegeGrantId };
+}
+
+function toolSchemaDeclaresParam(
+  tool: StructuredToolInterface,
+  paramName: "conversationId" | "privilegeGrantId",
+): boolean {
+  if (!("schema" in tool)) return false;
+  const schema = (tool as { schema?: unknown }).schema;
+  if (!schema || typeof schema !== "object") return false;
+  if (!("shape" in schema)) return false;
+
+  const shape = (schema as { shape?: unknown }).shape;
+  if (!shape || typeof shape !== "object") return false;
+  return paramName in (shape as Record<string, unknown>);
+}
+
+function injectToolContextArgs(
+  toolCall: ToolCallLike,
+  toolsByName: Map<string, StructuredToolInterface>,
+  context: ToolExecutionContext,
+): ToolCallLike {
+  const tool = toolsByName.get(toolCall.name);
+  if (!tool) return toolCall;
+
+  const args = { ...toolCall.args };
+
+  if (
+    toolSchemaDeclaresParam(tool, "conversationId") &&
+    !args.conversationId &&
+    context.conversationId
+  ) {
+    args.conversationId = context.conversationId;
+  }
+
+  if (
+    toolSchemaDeclaresParam(tool, "privilegeGrantId") &&
+    !args.privilegeGrantId &&
+    context.privilegeGrantId
+  ) {
+    args.privilegeGrantId = context.privilegeGrantId;
+  }
+
+  return { ...toolCall, args };
+}
+
 function extractTextToolCall(
   content: unknown,
   allowedToolNames: Set<string>,
@@ -243,8 +313,13 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
   const toolNode = new ToolNode(tools);
   const modelWithTools = model.bindTools(tools);
   const toolNames = new Set(tools.map((t) => t.name));
+  const toolsByName = new Map(tools.map((tool) => [tool.name, tool]));
 
-  const callAgent = async (state: typeof MessagesAnnotation.State) => {
+  const callAgent = async (
+    state: typeof MessagesAnnotation.State,
+    config?: unknown,
+  ) => {
+    const toolExecutionContext = readToolExecutionContext(config);
     const rawMessages: BaseMessage[] = systemPrompt
       ? [new SystemMessage(systemPrompt), ...state.messages]
       : [...state.messages];
@@ -267,6 +342,20 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
           },
         ];
       }
+    }
+
+    if (response.tool_calls?.length) {
+      response.tool_calls = response.tool_calls.map((toolCall) =>
+        injectToolContextArgs(
+          {
+            id: toolCall.id,
+            name: toolCall.name,
+            args: normalizeToolArgs(toolCall.args),
+          },
+          toolsByName,
+          toolExecutionContext,
+        ),
+      );
     }
 
     return { messages: [response] };

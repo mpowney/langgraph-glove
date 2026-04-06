@@ -194,10 +194,18 @@ export class RemoteTool extends StructuredTool {
       "conversationId" in this.schema.shape &&
       !args.conversationId &&
       typeof config?.configurable === "object" &&
-      config.configurable !== null &&
-      typeof (config.configurable as Record<string, unknown>).thread_id === "string"
+      config.configurable !== null
     ) {
-      args.conversationId = (config.configurable as Record<string, unknown>).thread_id;
+      const typed = config.configurable as Record<string, unknown>;
+      const explicitConversationId =
+        typeof typed.conversationId === "string" ? typed.conversationId : undefined;
+      const threadId = typeof typed.thread_id === "string" ? typed.thread_id : undefined;
+      const resolvedConversationId =
+        explicitConversationId ?? (threadId === "runtime" ? undefined : threadId);
+
+      if (resolvedConversationId) {
+        args.conversationId = resolvedConversationId;
+      }
     }
 
     const result = await this.rpcClient.call(this.name, args);
