@@ -160,6 +160,8 @@ interface MonacoJsonEditorProps {
   filename?: string;
   /** Prefer dark theme. Defaults to honouring prefers-color-scheme. */
   dark?: boolean;
+  /** Whether to wrap long lines. Defaults to false. */
+  wordWrap?: boolean;
 }
 
 export function MonacoJsonEditor({
@@ -168,6 +170,7 @@ export function MonacoJsonEditor({
   validationIssues,
   filename = "config.json",
   dark,
+  wordWrap = false,
 }: MonacoJsonEditorProps) {
   const editorRef = useRef<monacoLib.editor.IStandaloneCodeEditor | null>(null);
 
@@ -211,7 +214,7 @@ export function MonacoJsonEditor({
         fontSize: 13,
         lineNumbers: "on",
         scrollBeyondLastLine: false,
-        wordWrap: "off",
+        wordWrap: wordWrap ? "on" : "off",
         automaticLayout: true,
         tabSize: 2,
         formatOnPaste: false,

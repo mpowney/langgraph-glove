@@ -348,6 +348,15 @@ function App() {
           privilegeGrantId={privilegedGrantId}
           conversationId={conversationId}
           authToken={auth.token ?? undefined}
+          privilegedAccessActive={Boolean(privilegedGrantId)}
+          privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+          onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+          onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+          onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+          privilegeTokenRegistered={auth.privilegeTokenRegistered}
+          onRegisterPrivilegeToken={registerPrivilegeToken}
+          authError={auth.error}
+          passkeyEnabled={auth.passkeyRegistered}
         />
       </div>
       <Dialog

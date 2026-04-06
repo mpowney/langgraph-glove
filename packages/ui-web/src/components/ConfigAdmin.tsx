@@ -37,6 +37,8 @@ import {
   ArrowReset24Regular,
   ChevronRight24Regular,
   ErrorCircle24Regular,
+  TextWrap24Regular,
+  TextWrapOff24Regular,
 } from "@fluentui/react-icons";
 import type {
   ConfigFileSummary,
@@ -44,6 +46,7 @@ import type {
   ConfigValidationIssue,
 } from "../types";
 import { useConfigAdmin } from "../hooks/useConfigAdmin";
+import { PrivilegedAccessButton } from "./PrivilegedAccessButton";
 
 const useStyles = makeStyles({
   drawerBody: {
@@ -216,9 +219,41 @@ interface ConfigAdminProps {
   authToken?: string;
   /** Admin RPC handler to restart the core service */
   onRestartService?: () => Promise<void>;
+  // Privileged access management (forwarded to PrivilegedAccessButton)
+  privilegedAccessActive: boolean;
+  privilegedAccessExpiresAt?: string;
+  onEnablePrivilegedAccessWithToken: (token: string) => Promise<boolean>;
+  onEnablePrivilegedAccessWithPasskey?: () => Promise<boolean>;
+  onDisablePrivilegedAccess: () => void;
+  privilegeTokenRegistered: boolean;
+  onRegisterPrivilegeToken: (newToken: string, currentToken?: string) => Promise<boolean>;
+  authError?: string | null;
+  passkeyEnabled?: boolean;
 }
 
 type EditorTab = "raw" | "friendly";
+
+// --------------------------------------------------------------------------
+// Per-file editor prefs (tab + word-wrap) persisted in localStorage
+// --------------------------------------------------------------------------
+interface FileEditorPrefs {
+  tab: EditorTab;
+  wordWrap: boolean;
+}
+
+function getFilePrefs(filename: string): FileEditorPrefs {
+  try {
+    const raw = localStorage.getItem(`configAdmin:prefs:${filename}`);
+    if (raw) return JSON.parse(raw) as FileEditorPrefs;
+  } catch { /* ignore */ }
+  return { tab: "raw", wordWrap: false };
+}
+
+function saveFilePrefs(filename: string, prefs: FileEditorPrefs): void {
+  try {
+    localStorage.setItem(`configAdmin:prefs:${filename}`, JSON.stringify(prefs));
+  } catch { /* ignore */ }
+}
 
 function formatDate(iso: string): string {
   if (!iso) return "—";
@@ -312,6 +347,15 @@ export function ConfigAdmin({
   conversationId,
   authToken,
   onRestartService,
+  privilegedAccessActive,
+  privilegedAccessExpiresAt,
+  onEnablePrivilegedAccessWithToken,
+  onEnablePrivilegedAccessWithPasskey,
+  onDisablePrivilegedAccess,
+  privilegeTokenRegistered,
+  onRegisterPrivilegeToken,
+  authError,
+  passkeyEnabled,
 }: ConfigAdminProps) {
   const styles = useStyles();
 
@@ -341,6 +385,7 @@ export function ConfigAdmin({
   } = useConfigAdmin(configToolUrl, privilegeGrantId, conversationId, authToken);
 
   const [editorTab, setEditorTab] = useState<EditorTab>("raw");
+  const [wordWrap, setWordWrap] = useState(false);
   const [draftContent, setDraftContent] = useState<string>("");
   const [isDirty, setIsDirty] = useState(false);
   const [validationIssues, setValidationIssues] = useState<ConfigValidationIssue[]>([]);
@@ -395,7 +440,9 @@ export function ConfigAdmin({
         // TODO: could add a confirmation dialog here — for now just navigate away
       }
       void loadFileContent(filename);
-      setEditorTab("raw");
+      const prefs = getFilePrefs(filename);
+      setEditorTab(prefs.tab);
+      setWordWrap(prefs.wordWrap);
     },
     [loadFileContent, isDirty],
   );
@@ -405,6 +452,17 @@ export function ConfigAdmin({
     setIsDirty(true);
     setSaveNotice(null);
   }, []);
+
+  const handleSetEditorTab = useCallback((tab: EditorTab) => {
+    setEditorTab(tab);
+    if (selectedFile) saveFilePrefs(selectedFile, { tab, wordWrap });
+  }, [selectedFile, wordWrap]);
+
+  const handleToggleWordWrap = useCallback(() => {
+    const newWrap = !wordWrap;
+    setWordWrap(newWrap);
+    if (selectedFile) saveFilePrefs(selectedFile, { tab: editorTab, wordWrap: newWrap });
+  }, [selectedFile, editorTab, wordWrap]);
 
   const handleCheck = useCallback(() => {
     if (!selectedFile) return;
@@ -517,6 +575,7 @@ export function ConfigAdmin({
               onChange={handleEditorChange}
               validationIssues={validationIssues}
               filename={selectedFile}
+              wordWrap={wordWrap}
             />
           </Suspense>
         </div>
@@ -561,7 +620,20 @@ export function ConfigAdmin({
         <DrawerHeader>
           <DrawerHeaderTitle
             action={
-              <Button appearance="subtle" icon={<Dismiss24Regular />} onClick={onClose} aria-label="Close" />
+              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                <PrivilegedAccessButton
+                  privilegedAccessActive={privilegedAccessActive}
+                  privilegedAccessExpiresAt={privilegedAccessExpiresAt}
+                  onEnablePrivilegedAccessWithToken={onEnablePrivilegedAccessWithToken}
+                  onEnablePrivilegedAccessWithPasskey={onEnablePrivilegedAccessWithPasskey}
+                  onDisablePrivilegedAccess={onDisablePrivilegedAccess}
+                  privilegeTokenRegistered={privilegeTokenRegistered}
+                  onRegisterPrivilegeToken={onRegisterPrivilegeToken}
+                  authError={authError}
+                  passkeyEnabled={passkeyEnabled}
+                />
+                <Button appearance="subtle" icon={<Dismiss24Regular />} onClick={onClose} aria-label="Close" />
+              </div>
             }
           >
             Config Editor
@@ -591,7 +663,20 @@ export function ConfigAdmin({
         <DrawerHeader>
           <DrawerHeaderTitle
             action={
-              <Button appearance="subtle" icon={<Dismiss24Regular />} onClick={onClose} aria-label="Close" />
+              <div style={{ display: "flex", alignItems: "center", gap: "4px" }}>
+                <PrivilegedAccessButton
+                  privilegedAccessActive={privilegedAccessActive}
+                  privilegedAccessExpiresAt={privilegedAccessExpiresAt}
+                  onEnablePrivilegedAccessWithToken={onEnablePrivilegedAccessWithToken}
+                  onEnablePrivilegedAccessWithPasskey={onEnablePrivilegedAccessWithPasskey}
+                  onDisablePrivilegedAccess={onDisablePrivilegedAccess}
+                  privilegeTokenRegistered={privilegeTokenRegistered}
+                  onRegisterPrivilegeToken={onRegisterPrivilegeToken}
+                  authError={authError}
+                  passkeyEnabled={passkeyEnabled}
+                />
+                <Button appearance="subtle" icon={<Dismiss24Regular />} onClick={onClose} aria-label="Close" />
+              </div>
             }
           >
             Config Editor
@@ -667,10 +752,19 @@ export function ConfigAdmin({
                     )}
                   </div>
                   <div className={styles.editorToolbarRight}>
+                    {editorTab === "raw" && (
+                      <Button
+                        appearance="subtle"
+                        icon={wordWrap ? <TextWrapOff24Regular /> : <TextWrap24Regular />}
+                        size="small"
+                        title={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+                        onClick={handleToggleWordWrap}
+                      />
+                    )}
                     <TabList
                       size="small"
                       selectedValue={editorTab}
-                      onTabSelect={(_, data) => setEditorTab(data.value as EditorTab)}
+                      onTabSelect={(_, data) => handleSetEditorTab(data.value as EditorTab)}
                     >
                       <Tab value="raw">Raw JSON</Tab>
                       <Tab value="friendly">Friendly</Tab>
