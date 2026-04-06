@@ -52,6 +52,23 @@ function parseJsonMaybe(value: unknown): unknown {
   }
 }
 
+function redactSensitiveArgs(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((entry) => redactSensitiveArgs(entry));
+  }
+  if (!isObject(value)) return value;
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (/token|grant/i.test(key)) {
+      redacted[key] = "[REDACTED]";
+      continue;
+    }
+    redacted[key] = redactSensitiveArgs(entry);
+  }
+  return redacted;
+}
+
 function mergeArgumentFragment(existing: string | undefined, incoming: string): string {
   if (!existing) return incoming;
   if (!incoming) return existing;
@@ -183,6 +200,21 @@ function recoverToolArgs(
   return toolCall.args;
 }
 
+/** Minimal interface for privilege-grant expiry lookups. */
+interface PrivilegeGrantChecker {
+  getPrivilegeGrantStatus(conversationId: string): { active: boolean; expiresAt?: string };
+}
+
+/** Per-conversation token context held in server memory. */
+interface ConversationTokenEntry {
+  personalToken?: string;
+  /** Absolute ms timestamp after which personalToken is discarded. */
+  personalTokenExpiresAt?: number;
+  privilegeGrantId?: string;
+  /** Absolute ms timestamp after which privilegeGrantId is discarded. */
+  privilegeGrantExpiresAt?: number;
+}
+
 export interface AgentConfig {
   /**
    * Maximum number of steps (agent + tool calls) before LangGraph throws.
@@ -196,6 +228,23 @@ export interface AgentConfig {
    * instructions to clients.
    */
   toolLookup?: (toolName: string) => ToolDefinition | undefined;
+  /**
+   * TTL for personal tokens stored in the server-side conversation context (ms).
+   * Default: 24 hours. The TTL is refreshed each time the token is re-provided.
+   */
+  personalTokenTtlMs?: number;
+  /**
+   * Fallback TTL for privilege grant IDs when `authService` is not provided (ms).
+   * Default: 10 minutes. When `authService` is provided the actual grant expiry
+   * from the database is used instead.
+   */
+  privilegeGrantFallbackTtlMs?: number;
+  /**
+   * Optional auth service for accurate privilege-grant expiry lookups.
+   * When provided, grant status is verified on each resolution and grants that
+   * have expired or been revoked server-side are evicted from the context immediately.
+   */
+  authService?: PrivilegeGrantChecker;
 }
 
 /**
@@ -224,6 +273,8 @@ export class GloveAgent {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private readonly graph: any;
   private readonly channels: Channel[] = [];
+  /** Server-side per-conversation token context, keyed by conversationId. */
+  private readonly conversationContext = new Map<string, ConversationTokenEntry>();
 
   /**
    * Create a GloveAgent from a pre-compiled LangGraph state graph.
@@ -293,13 +344,16 @@ export class GloveAgent {
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     personalToken?: string,
+    privilegeGrantId?: string,
   ): Promise<string> {
     const result = await this.graph.invoke(
       { messages: [new HumanMessage(text)] },
       {
         configurable: {
           thread_id: conversationId,
+          conversationId,
           ...(personalToken ? { personalToken } : {}),
+          ...(privilegeGrantId ? { privilegeGrantId } : {}),
         },
         recursionLimit: this.config.recursionLimit ?? 25,
         callbacks,
@@ -326,6 +380,7 @@ export class GloveAgent {
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, metadata?: ToolEventMetadata) => void,
     personalToken?: string,
+    privilegeGrantId?: string,
   ): AsyncGenerator<string> {
     const streamedToolArgsByKey = new Map<string, string>();
 
@@ -407,7 +462,9 @@ export class GloveAgent {
       {
         configurable: {
           thread_id: conversationId,
+          conversationId,
           ...(personalToken ? { personalToken } : {}),
+          ...(privilegeGrantId ? { privilegeGrantId } : {}),
         },
         streamMode: "messages",
         recursionLimit: this.config.recursionLimit ?? 25,
@@ -494,7 +551,125 @@ export class GloveAgent {
   // Private helpers
   // ---------------------------------------------------------------------------
 
+  /**
+   * Upsert the per-conversation token context from message metadata.
+   *  - `string`    → set / refresh with TTL
+   *  - `null`      → explicit clear (remove from stored context)
+   *  - `undefined` → no change (field absent from metadata)
+   */
+  private updateConversationContext(
+    conversationId: string,
+    personalToken: string | null | undefined,
+    privilegeGrantId: string | null | undefined,
+  ): void {
+    const now = Date.now();
+    const personalTokenTtlMs = this.config.personalTokenTtlMs ?? 24 * 60 * 60 * 1000;
+    const privilegeGrantFallbackTtlMs = this.config.privilegeGrantFallbackTtlMs ?? 10 * 60 * 1000;
+    const entry: ConversationTokenEntry = this.conversationContext.get(conversationId) ?? {};
+
+      if (personalToken !== undefined) {
+      if (!personalToken) {
+        delete entry.personalToken;
+        delete entry.personalTokenExpiresAt;
+      } else {
+        entry.personalToken = personalToken;
+        entry.personalTokenExpiresAt = now + personalTokenTtlMs;
+      }
+    }
+
+    if (privilegeGrantId !== undefined) {
+      if (!privilegeGrantId) {
+        delete entry.privilegeGrantId;
+        delete entry.privilegeGrantExpiresAt;
+      } else {
+        entry.privilegeGrantId = privilegeGrantId;
+        // Prefer the actual grant expiry from AuthService; fall back to configurable TTL.
+        const grantStatus = this.config.authService?.getPrivilegeGrantStatus(conversationId);
+        entry.privilegeGrantExpiresAt =
+          grantStatus?.active && grantStatus.expiresAt
+            ? Date.parse(grantStatus.expiresAt)
+            : now + privilegeGrantFallbackTtlMs;
+      }
+    }
+
+    if (entry.personalToken !== undefined || entry.privilegeGrantId !== undefined) {
+      this.conversationContext.set(conversationId, entry);
+    } else {
+      this.conversationContext.delete(conversationId);
+    }
+  }
+
+  /**
+   * Return the effective tokens for a conversation, evicting any that have
+   * passed their expiry timestamp or whose privilege grant is no longer active.
+   */
+  private resolveConversationTokens(conversationId: string): {
+    personalToken: string | undefined;
+    privilegeGrantId: string | undefined;
+  } {
+    const now = Date.now();
+    const entry = this.conversationContext.get(conversationId);
+    if (!entry) return { personalToken: undefined, privilegeGrantId: undefined };
+
+    let { personalToken, privilegeGrantId } = entry;
+
+    if (
+      personalToken !== undefined &&
+      entry.personalTokenExpiresAt !== undefined &&
+      entry.personalTokenExpiresAt <= now
+    ) {
+      delete entry.personalToken;
+      delete entry.personalTokenExpiresAt;
+      personalToken = undefined;
+      logger.debug(`Personal token expired for conversation ${conversationId}`);
+    }
+
+    if (privilegeGrantId !== undefined) {
+      const timestampExpired =
+        entry.privilegeGrantExpiresAt !== undefined && entry.privilegeGrantExpiresAt <= now;
+      const grantRevoked =
+        !timestampExpired &&
+        this.config.authService !== undefined &&
+        !this.config.authService.getPrivilegeGrantStatus(conversationId).active;
+      if (timestampExpired || grantRevoked) {
+        delete entry.privilegeGrantId;
+        delete entry.privilegeGrantExpiresAt;
+        privilegeGrantId = undefined;
+        logger.debug(`Privilege grant expired for conversation ${conversationId}`);
+      }
+    }
+
+    if (entry.personalToken === undefined && entry.privilegeGrantId === undefined) {
+      this.conversationContext.delete(conversationId);
+    } else {
+      this.conversationContext.set(conversationId, entry);
+    }
+
+    return { personalToken, privilegeGrantId };
+  }
+
   private async dispatchMessage(message: IncomingMessage, sourceChannel: Channel): Promise<void> {
+    // Extract metadata tokens: string = set/refresh, null = explicit clear, undefined = absent.
+    const msgPersonalToken =
+      typeof message.metadata?.personalToken === "string"
+        ? message.metadata.personalToken
+        : message.metadata?.personalToken === null
+          ? null
+          : undefined;
+    const msgPrivilegeGrantId =
+      typeof message.metadata?.privilegeGrantId === "string"
+        ? message.metadata.privilegeGrantId
+        : message.metadata?.privilegeGrantId === null
+          ? null
+          : undefined;
+
+    this.updateConversationContext(message.conversationId, msgPersonalToken, msgPrivilegeGrantId);
+    const { personalToken, privilegeGrantId } = this.resolveConversationTokens(message.conversationId);
+
+    if (message.metadata?.contextOnly === true) {
+      return;
+    }
+
     const receiveAllChannels = this.channels.filter((ch) => ch.receiveAll);
     const mirrorTargets = receiveAllChannels.filter((ch) => ch !== sourceChannel);
     const observabilityTargets = receiveAllChannels;
@@ -582,7 +757,7 @@ export class GloveAgent {
               "tool-call",
               JSON.stringify({
                 name: toolName,
-                args,
+                args: redactSensitiveArgs(args),
                 ...(toolCallId ? { id: toolCallId } : {}),
                 type: "tool_call",
               }),
@@ -597,10 +772,14 @@ export class GloveAgent {
 
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
-      const personalToken = typeof message.metadata?.personalToken === "string"
-        ? message.metadata.personalToken
-        : undefined;
-      const baseStream = this.stream(message.text, message.conversationId, callbacks, onToolEvent, personalToken);
+      const baseStream = this.stream(
+        message.text,
+        message.conversationId,
+        callbacks,
+        onToolEvent,
+        personalToken,
+        privilegeGrantId,
+      );
 
       // Intercept the stream so we can buffer the complete response for observers
       // without re-invoking the model.
@@ -635,6 +814,7 @@ export class GloveAgent {
           message.conversationId,
           callbacks,
           personalToken,
+          privilegeGrantId,
         );
 
         await sourceChannel.sendMessage({
@@ -650,10 +830,13 @@ export class GloveAgent {
         }
       }
     } else {
-      const personalToken = typeof message.metadata?.personalToken === "string"
-        ? message.metadata.personalToken
-        : undefined;
-      const response = await this.invoke(message.text, message.conversationId, callbacks, personalToken);
+      const response = await this.invoke(
+        message.text,
+        message.conversationId,
+        callbacks,
+        personalToken,
+        privilegeGrantId,
+      );
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
       for (const ch of mirrorTargets) {

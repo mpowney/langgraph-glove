@@ -244,6 +244,17 @@ const useStyles = makeStyles({
     marginBottom: tokens.spacingVerticalXXS,
     fontFamily: "ui-monospace, 'Cascadia Code', Consolas, monospace",
   },
+  sessionSwitchButton: {
+    appearance: "none",
+    background: "none",
+    border: "none",
+    padding: 0,
+    margin: 0,
+    font: "inherit",
+    color: tokens.colorBrandForeground1,
+    textDecorationLine: "underline",
+    cursor: "pointer",
+  },
 
   // ── Prompt accordion ──────────────────────────────────────────────────────
   promptAccordion: {
@@ -339,6 +350,10 @@ interface ChatMessageProps {
   entry: ChatEntry;
   /** Shown as a small muted label when viewing all conversations. */
   sessionLabel?: string;
+  /** Full conversation id for a foreign-session message label. */
+  sessionConversationId?: string;
+  /** Called when a user wants to switch the active conversation context. */
+  onRequestSwitchConversation?: (conversationId: string) => void;
   /** Active model context window tokens for prompt-context estimation. */
   modelContextWindowTokens?: number;
 }
@@ -411,18 +426,43 @@ function ToolMetaSection({ meta }: { meta: ToolEventMetadata }) {
   );
 }
 
-export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: ChatMessageProps) {
+export function ChatMessage({
+  entry,
+  sessionLabel,
+  sessionConversationId,
+  onRequestSwitchConversation,
+  modelContextWindowTokens,
+}: ChatMessageProps) {
   const styles = useStyles();
+
+  const renderSessionLabel = (textAlign?: "left" | "right") => {
+    if (!sessionLabel) return null;
+
+    const canSwitch = Boolean(sessionConversationId && onRequestSwitchConversation);
+    return (
+      <Text block className={styles.sessionLabel} style={textAlign ? { textAlign } : undefined}>
+        session {" "}
+        {canSwitch ? (
+          <button
+            type="button"
+            className={styles.sessionSwitchButton}
+            onClick={() => onRequestSwitchConversation?.(sessionConversationId!)}
+            title={`Switch to conversation ${sessionConversationId}`}
+          >
+            {sessionLabel}
+          </button>
+        ) : (
+          sessionLabel
+        )}
+      </Text>
+    );
+  };
 
   if (entry.role === "user") {
     return (
       <div className={styles.userWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel} style={{ textAlign: "right" }}>
-              session {sessionLabel}
-            </Text>
-          )}
+          {renderSessionLabel("right")}
           <Text className={styles.userBubble}>{entry.content}</Text>
         </div>
       </div>
@@ -434,9 +474,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
     return (
       <div className={styles.promptWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-          )}
+          {renderSessionLabel()}
           <MessageAccordion
             className={styles.promptAccordion}
             itemValue="prompt"
@@ -493,9 +531,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
     return (
       <div className={styles.promptWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-          )}
+          {renderSessionLabel()}
           <MessageAccordion
             className={styles.toolCallAccordion}
             itemValue="tool-call"
@@ -537,9 +573,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
     return (
       <div className={styles.promptWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-          )}
+          {renderSessionLabel()}
           <MessageAccordion
             className={styles.modelCallAccordion}
             itemValue="model-call"
@@ -572,9 +606,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
     return (
       <div className={styles.promptWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-          )}
+          {renderSessionLabel()}
           <MessageAccordion
             className={styles.modelResponseAccordion}
             itemValue="model-response"
@@ -604,9 +636,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
     return (
       <div className={styles.promptWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-          )}
+          {renderSessionLabel()}
           <MessageAccordion
             className={styles.toolResultAccordion}
             itemValue="tool-result"
@@ -639,9 +669,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
     return (
       <div className={styles.promptWrapper}>
         <div>
-          {sessionLabel && (
-            <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-          )}
+          {renderSessionLabel()}
           <MessageAccordion
             className={styles.agentTransferAccordion}
             itemValue="agent-transfer"
@@ -663,9 +691,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
       return (
         <div className={styles.promptWrapper}>
           <div>
-            {sessionLabel && (
-              <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-            )}
+            {renderSessionLabel()}
             <MessageAccordion
               className={styles.errorAccordion}
               itemValue="error"
@@ -686,9 +712,7 @@ export function ChatMessage({ entry, sessionLabel, modelContextWindowTokens }: C
   return (
     <div className={styles.agentWrapper}>
       <div>
-        {sessionLabel && (
-          <Text block className={styles.sessionLabel}>session {sessionLabel}</Text>
-        )}
+        {renderSessionLabel()}
         <div className={styles.agentBubble}>
           <InlineContent content={entry.content} />
           {entry.isStreaming && <span className={styles.cursor} aria-hidden />}

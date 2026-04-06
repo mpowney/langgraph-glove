@@ -11,11 +11,25 @@ interface AuthStatusPayload {
   setupRequired: boolean;
   minPasswordLength?: number;
   passkeyRegistered?: boolean;
+  privilegeTokenRegistered?: boolean;
 }
 
 interface AuthSessionPayload {
   token: string;
   expiresAt: string;
+}
+
+interface PrivilegedAccessActivationPayload {
+  active: boolean;
+  conversationId: string;
+  grantId: string;
+  expiresAt: string;
+}
+
+interface PrivilegedAccessStatusPayload {
+  active: boolean;
+  expiresAt?: string;
+  grantId?: string;
 }
 
 function generatePersonalMemoryToken(): string {
@@ -40,7 +54,9 @@ interface AuthState {
   token: string | null;
   minPasswordLength: number;
   passkeyRegistered: boolean;
+  privilegeTokenRegistered: boolean;
   promptPasskeySetup: boolean;
+  promptPrivilegeTokenSetup: boolean;
   /** True when account was set up without a password — passkey registration is mandatory. */
   passkeySetupRequired: boolean;
   error: string | null;
@@ -120,7 +136,9 @@ export function useAuth(apiBaseUrl: string | null) {
       token,
       minPasswordLength: 12,
       passkeyRegistered: false,
+      privilegeTokenRegistered: false,
       promptPasskeySetup: false,
+      promptPrivilegeTokenSetup: false,
       passkeySetupRequired: false,
       error: null,
     };
@@ -140,6 +158,7 @@ export function useAuth(apiBaseUrl: string | null) {
       setState((prev) => {
         const setupRequired = Boolean(payload.setupRequired);
         const passkeyRegistered = Boolean(payload.passkeyRegistered);
+        const privilegeTokenRegistered = Boolean(payload.privilegeTokenRegistered);
         return {
           loading: false,
           setupRequired,
@@ -147,8 +166,12 @@ export function useAuth(apiBaseUrl: string | null) {
           token: setupRequired ? null : token,
           minPasswordLength: payload.minPasswordLength ?? 12,
           passkeyRegistered,
+          privilegeTokenRegistered,
           // Keep prompting only while setup is complete and no passkey exists.
           promptPasskeySetup: !setupRequired && !passkeyRegistered && prev.promptPasskeySetup,
+          // Keep prompting only while setup is complete and no privilege token exists.
+          promptPrivilegeTokenSetup:
+            !setupRequired && !privilegeTokenRegistered && prev.promptPrivilegeTokenSetup,
           // If a passkey was just registered externally, clear the required flag.
           passkeySetupRequired: passkeyRegistered ? false : prev.passkeySetupRequired,
           error: null,
@@ -185,6 +208,7 @@ export function useAuth(apiBaseUrl: string | null) {
         authenticated: true,
         token: payload.token,
         promptPasskeySetup: false,
+        promptPrivilegeTokenSetup: false,
         error: null,
       }));
       return true;
@@ -225,6 +249,7 @@ export function useAuth(apiBaseUrl: string | null) {
         authenticated: true,
         token: payload.token,
         promptPasskeySetup: true,
+        promptPrivilegeTokenSetup: true,
         passkeySetupRequired: !password?.trim(),
         error: null,
       }));
@@ -260,6 +285,7 @@ export function useAuth(apiBaseUrl: string | null) {
       authenticated: false,
       token: null,
       promptPasskeySetup: false,
+      promptPrivilegeTokenSetup: false,
       passkeySetupRequired: false,
       error: null,
     }));
@@ -296,6 +322,7 @@ export function useAuth(apiBaseUrl: string | null) {
         loading: false,
         passkeyRegistered: true,
         promptPasskeySetup: false,
+        promptPrivilegeTokenSetup: !prev.privilegeTokenRegistered,
         passkeySetupRequired: false,
         error: null,
       }));
@@ -349,6 +376,7 @@ export function useAuth(apiBaseUrl: string | null) {
         authenticated: true,
         token: session.token,
         promptPasskeySetup: false,
+        promptPrivilegeTokenSetup: false,
         error: null,
       }));
       return true;
@@ -381,6 +409,7 @@ export function useAuth(apiBaseUrl: string | null) {
         token: session.token,
         setupRequired: false,
         promptPasskeySetup: false,
+        promptPrivilegeTokenSetup: false,
         error: null,
       }));
       return personalToken;
@@ -397,6 +426,158 @@ export function useAuth(apiBaseUrl: string | null) {
     setState((prev) => ({ ...prev, promptPasskeySetup: false }));
   }, []);
 
+  const dismissPrivilegeTokenSetupPrompt = useCallback(() => {
+    setState((prev) => ({ ...prev, promptPrivilegeTokenSetup: false }));
+  }, []);
+
+  const registerPrivilegeToken = useCallback(async (token: string, currentToken?: string) => {
+    if (apiBaseUrl === null) return false;
+    const sessionToken = readStoredToken();
+    if (!sessionToken) return false;
+
+    setState((prev) => ({ ...prev, error: null }));
+    try {
+      await postJson<void>(
+        `${apiBaseUrl}/api/auth/privilege-token/register`,
+        {
+          token,
+          ...(currentToken?.trim() ? { currentToken } : {}),
+        },
+        sessionToken,
+      );
+      setState((prev) => ({
+        ...prev,
+        privilegeTokenRegistered: true,
+        promptPrivilegeTokenSetup: false,
+        error: null,
+      }));
+      return true;
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      return false;
+    }
+  }, [apiBaseUrl]);
+
+  const activatePrivilegedAccess = useCallback(async (
+    conversationId: string,
+    options?: { token?: string; usePasskey?: boolean },
+  ): Promise<PrivilegedAccessActivationPayload | null> => {
+    if (apiBaseUrl === null) return null;
+
+    let sessionToken = readStoredToken();
+    let passkeySessionToken: string | undefined;
+    if (options?.usePasskey) {
+      try {
+        const session = await completePasskeyAuthenticationFlow();
+        passkeySessionToken = session.token;
+        if (!sessionToken) {
+          sessionToken = session.token;
+        }
+      } catch (err) {
+        setState((prev) => ({
+          ...prev,
+          error: err instanceof Error ? err.message : String(err),
+        }));
+        return null;
+      }
+    }
+
+    if (!sessionToken) {
+      setState((prev) => ({ ...prev, error: "You must be authenticated to enable privileged access" }));
+      return null;
+    }
+
+    try {
+      const payload = await postJson<PrivilegedAccessActivationPayload>(
+        `${apiBaseUrl}/api/auth/privileged-access/activate`,
+        {
+          conversationId,
+          ...(options?.token?.trim() ? { token: options.token } : {}),
+          ...(options?.usePasskey ? { usePasskey: true } : {}),
+          ...(passkeySessionToken ? { passkeySessionToken } : {}),
+        },
+        sessionToken,
+      );
+      if (passkeySessionToken) {
+        storeToken(passkeySessionToken);
+        setState((prev) => ({
+          ...prev,
+          authenticated: true,
+          token: passkeySessionToken,
+          setupRequired: false,
+          promptPasskeySetup: false,
+          promptPrivilegeTokenSetup: false,
+          error: null,
+        }));
+      }
+      setState((prev) => ({ ...prev, error: null }));
+      return payload;
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      return null;
+    }
+  }, [apiBaseUrl, completePasskeyAuthenticationFlow]);
+
+  const getPrivilegedAccessStatus = useCallback(async (
+    conversationId: string,
+  ): Promise<PrivilegedAccessStatusPayload | null> => {
+    if (apiBaseUrl === null) return null;
+    const sessionToken = readStoredToken();
+    if (!sessionToken) return null;
+
+    const url = new URL(`${apiBaseUrl}/api/auth/privileged-access/status`);
+    url.searchParams.set("conversationId", conversationId);
+
+    try {
+      const response = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${sessionToken}`,
+        },
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(parseError(payload, `HTTP ${response.status}`));
+      }
+      setState((prev) => ({ ...prev, error: null }));
+      return (await response.json()) as PrivilegedAccessStatusPayload;
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      return null;
+    }
+  }, [apiBaseUrl]);
+
+  const revokePrivilegedAccess = useCallback(async (conversationId: string) => {
+    if (apiBaseUrl === null) return false;
+    const sessionToken = readStoredToken();
+    if (!sessionToken) return false;
+
+    try {
+      await postJson<void>(
+        `${apiBaseUrl}/api/auth/privileged-access/revoke`,
+        { conversationId },
+        sessionToken,
+      );
+      setState((prev) => ({ ...prev, error: null }));
+      return true;
+    } catch (err) {
+      setState((prev) => ({
+        ...prev,
+        error: err instanceof Error ? err.message : String(err),
+      }));
+      return false;
+    }
+  }, [apiBaseUrl]);
+
   return {
     ...state,
     refreshStatus,
@@ -407,5 +588,10 @@ export function useAuth(apiBaseUrl: string | null) {
     loginWithPasskey,
     generatePersonalTokenWithPasskey,
     dismissPasskeySetupPrompt,
+    dismissPrivilegeTokenSetupPrompt,
+    registerPrivilegeToken,
+    activatePrivilegedAccess,
+    getPrivilegedAccessStatus,
+    revokePrivilegedAccess,
   };
 }

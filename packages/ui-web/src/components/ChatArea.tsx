@@ -26,10 +26,17 @@ interface ChatAreaProps {
   messages: ChatEntry[];
   myConversationId: string;
   showAll: boolean;
+  onRequestSwitchConversation?: (conversationId: string) => void;
   modelContextWindowTokens?: number;
 }
 
-export function ChatArea({ messages, myConversationId, showAll, modelContextWindowTokens }: ChatAreaProps) {
+export function ChatArea({
+  messages,
+  myConversationId,
+  showAll,
+  onRequestSwitchConversation,
+  modelContextWindowTokens,
+}: ChatAreaProps) {
   const styles = useStyles();
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -43,18 +50,23 @@ export function ChatArea({ messages, myConversationId, showAll, modelContextWind
 
   return (
     <div className={styles.root} role="log" aria-live="polite" aria-label="Chat messages">
-      {messages.map((entry) => (
+      {messages.map((entry) => {
+        const isForeignConversation = showAll && entry.conversationId !== myConversationId;
+        return (
         <ChatMessage
           key={entry.id}
           entry={entry}
           modelContextWindowTokens={modelContextWindowTokens}
           sessionLabel={
-            showAll && entry.conversationId !== myConversationId
+            isForeignConversation
               ? entry.conversationId.slice(0, 8)
               : undefined
           }
+          sessionConversationId={isForeignConversation ? entry.conversationId : undefined}
+          onRequestSwitchConversation={onRequestSwitchConversation}
         />
-      ))}
+        );
+      })}
       <div ref={bottomRef} />
     </div>
   );

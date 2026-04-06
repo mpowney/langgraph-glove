@@ -58,16 +58,32 @@ export type ServerMessage =
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
 
 /** Messages sent from browser client → server. */
-export interface ClientMessage {
-  type: "message";
-  text: string;
-  conversationId: string;
-  /**
-   * Optional personal token for encrypted personal memory operations.
-   * Pass `null` to explicitly clear the server-side token for this conversation.
-   */
-  personalToken?: string | null;
-}
+export type ClientMessage =
+  | {
+      type: "message";
+      text: string;
+      conversationId: string;
+      /**
+       * Optional personal token for encrypted personal memory operations.
+       * Pass `null` to explicitly clear the server-side token for this conversation.
+       */
+      personalToken?: string | null;
+      /** Optional short-lived privilege grant for admin tool execution. */
+      privilegeGrantId?: string | null;
+    }
+  | {
+      /**
+       * Context-only frame: registers or clears tokens in the server-side
+       * per-conversation context without sending a message to the agent.
+       * Used when tokens are set/cleared outside of a message send, or when
+       * the client connects to (or switches to) a conversation that already
+       * has active tokens in this browser session.
+       */
+      type: "context";
+      conversationId: string;
+      personalToken?: string | null;
+      privilegeGrantId?: string | null;
+    };
 
 /** App metadata served by the backend `/api/info` endpoint. */
 export interface AppInfo {

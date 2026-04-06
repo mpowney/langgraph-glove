@@ -3,6 +3,55 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PID_FILE="$ROOT_DIR/logs/tool-processes.pids"
+TARGET_ARGS=()
+
+usage() {
+  echo "Usage: bash scripts/tools-stop.sh [tool-name ...]" >&2
+  echo "Examples:" >&2
+  echo "  bash scripts/tools-stop.sh" >&2
+  echo "  bash scripts/tools-stop.sh tool-search tool-browse" >&2
+  echo "  bash scripts/tools-stop.sh search browse" >&2
+}
+
+normalize_tool_name() {
+  local raw="$1"
+  if [[ "$raw" == tool-* ]]; then
+    echo "$raw"
+  else
+    echo "tool-$raw"
+  fi
+}
+
+for arg in "$@"; do
+  case "$arg" in
+    --)
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      TARGET_ARGS+=("$arg")
+      ;;
+  esac
+done
+
+targeted_tool() {
+  local tool_name="$1"
+  local raw
+
+  if [[ ${#TARGET_ARGS[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  for raw in "${TARGET_ARGS[@]}"; do
+    if [[ "$(normalize_tool_name "$raw")" == "$tool_name" ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
 
 get_pid_cwd() {
   local pid="$1"
@@ -81,15 +130,24 @@ fi
 terminated=0
 already_stopped=0
 skipped=0
+kept=0
+tmp_pid_file="$(mktemp)"
 
 while IFS=: read -r tool_name pid log_file; do
   if [[ -z "${tool_name:-}" || -z "${pid:-}" ]]; then
     continue
   fi
 
+  if ! targeted_tool "$tool_name"; then
+    echo "${tool_name}:${pid}:${log_file}" >> "$tmp_pid_file"
+    ((kept += 1))
+    continue
+  fi
+
   if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
     echo "Skipping $tool_name (invalid pid: $pid)"
     ((skipped += 1))
+    echo "${tool_name}:${pid}:${log_file}" >> "$tmp_pid_file"
     continue
   fi
 
@@ -115,6 +173,7 @@ while IFS=: read -r tool_name pid log_file; do
   if [[ ${#valid_targets[@]} -eq 0 ]]; then
     echo "Skipping $tool_name (seed pid=$pid) due to command mismatch"
     ((skipped += 1))
+    echo "${tool_name}:${pid}:${log_file}" >> "$tmp_pid_file"
     continue
   fi
 
@@ -148,7 +207,15 @@ while IFS=: read -r tool_name pid log_file; do
   ((terminated += 1))
 done < "$PID_FILE"
 
-rm -f "$PID_FILE"
+if [[ -s "$tmp_pid_file" ]]; then
+  mv "$tmp_pid_file" "$PID_FILE"
+else
+  rm -f "$tmp_pid_file" "$PID_FILE"
+fi
 
 echo ""
-echo "Tool stop complete. Terminated: $terminated, already stopped: $already_stopped, skipped: $skipped"
+if [[ ${#TARGET_ARGS[@]} -eq 0 ]]; then
+  echo "Tool stop complete (all tools). Terminated: $terminated, already stopped: $already_stopped, skipped: $skipped"
+else
+  echo "Tool stop complete (targeted). Terminated: $terminated, already stopped: $already_stopped, skipped: $skipped, kept running: $kept"
+fi

@@ -172,12 +172,37 @@ export class RemoteTool extends StructuredTool {
     // the browser-side personal token flows through automatically.
     if (
       "personalToken" in this.schema.shape &&
-      !args.personalToken &&
       typeof config?.configurable === "object" &&
       config.configurable !== null &&
       typeof (config.configurable as Record<string, unknown>).personalToken === "string"
     ) {
       args.personalToken = (config.configurable as Record<string, unknown>).personalToken;
+    }
+
+    if (
+      "privilegeGrantId" in this.schema.shape &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).privilegeGrantId === "string"
+    ) {
+      args.privilegeGrantId = (config.configurable as Record<string, unknown>).privilegeGrantId;
+    }
+
+    if (
+      "conversationId" in this.schema.shape &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null
+    ) {
+      const typed = config.configurable as Record<string, unknown>;
+      const explicitConversationId =
+        typeof typed.conversationId === "string" ? typed.conversationId : undefined;
+      const threadId = typeof typed.thread_id === "string" ? typed.thread_id : undefined;
+      const resolvedConversationId =
+        explicitConversationId ?? (threadId === "runtime" ? undefined : threadId);
+
+      if (resolvedConversationId) {
+        args.conversationId = resolvedConversationId;
+      }
     }
 
     const result = await this.rpcClient.call(this.name, args);

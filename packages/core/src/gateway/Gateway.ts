@@ -151,6 +151,7 @@ export class Gateway extends EventEmitter {
           "default",
         ).recursionLimit,
         toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
+        authService: this.authService ?? undefined,
       });
 
       // 8. Channels

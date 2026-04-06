@@ -64,35 +64,50 @@ interface AuthGateProps {
   forcePasskeySetup: boolean;
   /** True when the account was created without a password — passkey registration is mandatory. */
   passkeySetupRequired: boolean;
+  forcePrivilegeTokenSetup: boolean;
   minPasswordLength: number;
   passkeyRegistered: boolean;
+  privilegeTokenRegistered: boolean;
   error: string | null;
   onLogin: (password: string) => Promise<boolean>;
   onSetup: (setupToken: string, password?: string) => Promise<boolean>;
   onLoginWithPasskey: () => Promise<boolean>;
   onRegisterPasskey: () => Promise<boolean>;
   onSkipPasskeySetup: () => void;
+  onRegisterPrivilegeToken: (newToken: string, currentToken?: string) => Promise<boolean>;
+  onSkipPrivilegeTokenSetup: () => void;
 }
 
 /** The three states of the auth gate. */
-type AuthView = "login" | "setup" | "passkey-setup";
+type AuthView = "login" | "setup" | "passkey-setup" | "privilege-token-setup";
 
 export function AuthGate(props: AuthGateProps) {
   const styles = useStyles();
   const [password, setPassword] = useState("");
   const [setupToken, setSetupToken] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [privilegeToken, setPrivilegeToken] = useState("");
+  const [confirmPrivilegeToken, setConfirmPrivilegeToken] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [passkeySuccess, setPasskeySuccess] = useState(false);
   const [passwordAccordionOpen, setPasswordAccordionOpen] = useState(false);
   const [view, setView] = useState<AuthView>(
-    props.forcePasskeySetup ? "passkey-setup" : (props.setupRequired ? "setup" : "login"),
+    props.forcePasskeySetup
+      ? "passkey-setup"
+      : (props.forcePrivilegeTokenSetup
+        ? "privilege-token-setup"
+        : (props.setupRequired ? "setup" : "login")),
   );
 
   // Keep local auth view aligned with backend auth state transitions.
   React.useEffect(() => {
     if (props.forcePasskeySetup && view !== "passkey-setup") {
       setView("passkey-setup");
+      return;
+    }
+
+    if (props.forcePrivilegeTokenSetup && view !== "privilege-token-setup") {
+      setView("privilege-token-setup");
       return;
     }
 
@@ -105,7 +120,7 @@ export function AuthGate(props: AuthGateProps) {
     if (!props.setupRequired && view === "setup") {
       setView("login");
     }
-  }, [props.forcePasskeySetup, props.setupRequired, view]);
+  }, [props.forcePasskeySetup, props.forcePrivilegeTokenSetup, props.setupRequired, view]);
 
   const submitLogin = async () => {
     setLocalError(null);
@@ -156,6 +171,78 @@ export function AuthGate(props: AuthGateProps) {
     const ok = await props.onRegisterPasskey();
     if (ok) setPasskeySuccess(true);
   };
+
+  const submitPrivilegeTokenSetup = async () => {
+    setLocalError(null);
+    const token = privilegeToken.trim();
+    if (!token) {
+      setLocalError("Privilege token is required");
+      return;
+    }
+    if (token !== confirmPrivilegeToken.trim()) {
+      setLocalError("Privilege token values do not match");
+      return;
+    }
+
+    const ok = await props.onRegisterPrivilegeToken(token);
+    if (!ok) return;
+
+    setPrivilegeToken("");
+    setConfirmPrivilegeToken("");
+    setView("login");
+  };
+
+  if (view === "privilege-token-setup") {
+    return (
+      <div className={styles.page}>
+        <section className={styles.panel}>
+          <Text className={styles.title} weight="semibold">Set privilege token</Text>
+          <Text>
+            Create a privilege token used to explicitly enable short-lived privileged admin access.
+          </Text>
+
+          <Field label="Privilege token" required>
+            <Input
+              type="password"
+              value={privilegeToken}
+              onChange={(_, data) => setPrivilegeToken(data.value)}
+              placeholder="Enter privilege token"
+            />
+          </Field>
+
+          <Field label="Confirm privilege token" required>
+            <Input
+              type="password"
+              value={confirmPrivilegeToken}
+              onChange={(_, data) => setConfirmPrivilegeToken(data.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") void submitPrivilegeTokenSetup(); }}
+              placeholder="Re-enter privilege token"
+            />
+          </Field>
+
+          {(localError || props.error) && (
+            <Text className={styles.error}>{localError ?? props.error}</Text>
+          )}
+
+          <Button
+            appearance="primary"
+            onClick={() => { void submitPrivilegeTokenSetup(); }}
+            disabled={props.loading || !privilegeToken.trim() || !confirmPrivilegeToken.trim()}
+          >
+            {props.loading ? <Spinner size="tiny" /> : "Register privilege token"}
+          </Button>
+
+          <Button
+            appearance="subtle"
+            onClick={props.onSkipPrivilegeTokenSetup}
+            disabled={props.loading}
+          >
+            Skip for now
+          </Button>
+        </section>
+      </div>
+    );
+  }
 
   if (view === "passkey-setup") {
     return (

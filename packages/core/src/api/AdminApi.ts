@@ -25,6 +25,10 @@ interface LcMessage {
   };
 }
 
+interface PrivilegedAccessStatusQuery {
+  conversationId?: string;
+}
+
 interface CheckpointRow {
   thread_id: string;
   checkpoint_id: string;
@@ -202,7 +206,139 @@ export class AdminApi {
 
     if (this.authService) {
       this.app.get("/api/auth/status", (_req, res) => {
-        res.json(this.authService?.getStatus() ?? { setupRequired: false, minPasswordLength: 12 });
+        res.json(this.authService?.getStatus() ?? {
+          setupRequired: false,
+          minPasswordLength: 12,
+          passkeyRegistered: false,
+          privilegeTokenRegistered: false,
+        });
+      });
+
+      this.app.post("/api/auth/privilege-token/register", (req, res) => {
+        const user = requireAuthUser(req, res, this.authService!);
+        if (!user) return;
+
+        const token = readBodyString(req.body, "token");
+        const currentToken = readBodyString(req.body, "currentToken");
+        if (!token) {
+          res.status(400).json({ error: "token is required" });
+          return;
+        }
+
+        const hasPrivilegeToken = this.authService!.getStatus().privilegeTokenRegistered;
+        if (hasPrivilegeToken) {
+          if (!currentToken) {
+            res.status(400).json({ error: "currentToken is required when replacing privilege token" });
+            return;
+          }
+          if (!this.authService!.validatePrivilegeToken(currentToken)) {
+            res.status(401).json({ error: "Current privilege token is invalid" });
+            return;
+          }
+        }
+
+        try {
+          this.authService!.registerPrivilegeToken(user.userId, token);
+          res.status(204).send();
+        } catch (err) {
+          res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+
+      this.app.post("/api/auth/privileged-access/activate", (req, res) => {
+        const user = requireAuthUser(req, res, this.authService!);
+        if (!user) return;
+
+        const conversationId = readBodyString(req.body, "conversationId");
+        const token = readBodyString(req.body, "token");
+        const usePasskey = readBodyBoolean(req.body, "usePasskey");
+        const passkeySessionToken = readBodyString(req.body, "passkeySessionToken");
+        if (!conversationId) {
+          res.status(400).json({ error: "conversationId is required" });
+          return;
+        }
+
+        const hasRegisteredPrivilegeToken = this.authService!.getStatus().privilegeTokenRegistered;
+        if (token && !hasRegisteredPrivilegeToken) {
+          res.status(400).json({ error: "Privilege token is not registered yet" });
+          return;
+        }
+        if (token && !this.authService!.validatePrivilegeToken(token)) {
+          res.status(401).json({ error: "Invalid privilege token" });
+          return;
+        }
+
+        const canActivateWithToken = Boolean(token);
+        const passkeySessionUser = passkeySessionToken
+          ? this.authService!.authenticateSession(passkeySessionToken)
+          : null;
+        const canActivateWithPasskey = Boolean(
+          usePasskey
+          && passkeySessionUser
+          && passkeySessionUser.userId === user.userId
+          && this.authService!.userHasPasskey(user.userId),
+        );
+        if (!canActivateWithToken && !canActivateWithPasskey) {
+          res.status(400).json({ error: "Provide a privilege token or use passkey activation" });
+          return;
+        }
+
+        try {
+          const grant = this.authService!.createPrivilegeGrant(user.userId, conversationId, 10);
+          res.json({
+            active: true,
+            conversationId: grant.conversationId,
+            grantId: grant.grantId,
+            expiresAt: grant.expiresAt,
+          });
+        } catch (err) {
+          res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+        }
+      });
+
+      this.app.get("/api/auth/privileged-access/status", (req, res) => {
+        if (!requireAuthUser(req, res, this.authService!)) return;
+
+        const conversationId = String((req.query as PrivilegedAccessStatusQuery).conversationId ?? "").trim();
+        if (!conversationId) {
+          res.status(400).json({ error: "conversationId is required" });
+          return;
+        }
+
+        const status = this.authService!.getPrivilegeGrantStatus(conversationId);
+        res.json(status);
+      });
+
+      this.app.post("/api/auth/privileged-access/revoke", (req, res) => {
+        if (!requireAuthUser(req, res, this.authService!)) return;
+
+        const conversationId = readBodyString(req.body, "conversationId");
+        if (!conversationId) {
+          res.status(400).json({ error: "conversationId is required" });
+          return;
+        }
+
+        this.authService!.revokePrivilegeGrant(conversationId);
+        res.status(204).send();
+      });
+
+      // Internal endpoint used by tool-admin to gate privileged tool execution.
+      // This should only be called from local trusted processes.
+      this.app.post("/api/internal/validate-privilege-grant", (req, res) => {
+        const grantId = readBodyString(req.body, "grantId");
+        const conversationId = readBodyString(req.body, "conversationId");
+        if (!grantId || !conversationId) {
+          res.status(400).json({ error: "grantId and conversationId are required" });
+          return;
+        }
+
+        const valid = this.authService!.validatePrivilegeGrant(grantId, conversationId);
+        if (!valid) {
+          res.status(401).json({ error: "Invalid or expired privilege grant" });
+          return;
+        }
+
+        res.json({ valid: true });
       });
 
       this.app.post("/api/auth/setup", (req, res) => {
@@ -513,6 +649,11 @@ function readBodyString(body: unknown, key: string): string {
   const value = (body as Record<string, unknown>)[key];
   if (typeof value !== "string") return "";
   return value.trim();
+}
+
+function readBodyBoolean(body: unknown, key: string): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  return (body as Record<string, unknown>)[key] === true;
 }
 
 function readBearerToken(req: Request): string {

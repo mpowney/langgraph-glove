@@ -1,6 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatEntry, ClientMessage, ConnectionStatus, ServerMessage } from "../types";
 
+const RECONNECT_INITIAL_DELAY_MS = 5_000;
+const RECONNECT_BACKOFF_MULTIPLIER = 1.5;
+const RECONNECT_MAX_DELAY_MS = 30_000;
+
 function updateMessageToEnd(
   messages: ChatEntry[],
   messageId: string,
@@ -31,12 +35,29 @@ function buildWsUrl(authToken?: string): string {
   return url.toString();
 }
 
-export function useWebSocket(conversationId: string, personalToken?: string, authToken?: string) {
+export function useWebSocket(
+  conversationId: string,
+  personalToken?: string,
+  privilegeGrantId?: string,
+  authToken?: string,
+) {
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
   const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const disconnectNoticeShownRef = useRef(false);
   // Whether the last message in the list is currently streaming
   const streamingIdRef = useRef<string | null>(null);
+  // Refs so ws.onopen always sees the latest token values without needing them
+  // in the WebSocket effect's dependency array.
+  const personalTokenRef = useRef(personalToken);
+  const privilegeGrantIdRef = useRef(privilegeGrantId);
+  // Track last-sent token values so we can send explicit null only on clear.
+  const lastSyncedPersonalTokenRef = useRef<string | undefined>(personalToken);
+  const lastSyncedPrivilegeGrantIdRef = useRef<string | undefined>(privilegeGrantId);
+  personalTokenRef.current = personalToken;
+  privilegeGrantIdRef.current = privilegeGrantId;
 
   useEffect(() => {
     // `active` lets cleanup signal that this effect instance has been torn
@@ -47,26 +68,73 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
     // a spurious disconnect message to the chat. Instead we defer the close
     // until onopen if the socket hasn't connected yet.
     let active = true;
-    const ws = new WebSocket(buildWsUrl(authToken));
-    wsRef.current = ws;
 
-    ws.onopen = () => {
-      if (!active) {
-        // Cleanup already ran while we were connecting — close now that it's safe.
-        ws.close();
-        return;
+    const clearReconnectTimer = () => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
       }
-      setStatus("connected");
     };
 
-    ws.onmessage = ({ data }: MessageEvent<string>) => {
-      const receivedAt = new Date().toISOString();
-      let msg: ServerMessage;
-      try {
-        msg = JSON.parse(data) as ServerMessage;
-      } catch {
-        return;
-      }
+    const scheduleReconnect = () => {
+      if (!active) return;
+      const attempt = reconnectAttemptRef.current;
+      const delayMs = Math.min(
+        RECONNECT_MAX_DELAY_MS,
+        Math.round(RECONNECT_INITIAL_DELAY_MS * (RECONNECT_BACKOFF_MULTIPLIER ** attempt)),
+      );
+      reconnectAttemptRef.current = attempt + 1;
+      setStatus("connecting");
+      clearReconnectTimer();
+      reconnectTimerRef.current = window.setTimeout(() => {
+        reconnectTimerRef.current = null;
+        connect();
+      }, delayMs);
+    };
+
+    const connect = () => {
+      if (!active) return;
+      setStatus("connecting");
+      const ws = new WebSocket(buildWsUrl(authToken));
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        if (wsRef.current !== ws) return;
+        if (!active) {
+          // Cleanup already ran while we were connecting — close now that it's safe.
+          ws.close();
+          return;
+        }
+        reconnectAttemptRef.current = 0;
+        disconnectNoticeShownRef.current = false;
+        setStatus("connected");
+        // Proactively register any active tokens with the server-side conversation
+        // context so they are available before the first message is sent, and so
+        // that switching to an existing conversation immediately restores them.
+        const pt = personalTokenRef.current;
+        const pg = privilegeGrantIdRef.current;
+        if (pt !== undefined || pg !== undefined) {
+          const contextFrame: ClientMessage = {
+            type: "context",
+            conversationId,
+            ...(pt !== undefined ? { personalToken: pt } : {}),
+            ...(pg !== undefined ? { privilegeGrantId: pg } : {}),
+          };
+          ws.send(JSON.stringify(contextFrame));
+        }
+        lastSyncedPersonalTokenRef.current = pt;
+        lastSyncedPrivilegeGrantIdRef.current = pg;
+      };
+
+      ws.onmessage = ({ data }: MessageEvent<string>) => {
+        if (wsRef.current !== ws) return;
+        const receivedAt = new Date().toISOString();
+        let msg: ServerMessage;
+        try {
+          msg = JSON.parse(data) as ServerMessage;
+        } catch {
+          return;
+        }
 
       if (msg.type === "chunk") {
         const role = msg.role ?? "agent";
@@ -168,51 +236,107 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
           },
         ]);
       }
+      };
+
+      ws.onerror = () => {
+        if (!active) return;
+        if (wsRef.current !== ws) return;
+        setStatus("error");
+      };
+
+      ws.onclose = () => {
+        // Ignore closes triggered by the StrictMode cleanup (active === false).
+        // Those are intentional teardowns of the first effect instance; the real
+        // connection is established by the second mount.
+        if (!active) return;
+        if (wsRef.current !== ws) return;
+        wsRef.current = null;
+        setStatus("disconnected");
+        if (streamingIdRef.current) {
+          const id = streamingIdRef.current;
+          streamingIdRef.current = null;
+          setMessages((prev) =>
+            updateMessageToEnd(
+              prev,
+              id,
+              (message) => ({ ...message, isStreaming: false }),
+            ),
+          );
+        }
+        if (!disconnectNoticeShownRef.current) {
+          disconnectNoticeShownRef.current = true;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              conversationId,
+              role: "agent",
+              content: "⚠ Connection lost. Reconnecting automatically...",
+              isStreaming: false,
+              receivedAt: new Date().toISOString(),
+            },
+          ]);
+        }
+        scheduleReconnect();
+      };
     };
 
-    ws.onerror = () => { if (active) setStatus("error"); };
-
-    ws.onclose = () => {
-      // Ignore closes triggered by the StrictMode cleanup (active === false).
-      // Those are intentional teardowns of the first effect instance; the real
-      // connection is established by the second mount.
-      if (!active) return;
-      setStatus("disconnected");
-      if (streamingIdRef.current) {
-        const id = streamingIdRef.current;
-        streamingIdRef.current = null;
-        setMessages((prev) =>
-          updateMessageToEnd(
-            prev,
-            id,
-            (message) => ({ ...message, isStreaming: false }),
-          ),
-        );
-      }
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          conversationId,
-          role: "agent",
-          content: "⚠ Connection closed. Refresh the page to reconnect.",
-          isStreaming: false,
-          receivedAt: new Date().toISOString(),
-        },
-      ]);
-    };
+    connect();
 
     return () => {
       active = false;
+      clearReconnectTimer();
+      reconnectAttemptRef.current = 0;
+      disconnectNoticeShownRef.current = false;
+      const currentWs = wsRef.current;
+      wsRef.current = null;
       // Only close directly if already connected; if still CONNECTING, onopen
       // will call ws.close() once it fires (see above). This avoids the
       // browser warning "WebSocket is closed before the connection is
       // established".
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
+      if (currentWs?.readyState === WebSocket.OPEN) {
+        currentWs.close();
       }
     };
   }, [conversationId, authToken]);
+
+  // When tokens change on an already-open socket, push a context frame so the
+  // server-side conversation context stays in sync without waiting for the next
+  // message. Fires after connection changes too, but the readyState guard
+  // makes those a no-op (onopen handles the post-connect send instead).
+  useEffect(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const contextFrame: ClientMessage = {
+      type: "context",
+      conversationId,
+    };
+
+    let shouldSend = false;
+
+    if (personalToken !== undefined) {
+      contextFrame.personalToken = personalToken;
+      shouldSend = true;
+    } else if (lastSyncedPersonalTokenRef.current !== undefined) {
+      contextFrame.personalToken = null;
+      shouldSend = true;
+    }
+
+    if (privilegeGrantId !== undefined) {
+      contextFrame.privilegeGrantId = privilegeGrantId;
+      shouldSend = true;
+    } else if (lastSyncedPrivilegeGrantIdRef.current !== undefined) {
+      contextFrame.privilegeGrantId = null;
+      shouldSend = true;
+    }
+
+    if (shouldSend) {
+      ws.send(JSON.stringify(contextFrame));
+    }
+
+    lastSyncedPersonalTokenRef.current = personalToken;
+    lastSyncedPrivilegeGrantIdRef.current = privilegeGrantId;
+  }, [conversationId, personalToken, privilegeGrantId]);
 
   const sendMessage = useCallback(
     (text: string) => {
@@ -230,11 +354,12 @@ export function useWebSocket(conversationId: string, personalToken?: string, aut
         type: "message",
         text,
         conversationId,
-        personalToken: personalToken ?? null,
+        ...(personalToken !== undefined ? { personalToken } : {}),
+        ...(privilegeGrantId !== undefined ? { privilegeGrantId } : {}),
       };
       ws.send(JSON.stringify(payload));
     },
-    [conversationId, personalToken],
+    [conversationId, personalToken, privilegeGrantId],
   );
 
   return { messages, sendMessage, status, myConversationId: conversationId };
