@@ -33,7 +33,7 @@ interface ChatAreaProps {
 
 function formatSessionLabel(conversationId: string): string {
   return conversationId.startsWith("any")
-    ? conversationId
+    ? conversationId.slice(0, 16)
     : conversationId.slice(0, 8);
 }
 
