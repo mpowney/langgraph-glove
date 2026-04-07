@@ -21,17 +21,10 @@ export function isApiRequest(input: RequestInfo | URL): boolean {
   }
 }
 
-export function clearStoredPersonalToken(): void {
-  sessionStorage.removeItem(PASSKEY_PERSONAL_TOKEN_STORAGE_KEY);
-}
-
-export function clearStoredAuth(clearPersonalToken = false): boolean {
-  const rawToken = sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
-  const hadToken = (rawToken?.trim().length ?? 0) > 0;
+export function clearStoredAuth(): boolean {
+  const hadToken = Boolean(sessionStorage.getItem(AUTH_TOKEN_STORAGE_KEY));
   sessionStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
-  if (clearPersonalToken) {
-    clearStoredPersonalToken();
-  }
+  sessionStorage.removeItem(PASSKEY_PERSONAL_TOKEN_STORAGE_KEY);
   return hadToken;
 }
 

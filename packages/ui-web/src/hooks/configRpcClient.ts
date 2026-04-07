@@ -3,6 +3,7 @@ import type {
   ConfigVersion,
   ConfigVersionSummary,
 } from "../types";
+import { createUuid } from "../uuid";
 
 interface RpcResponse<T> {
   id: string;
@@ -30,7 +31,7 @@ export async function callConfigTool<T>(
     method: "POST",
     headers,
     body: JSON.stringify({
-      id: crypto.randomUUID(),
+      id: createUuid(),
       method,
       params,
     }),
