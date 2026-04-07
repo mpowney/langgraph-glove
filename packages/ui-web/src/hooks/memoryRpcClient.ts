@@ -1,4 +1,5 @@
 import type { MemoryToolHealth } from "../types";
+import { createUuid } from "../uuid";
 
 interface RpcResponse<T> {
   id: string;
@@ -32,7 +33,7 @@ export async function callMemoryTool<T>(
     method: "POST",
     headers,
     body: JSON.stringify({
-      id: crypto.randomUUID(),
+      id: createUuid(),
       method,
       params,
     }),

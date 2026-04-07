@@ -23,15 +23,32 @@ import { ToolsPanel } from "./components/ToolsPanel";
 import { AuthGate } from "./components/AuthGate";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
+import { createUuid } from "./uuid";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
 const SHOW_DETAILS_KEY = "glove_show_accordion_and_sub_agents";
 
+function resolveAuthApiBaseUrl(rawApiUrl: string | undefined): string | null {
+  if (!rawApiUrl?.trim()) return null;
+
+  try {
+    const url = new URL(rawApiUrl);
+    // If backend metadata points to a loopback/any address, use the current page host
+    // so remote browsers still reach the same server machine.
+    if (["localhost", "127.0.0.1", "0.0.0.0", "::1"].includes(url.hostname)) {
+      url.hostname = window.location.hostname;
+    }
+    return url.toString().replace(/\/$/, "");
+  } catch {
+    return rawApiUrl;
+  }
+}
+
 function getOrCreateConversationId(): string {
   const existing = localStorage.getItem(CONVERSATION_ID_KEY)?.trim();
   if (existing) return existing;
-  const generated = crypto.randomUUID();
+  const generated = createUuid();
   localStorage.setItem(CONVERSATION_ID_KEY, generated);
   return generated;
 }
@@ -48,7 +65,9 @@ const useStyles = makeStyles({
 function App() {
   const theme = useTheme();
   const appInfo = useAppInfo();
-  const authApiBaseUrl = appInfo?.apiUrl ?? null;
+  const resolvedAdminApiBaseUrl = resolveAuthApiBaseUrl(appInfo?.apiUrl) ?? "";
+  const adminApiBaseUrl = import.meta.env.DEV ? "" : resolvedAdminApiBaseUrl;
+  const authApiBaseUrl = adminApiBaseUrl;
   const auth = useAuth(authApiBaseUrl);
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
@@ -211,7 +230,7 @@ function App() {
   );
 
   const handleStartNewConversation = useCallback(() => {
-    const nextConversationId = crypto.randomUUID();
+    const nextConversationId = createUuid();
     localStorage.setItem(CONVERSATION_ID_KEY, nextConversationId);
     setConversationId(nextConversationId);
   }, []);
@@ -298,13 +317,13 @@ function App() {
         <ConversationBrowser
           open={browserOpen}
           onClose={() => setBrowserOpen(false)}
-          apiBaseUrl={appInfo?.apiUrl}
+          apiBaseUrl={adminApiBaseUrl}
           authToken={auth.token ?? undefined}
         />
         <ToolsPanel
           open={toolsPanelOpen}
           onClose={() => setToolsPanelOpen(false)}
-          apiBaseUrl={appInfo?.apiUrl}
+          apiBaseUrl={adminApiBaseUrl}
           authToken={auth.token ?? undefined}
         />
         <MemoryAdmin

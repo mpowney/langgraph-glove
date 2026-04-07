@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { ChatEntry, ClientMessage, ConnectionStatus, ServerMessage } from "../types";
+import { createUuid } from "../uuid";
 
 const RECONNECT_INITIAL_DELAY_MS = 5_000;
 const RECONNECT_BACKOFF_MULTIPLIER = 1.5;
@@ -149,7 +150,7 @@ export function useWebSocket(
         const currentStreaming = streamingRef.current.get(convId) ?? null;
 
         if (!currentStreaming || currentStreaming.sourceKey !== sourceKey) {
-          const nextStream = { id: crypto.randomUUID(), sourceKey };
+          const nextStream = { id: createUuid(), sourceKey };
           streamingRef.current.set(convId, nextStream);
 
           setMessages((prev) => {
@@ -212,7 +213,7 @@ export function useWebSocket(
         setMessages((prev) => [
           ...prev,
           {
-            id: crypto.randomUUID(),
+            id: createUuid(),
             conversationId: msg.conversationId,
             role: "prompt",
             content: msg.text,
@@ -242,7 +243,7 @@ export function useWebSocket(
         setMessages((prev) => [
           ...prev,
           {
-            id: crypto.randomUUID(),
+            id: createUuid(),
             conversationId: msg.conversationId,
             role: msg.role,
             content: msg.text,
@@ -263,7 +264,7 @@ export function useWebSocket(
         setMessages((prev) => [
           ...prev,
           {
-            id: crypto.randomUUID(),
+            id: createUuid(),
             conversationId: msg.conversationId,
             role: "error",
             content: msg.message,
@@ -309,7 +310,7 @@ export function useWebSocket(
           setMessages((prev) => [
             ...prev,
             {
-              id: crypto.randomUUID(),
+              id: createUuid(),
               conversationId,
               role: "agent",
               content: "⚠ Connection lost. Reconnecting automatically...",
@@ -384,7 +385,7 @@ export function useWebSocket(
       const ws = wsRef.current;
       if (!ws || ws.readyState !== WebSocket.OPEN) return;
       const userEntry: ChatEntry = {
-        id: crypto.randomUUID(),
+        id: createUuid(),
         conversationId,
         role: "user",
         content: text,

@@ -42,13 +42,30 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
+    host: "0.0.0.0",
     port: 5173,
     proxy: {
       ...(toolsTarget
         ? {
-            // Generic tools endpoint is handled by AdminApi.
+            // AdminApi routes exposed on port 8081.
             // Example: /api/tools/_memory/rpc -> http://127.0.0.1:8081/api/tools/_memory/rpc
             "/api/tools": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+            "/api/agents": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+            "/api/auth": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+            "/api/conversations": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+            "/api/internal": {
               target: toolsTarget,
               changeOrigin: true,
             },
@@ -62,5 +79,8 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
+  },
+  preview: {
+    host: "0.0.0.0",
   },
 });
