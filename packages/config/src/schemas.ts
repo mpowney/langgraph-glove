@@ -204,6 +204,51 @@ export const ToolsConfigSchema = z.record(z.string(), ToolServerEntrySchema);
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Graph config schema
+// ---------------------------------------------------------------------------
+
+/**
+ * Config for a single named graph entry.
+ *
+ * A graph defines which agent acts as the orchestrator and which agents are
+ * sub-agents within that graph. When `subAgentKeys` is empty or omitted, the
+ * graph runs in single-agent ReAct mode using only the orchestrator agent.
+ */
+export const GraphEntrySchema = z.object({
+  /**
+   * Key of the agent (from agents.json) to use as the orchestrator / sole
+   * agent for this graph.
+   */
+  orchestratorAgentKey: z.string(),
+  /**
+   * Keys of agents (from agents.json) that act as sub-agents delegated to by
+   * the orchestrator. When absent or empty the graph runs as a single-agent
+   * ReAct loop.
+   */
+  subAgentKeys: z.array(z.string()).optional(),
+});
+export type GraphEntry = z.infer<typeof GraphEntrySchema>;
+
+/**
+ * Top-level graphs.json schema.
+ * Must contain a `default` key. Additional keys define named graphs (e.g.
+ * `"scheduled"` for automated task execution).
+ */
+export const GraphsConfigSchema = z
+  .record(z.string(), GraphEntrySchema)
+  .refine((obj) => "default" in obj, {
+    message: 'graphs.json must contain a "default" key',
+  });
+export type GraphsConfig = z.infer<typeof GraphsConfigSchema>;
+
+/**
+ * Fallback graph entry used when `graphs.json` is absent or the requested
+ * graph key is not found. Points to the `"default"` agent as a single-agent
+ * ReAct loop with no explicit sub-agents.
+ */
+export const DEFAULT_GRAPH_ENTRY: GraphEntry = { orchestratorAgentKey: "default" };
+
+// ---------------------------------------------------------------------------
 // Gateway config schema
 // ---------------------------------------------------------------------------
 

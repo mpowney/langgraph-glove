@@ -31,6 +31,9 @@ export {
   ToolServerEntrySchema,
   ToolsConfigSchema,
   GatewayConfigSchema,
+  GraphEntrySchema,
+  GraphsConfigSchema,
+  DEFAULT_GRAPH_ENTRY,
   SECRET_REF_PATTERN,
 } from "./schemas.js";
 export type {
@@ -52,4 +55,6 @@ export type {
   ToolServerEntry,
   ToolsConfig,
   GatewayConfig,
+  GraphEntry,
+  GraphsConfig,
 } from "./schemas.js";
