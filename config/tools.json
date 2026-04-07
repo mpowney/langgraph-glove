@@ -47,6 +47,12 @@
   },
   "datetime": {
     "transport": "unix-socket",
+    "url": "http://localhost:3015",
     "socketName": "datetime"
+  },
+  "schedule": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3016",
+    "socketName": "schedule"
   }
 }

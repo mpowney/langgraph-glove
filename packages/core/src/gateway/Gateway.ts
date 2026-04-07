@@ -199,6 +199,10 @@ export class Gateway extends EventEmitter {
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
         toolRegistry: this.toolRegistry,
         agentCapabilities: this.agentCapabilities,
+        invokeAgent: async ({ conversationId, prompt, personalToken }) => {
+          if (!this.agent) throw new Error("Agent is not running");
+          return this.agent.invoke(prompt, conversationId, undefined, personalToken);
+        },
       });
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);

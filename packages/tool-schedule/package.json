@@ -1,0 +1,34 @@
+{
+  "name": "@langgraph-glove/tool-schedule",
+  "version": "0.1.0",
+  "description": "Remote tool package — task scheduling via cron, with management and execution in one server",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/main.ts --format esm --dts --out-dir dist",
+    "dev": "tsx src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@langgraph-glove/config": "workspace:*",
+    "@langgraph-glove/tool-server": "workspace:*",
+    "node-cron": "^3.0.3",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/uuid": "^10.0.0",
+    "tsup": "^8.3.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
