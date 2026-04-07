@@ -55,7 +55,7 @@ function getOrCreateConversationId(): string {
 
 function formatSessionLabel(conversationId: string): string {
   return conversationId.startsWith("any")
-    ? conversationId.slice(0, 16)
+    ? conversationId
     : conversationId.slice(0, 8);
 }
 
