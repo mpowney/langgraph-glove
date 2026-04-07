@@ -173,6 +173,40 @@ Each non-default entry inherits from `"default"` (deep-merged), so you only need
 | `tools` | Tool name allow-list. Empty/missing = all discovered tools |
 | `recursionLimit` | Max ReAct loop steps (default: 25) |
 
+### `config/channels.json` (optional)
+
+Declares channel runtime settings. Secrets in channel settings are resolved via `{SECRET:name}` like all other config files.
+
+```json
+{
+  "cli": {
+    "enabled": true,
+    "settings": {
+      "receiveAll": false
+    }
+  },
+  "web": {
+    "enabled": true,
+    "settings": {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "receiveAll": true
+    }
+  },
+  "bluebubbles": {
+    "enabled": false,
+    "settings": {
+      "serverUrl": "{SECRET:bluebubbles-server-url}",
+      "password": "{SECRET:bluebubbles-password}",
+      "webhookHost": "0.0.0.0",
+      "webhookPort": 5001
+    }
+  }
+}
+```
+
+`--web` starts the `web` entry, and `--bluebubbles` starts the `bluebubbles` entry.
+
 ### `config/tools.json` (optional)
 
 Declares remote tool servers to connect to at startup.
@@ -323,7 +357,9 @@ pnpm start:web-only
 
 # Or invoke node directly (equivalent to pnpm start:web)
 node packages/core/dist/main.js --web
-node packages/core/dist/main.js --web --web-port 3000
+
+# Start web + BlueBubbles (requires channels.json bluebubbles entry)
+node packages/core/dist/main.js --web --bluebubbles
 ```
 
 To override the config or data directories:

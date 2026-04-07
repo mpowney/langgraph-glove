@@ -53,6 +53,12 @@ function getOrCreateConversationId(): string {
   return generated;
 }
 
+function formatSessionLabel(conversationId: string): string {
+  return conversationId.startsWith("any")
+    ? conversationId.slice(0, 16)
+    : conversationId.slice(0, 8);
+}
+
 const useStyles = makeStyles({
   shell: {
     display: "flex",
@@ -348,7 +354,7 @@ function App() {
             <DialogContent>
               <Text block>
                 {pendingConversationSwitchId
-                  ? `Switch to session ${pendingConversationSwitchId.slice(0, 8)}?`
+                  ? `Switch to session ${formatSessionLabel(pendingConversationSwitchId)}?`
                   : "Switch to this conversation?"}
               </Text>
               <Text block>

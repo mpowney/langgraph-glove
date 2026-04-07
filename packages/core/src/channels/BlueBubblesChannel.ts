@@ -1,8 +1,40 @@
 import http from "node:http";
 import express, { type Express } from "express";
 import { v4 as uuidv4 } from "uuid";
+import type { ChannelEntry } from "@langgraph-glove/config";
+import { z } from "zod";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+
+export const BlueBubblesChannelSettingsSchema = z.object({
+  serverUrl: z.string().url(),
+  password: z.string().min(1).optional(),
+  webhookPort: z.number().int().positive().optional(),
+  webhookHost: z.string().min(1).optional(),
+  receiveAll: z.boolean().optional(),
+});
+
+export function createBlueBubblesChannelFromConfig(entry: ChannelEntry | undefined): BlueBubblesChannel {
+  if (!entry) {
+    throw new Error('Missing "bluebubbles" channel config in channels.json');
+  }
+  if (entry.enabled === false) {
+    throw new Error('BlueBubbles channel is disabled in channels.json; enable it or run without --bluebubbles');
+  }
+
+  const result = BlueBubblesChannelSettingsSchema.safeParse(entry.settings ?? {});
+  if (!result.success) {
+    throw new Error(`Invalid channels.json bluebubbles settings: ${result.error.message}`);
+  }
+
+  return new BlueBubblesChannel({
+    serverUrl: result.data.serverUrl,
+    password: result.data.password,
+    webhookPort: result.data.webhookPort,
+    webhookHost: result.data.webhookHost,
+    receiveAll: result.data.receiveAll,
+  });
+}
 
 /** Webhook payload sent by the BlueBubbles server for new incoming messages. */
 interface BlueBubblesWebhookPayload {
@@ -20,7 +52,7 @@ export interface BlueBubblesChannelConfig extends ChannelConfig {
   /** Base URL of the BlueBubbles server (e.g. `http://192.168.1.10:1234`). */
   serverUrl: string;
   /** BlueBubbles server password. */
-  password: string;
+  password?: string;
   /**
    * Local port on which this process listens for incoming BlueBubbles webhooks.
    * You must configure this URL inside the BlueBubbles app's webhook settings.
@@ -56,7 +88,7 @@ export class BlueBubblesChannel extends Channel {
   private app: Express;
   private webhookServer?: http.Server;
   private readonly serverUrl: string;
-  private readonly password: string;
+  private readonly password?: string;
   private readonly webhookPort: number;
   private readonly webhookHost: string;
 
@@ -100,11 +132,12 @@ export class BlueBubblesChannel extends Channel {
    * (which is the BlueBubbles chat GUID).
    */
   async sendMessage(message: OutgoingMessage): Promise<void> {
-    const url = `${this.serverUrl}/api/v1/message/text?password=${encodeURIComponent(this.password)}`;
+    const url = `${this.serverUrl}/api/v1/message/text${this.password ? `?password=${encodeURIComponent(this.password)}` : ""}`;
+    const plainText = this.stripMarkdown(message.text);
 
     const body = {
       chatGuid: message.conversationId,
-      message: message.text,
+      message: plainText,
       tempGuid: uuidv4(),
     };
 
@@ -154,5 +187,29 @@ export class BlueBubblesChannel extends Channel {
         text: "Sorry, an error occurred while processing your message.",
       }).catch(console.error);
     }
+  }
+
+  private stripMarkdown(input: string): string {
+    return input
+      // Remove fenced code block markers while keeping inner code text.
+      .replace(/```[\w-]*\n?/g, "")
+      .replace(/```/g, "")
+      // Remove inline code markers.
+      .replace(/`([^`]+)`/g, "$1")
+      // Convert markdown links/images to visible text only.
+      .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+      .replace(/\[([^\]]+)\]\(([^)]*)\)/g, "$1")
+      // Remove emphasis and heading/quote/list markers.
+      .replace(/(\*\*|__)(.*?)\1/g, "$2")
+      .replace(/(\*|_)(.*?)\1/g, "$2")
+      .replace(/~~(.*?)~~/g, "$1")
+      .replace(/^\s{0,3}#{1,6}\s+/gm, "")
+      .replace(/^\s{0,3}>\s?/gm, "")
+      .replace(/^\s*([-+*]|\d+\.)\s+/gm, "")
+      // Remove markdown horizontal rules.
+      .replace(/^\s*([-*_]){3,}\s*$/gm, "")
+      // Normalize whitespace/newlines for SMS-style output.
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
   }
 }
