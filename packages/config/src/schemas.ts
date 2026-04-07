@@ -237,7 +237,7 @@ export type GraphEntry = z.infer<typeof GraphEntrySchema>;
 export const GraphsConfigSchema = z
   .record(z.string(), GraphEntrySchema)
   .refine((obj) => "default" in obj, {
-    message: 'graphs.json must contain a "default" key',
+    message: 'Configuration validation failed: graphs.json must contain a "default" graph entry',
   });
 export type GraphsConfig = z.infer<typeof GraphsConfigSchema>;
 

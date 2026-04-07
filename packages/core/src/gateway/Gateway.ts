@@ -334,7 +334,9 @@ export class Gateway extends EventEmitter {
     const agents = this.config!.agents as Record<string, AgentEntry>;
     const resolvedGraphEntry = this.config!.graphs[graphKey];
     if (!resolvedGraphEntry) {
-      logger.warn(`Graph key "${graphKey}" not found in graphs.json — falling back to default graph entry`);
+      logger.warn(
+        `Graph key "${graphKey}" not found in graphs.json — falling back to default graph entry (orchestrator: "default", no sub-agents)`,
+      );
     }
     const graphEntry: GraphEntry = resolvedGraphEntry ?? DEFAULT_GRAPH_ENTRY;
     const models = this.models!;
