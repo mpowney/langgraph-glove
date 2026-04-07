@@ -28,14 +28,11 @@ export function createWebChannelFromConfig(
   entry: ChannelEntry | undefined,
   context: WebChannelFactoryContext,
 ): WebChannel {
-  if (!entry) {
-    throw new Error('Missing "web" channel config in channels.json');
-  }
-  if (entry.enabled === false) {
+  if (entry?.enabled === false) {
     throw new Error('Web channel is disabled in channels.json; enable it or run without --web');
   }
 
-  const result = WebChannelSettingsSchema.safeParse(entry.settings ?? {});
+  const result = WebChannelSettingsSchema.safeParse(entry?.settings ?? {});
   if (!result.success) {
     throw new Error(`Invalid channels.json web settings: ${result.error.message}`);
   }
