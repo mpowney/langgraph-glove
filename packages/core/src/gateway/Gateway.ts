@@ -156,6 +156,12 @@ export class Gateway extends EventEmitter {
         recursionLimit: orchestratorEntry.recursionLimit,
         toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
         authService: this.authService ?? undefined,
+        graphInfo: {
+          graphKey: "default",
+          mode: (defaultGraphEntry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent",
+          orchestratorAgentKey: defaultGraphEntry.orchestratorAgentKey,
+          subAgentKeys: defaultGraphEntry.subAgentKeys ?? [],
+        },
       });
 
       // 8. Channels

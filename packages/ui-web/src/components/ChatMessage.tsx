@@ -670,6 +670,45 @@ export function ChatMessage({
     );
   }
 
+  if (entry.role === "graph-definition") {
+    let graphName: string | undefined;
+    let graphContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed)) {
+        if (typeof parsed.graphName === "string") {
+          graphName = parsed.graphName;
+        } else {
+          const graph = isObject(parsed.graph) ? parsed.graph : undefined;
+          if (graph && typeof graph.graphKey === "string") {
+            graphName = graph.graphKey;
+          }
+        }
+      }
+      graphContent = toDisplayJson(parsed, entry.content);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {renderSessionLabel()}
+          <MessageAccordion
+            className={styles.modelCallAccordion}
+            itemValue="graph-definition"
+            headerText={`Graph definition:${graphName ? ` ${graphName}` : ""}`}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {graphContent}
+          </MessageAccordion>
+        </div>
+      </div>
+    );
+  }
+
   if (entry.role === "model-response") {
     let modelName: string | undefined;
     let modelResponseContent = entry.content;

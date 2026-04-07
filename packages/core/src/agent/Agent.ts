@@ -317,6 +317,13 @@ interface ConversationTokenEntry {
   privilegeGrantExpiresAt?: number;
 }
 
+interface GraphDispatchInfo {
+  graphKey: string;
+  mode: "single-agent" | "multi-agent";
+  orchestratorAgentKey: string;
+  subAgentKeys: string[];
+}
+
 export interface AgentConfig {
   /**
    * Maximum number of steps (agent + tool calls) before LangGraph throws.
@@ -347,6 +354,11 @@ export interface AgentConfig {
    * have expired or been revoked server-side are evicted from the context immediately.
    */
   authService?: PrivilegeGrantChecker;
+  /**
+   * Optional static graph metadata emitted to `receiveAll` channels when a
+   * message is dispatched, so observers can see which graph processed it.
+   */
+  graphInfo?: GraphDispatchInfo;
 }
 
 /**
@@ -797,6 +809,28 @@ export class GloveAgent {
     const receiveAllChannels = this.channels.filter((ch) => ch.receiveAll);
     const mirrorTargets = receiveAllChannels.filter((ch) => ch !== sourceChannel);
     const observabilityTargets = receiveAllChannels;
+
+    if (observabilityTargets.length > 0 && this.config.graphInfo) {
+      const graphInfoText = JSON.stringify(
+        {
+          type: "graph-info",
+          graphName: this.config.graphInfo.graphKey,
+          graph: this.config.graphInfo,
+          sourceChannel: sourceChannel.name,
+        },
+        null,
+        2,
+      );
+      for (const ch of observabilityTargets) {
+        ch
+          .sendMessage({
+            conversationId: message.conversationId,
+            text: graphInfoText,
+            role: "graph-definition",
+          })
+          .catch((e: unknown) => logger.error(`Failed to send graph info to channel "${ch.name}"`, e));
+      }
+    }
 
     // Mirror the user's message to other receiveAll channels before the agent replies.
     // Do not mirror back to the source channel; UI channels already render their own local input.

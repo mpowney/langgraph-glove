@@ -91,7 +91,7 @@ type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
@@ -327,6 +327,7 @@ export class WebChannel extends Channel {
       || message.role === "agent-transfer"
       || message.role === "model-call"
       || message.role === "model-response"
+      || message.role === "graph-definition"
     ) {
       const payload: ServerMessage = {
         type: "tool_event",
