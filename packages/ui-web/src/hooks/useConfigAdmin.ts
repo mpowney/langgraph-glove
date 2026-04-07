@@ -139,6 +139,26 @@ export function useConfigAdmin(
         authToken,
       );
       setFiles(data);
+      const preloadResults = await Promise.allSettled(
+        data.map(async (file) => {
+          const content = await readConfigFile(
+            configToolUrl,
+            file.name,
+            privilegeGrantId,
+            conversationId,
+            authToken,
+          );
+          return [file.name, content] as const;
+        }),
+      );
+      const preloadedConfigs: Record<string, string> = {};
+      for (const result of preloadResults) {
+        if (result.status === "fulfilled") {
+          const [filename, content] = result.value;
+          preloadedConfigs[filename] = content;
+        }
+      }
+      setAllConfigs(preloadedConfigs);
       setFilesState("idle");
     } catch (err) {
       setFilesError(toErrorMessage(err));
@@ -274,6 +294,7 @@ export function useConfigAdmin(
     files,
     selectedFile,
     fileContent,
+    allConfigs,
     history,
     selectedVersion,
     loadFiles,

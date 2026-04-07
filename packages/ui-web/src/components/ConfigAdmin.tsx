@@ -21,6 +21,10 @@ import {
   MessageBar,
   MessageBarBody,
   Field,
+  Input,
+  Dropdown,
+  Option,
+  Switch,
   Textarea,
 } from "@fluentui/react-components";
 
@@ -39,6 +43,7 @@ import {
   ErrorCircle24Regular,
   TextWrap24Regular,
   TextWrapOff24Regular,
+  Add24Regular,
 } from "@fluentui/react-icons";
 import type {
   ConfigFileSummary,
@@ -198,6 +203,19 @@ const useStyles = makeStyles({
     flexDirection: "column",
     gap: tokens.spacingVerticalXXS,
   },
+  listEditor: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalS,
+  },
+  listRow: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+  },
+  listInput: {
+    flex: 1,
+  },
   noPrivileged: {
     display: "flex",
     flexDirection: "column",
@@ -264,14 +282,233 @@ function formatDate(iso: string): string {
   }
 }
 
-/** Simple friendly view for a single config entry. */
-function FriendlyEntryEditor({
+const MODEL_PROVIDER_OPTIONS = [
+  "openai",
+  "anthropic",
+  "google",
+  "ollama",
+  "openai-compatible",
+] as const;
+
+function toDisplayLabel(fieldKey: string): string {
+  return fieldKey.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
+}
+
+function parseModelKeys(content?: string): string[] {
+  if (!content) return [];
+  try {
+    const parsed = JSON.parse(content) as Record<string, unknown>;
+    return Object.keys(parsed);
+  } catch {
+    return [];
+  }
+}
+
+function updateObjectField(
+  onChange: (key: string, newValue: unknown) => void,
+  entryKey: string,
+  obj: Record<string, unknown>,
+  fieldKey: string,
+  newValue: unknown,
+): void {
+  onChange(entryKey, { ...obj, [fieldKey]: newValue });
+}
+
+function AgentModelKeyField({
   entryKey,
-  value,
+  obj,
+  modelKeys,
   onChange,
 }: {
   entryKey: string;
+  obj: Record<string, unknown>;
+  modelKeys: string[];
+  onChange: (key: string, newValue: unknown) => void;
+}) {
+  const currentValue = typeof obj.modelKey === "string" ? obj.modelKey : "";
+  const hasKnownValue = currentValue !== "" && modelKeys.includes(currentValue);
+  const selectedValue = hasKnownValue ? currentValue : "__custom__";
+
+  return (
+    <Field label="Model key">
+      <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingVerticalS }}>
+        <Dropdown
+          placeholder="Select model key"
+          value={selectedValue === "__custom__" ? "Custom value" : currentValue}
+          selectedOptions={selectedValue ? [selectedValue] : []}
+          onOptionSelect={(_, data) => {
+            const value = data.optionValue;
+            if (!value) {
+              return;
+            }
+            if (value === "__custom__") {
+              return;
+            }
+            updateObjectField(onChange, entryKey, obj, "modelKey", value);
+          }}
+        >
+          {modelKeys.map((modelKey) => (
+            <Option key={modelKey} value={modelKey}>
+              {modelKey}
+            </Option>
+          ))}
+          <Option value="__custom__">Custom value</Option>
+        </Dropdown>
+        {selectedValue === "__custom__" && (
+          <Input
+            value={currentValue}
+            placeholder="Enter custom model key"
+            onChange={(_, data) => updateObjectField(onChange, entryKey, obj, "modelKey", data.value)}
+          />
+        )}
+      </div>
+    </Field>
+  );
+}
+
+function AgentToolsField({
+  entryKey,
+  obj,
+  onChange,
+}: {
+  entryKey: string;
+  obj: Record<string, unknown>;
+  onChange: (key: string, newValue: unknown) => void;
+}) {
+  const styles = useStyles();
+  const tools = Array.isArray(obj.tools)
+    ? obj.tools.map((tool) => (typeof tool === "string" ? tool : String(tool)))
+    : [];
+
+  const setTools = (nextTools: string[]) => {
+    updateObjectField(onChange, entryKey, obj, "tools", nextTools);
+  };
+
+  return (
+    <Field label="Tools">
+      <div className={styles.listEditor}>
+        {tools.map((tool, index) => (
+          <div key={`${entryKey}-tool-${index}`} className={styles.listRow}>
+            <Input
+              className={styles.listInput}
+              value={tool}
+              placeholder="Tool name"
+              onChange={(_, data) => {
+                const nextTools = [...tools];
+                nextTools[index] = data.value;
+                setTools(nextTools);
+              }}
+            />
+            <Button
+              appearance="subtle"
+              aria-label={`Remove tool ${index + 1}`}
+              onClick={() => setTools(tools.filter((_, toolIndex) => toolIndex !== index))}
+            >
+              Remove
+            </Button>
+          </div>
+        ))}
+        <Button
+          appearance="secondary"
+          icon={<Add24Regular />}
+          onClick={() => setTools([...tools, ""])}
+        >
+          Add tool
+        </Button>
+      </div>
+    </Field>
+  );
+}
+
+function ModelProviderField({
+  entryKey,
+  obj,
+  onChange,
+}: {
+  entryKey: string;
+  obj: Record<string, unknown>;
+  onChange: (key: string, newValue: unknown) => void;
+}) {
+  const currentValue = typeof obj.provider === "string" ? obj.provider : "";
+
+  return (
+    <Field label="Provider">
+      <Dropdown
+        placeholder="Select provider"
+        value={currentValue}
+        selectedOptions={currentValue ? [currentValue] : []}
+        onOptionSelect={(_, data) => {
+          if (data.optionValue) {
+            updateObjectField(onChange, entryKey, obj, "provider", data.optionValue);
+          }
+        }}
+      >
+        {MODEL_PROVIDER_OPTIONS.map((provider) => (
+          <Option key={provider} value={provider}>
+            {provider}
+          </Option>
+        ))}
+      </Dropdown>
+    </Field>
+  );
+}
+
+function ModelThinkField({
+  entryKey,
+  obj,
+  onChange,
+}: {
+  entryKey: string;
+  obj: Record<string, unknown>;
+  onChange: (key: string, newValue: unknown) => void;
+}) {
+  const checked = Boolean(obj.think);
+
+  return (
+    <Field label="Think">
+      <Switch
+        checked={checked}
+        label={checked ? "Enabled" : "Disabled"}
+        onChange={(_, data) => updateObjectField(onChange, entryKey, obj, "think", data.checked)}
+      />
+    </Field>
+  );
+}
+
+function ModelBaseUrlField({
+  entryKey,
+  obj,
+  onChange,
+}: {
+  entryKey: string;
+  obj: Record<string, unknown>;
+  onChange: (key: string, newValue: unknown) => void;
+}) {
+  const currentValue = typeof obj.baseUrl === "string" ? obj.baseUrl : "";
+
+  return (
+    <Field label="Base Url">
+      <Input
+        value={currentValue}
+        placeholder="https://example.com"
+        onChange={(_, data) => updateObjectField(onChange, entryKey, obj, "baseUrl", data.value)}
+      />
+    </Field>
+  );
+}
+
+/** Simple friendly view for a single config entry. */
+function FriendlyEntryEditor({
+  filename,
+  entryKey,
+  value,
+  modelKeys,
+  onChange,
+}: {
+  filename: string;
+  entryKey: string;
   value: unknown;
+  modelKeys: string[];
   onChange: (key: string, newValue: unknown) => void;
 }) {
   const styles = useStyles();
@@ -293,11 +530,43 @@ function FriendlyEntryEditor({
 
   const obj = value as Record<string, unknown>;
 
+  const renderTypedField = (fieldKey: string) => {
+    if (filename === "agents.json" && fieldKey === "modelKey") {
+      return (
+        <AgentModelKeyField
+          entryKey={entryKey}
+          obj={obj}
+          modelKeys={modelKeys}
+          onChange={onChange}
+        />
+      );
+    }
+    if (filename === "agents.json" && fieldKey === "tools") {
+      return <AgentToolsField entryKey={entryKey} obj={obj} onChange={onChange} />;
+    }
+    if (filename === "models.json" && fieldKey === "provider") {
+      return <ModelProviderField entryKey={entryKey} obj={obj} onChange={onChange} />;
+    }
+    if (filename === "models.json" && fieldKey === "think") {
+      return <ModelThinkField entryKey={entryKey} obj={obj} onChange={onChange} />;
+    }
+    if (filename === "models.json" && fieldKey === "baseUrl") {
+      return <ModelBaseUrlField entryKey={entryKey} obj={obj} onChange={onChange} />;
+    }
+
+    return null;
+  };
+
   return (
     <div className={styles.friendlyEntry}>
       <Text className={styles.friendlyEntryKey}>{entryKey}</Text>
       {Object.entries(obj).map(([fieldKey, fieldValue]) => {
-        const fieldLabel = fieldKey.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
+        const typedField = renderTypedField(fieldKey);
+        if (typedField) {
+          return <div key={fieldKey} className={styles.friendlyField}>{typedField}</div>;
+        }
+
+        const fieldLabel = toDisplayLabel(fieldKey);
         const stringValue =
           typeof fieldValue === "string"
             ? fieldValue
@@ -373,6 +642,7 @@ export function ConfigAdmin({
     files,
     selectedFile,
     fileContent,
+    allConfigs,
     history,
     selectedVersion,
     loadFiles,
@@ -526,6 +796,13 @@ export function ConfigAdmin({
     }
   }, [draftContent]);
 
+  const modelKeys = useMemo(() => {
+    if (selectedFile === "models.json" && parsedConfig) {
+      return Object.keys(parsedConfig);
+    }
+    return parseModelKeys(allConfigs["models.json"]);
+  }, [allConfigs, parsedConfig, selectedFile]);
+
   const handleFriendlyChange = useCallback(
     (key: string, value: unknown) => {
       if (!parsedConfig) return;
@@ -597,8 +874,10 @@ export function ConfigAdmin({
         {Object.entries(parsedConfig).map(([key, value]) => (
           <FriendlyEntryEditor
             key={key}
+            filename={selectedFile}
             entryKey={key}
             value={value}
+            modelKeys={modelKeys}
             onChange={handleFriendlyChange}
           />
         ))}
