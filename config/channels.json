@@ -1,0 +1,26 @@
+{
+  "cli": {
+    "enabled": true,
+    "settings": {
+      "receiveAll": false
+    }
+  },
+  "web": {
+    "enabled": true,
+    "settings": {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "receiveAll": true
+    }
+  },
+  "bluebubbles": {
+    "enabled": true,
+    "settings": {
+      "serverUrl": "{SECRET:bluebubbles-server-url}",
+      "password": "{SECRET:bluebubbles-password}",
+      "webhookHost": "0.0.0.0",
+      "webhookPort": 5001,
+      "receiveAll": false
+    }
+  }
+}

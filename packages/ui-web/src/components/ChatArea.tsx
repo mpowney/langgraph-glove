@@ -31,6 +31,12 @@ interface ChatAreaProps {
   modelContextWindowTokens?: number;
 }
 
+function formatSessionLabel(conversationId: string): string {
+  return conversationId.startsWith("any")
+    ? conversationId
+    : conversationId.slice(0, 8);
+}
+
 export function ChatArea({
   messages,
   myConversationId,
@@ -82,7 +88,7 @@ export function ChatArea({
           modelContextWindowTokens={modelContextWindowTokens}
           sessionLabel={
             isForeignConversation
-              ? entry.conversationId.slice(0, 8)
+              ? formatSessionLabel(entry.conversationId)
               : undefined
           }
           sessionConversationId={isForeignConversation ? entry.conversationId : undefined}

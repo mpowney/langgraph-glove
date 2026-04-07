@@ -71,8 +71,6 @@ export type ModelsConfig = z.infer<typeof ModelsConfigSchema>;
 // ---------------------------------------------------------------------------
 
 export const ChannelEntrySchema = z.object({
-  /** Channel implementation type. */
-  type: z.string(),
   /** Whether the channel is enabled. Defaults to `true` if omitted. */
   enabled: z.boolean().optional(),
   /** Arbitrary channel-specific settings. */

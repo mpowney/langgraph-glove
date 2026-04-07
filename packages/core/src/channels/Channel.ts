@@ -1,5 +1,14 @@
 import { EventEmitter } from "node:events";
+import type { ChannelEntry } from "@langgraph-glove/config";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
+
+/** Returns a channel entry by key from channels.json data. */
+export function getChannelEntryByKey(
+  channels: Record<string, ChannelEntry>,
+  key: string,
+): ChannelEntry | undefined {
+  return channels[key];
+}
 
 export type StreamSource = "main" | "sub-agent";
 
