@@ -1,0 +1,20 @@
+{
+  "default": {
+    "orchestratorAgentKey": "default",
+    "subAgentKeys": [
+      "memory",
+      "researcher",
+      "weather",
+      "macos-perception",
+      "macos-action",
+      "admin"
+    ]
+  },
+  "scheduled": {
+    "orchestratorAgentKey": "scheduled",
+    "subAgentKeys": [
+      "memory",
+      "researcher"
+    ]
+  }
+}

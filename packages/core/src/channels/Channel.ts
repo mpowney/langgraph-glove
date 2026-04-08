@@ -55,9 +55,10 @@ export interface OutgoingMessage {
   * orchestrator to a sub-agent; `"model-call"` carries redacted model
   * invocation options (including tool definitions) for observability;
   * `"model-response"` carries the redacted response payload returned from
-  * a model invocation.
+  * a model invocation; "graph-definition" carries graph routing metadata for
+  * the current dispatch.
    */
-  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "error";
+  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "error";
   /**
    * Optional structured metadata for `"tool-call"` and `"tool-result"` events.
    * Carries the tool definition (parameter schema/descriptions) and the agent

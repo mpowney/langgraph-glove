@@ -242,9 +242,14 @@ const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   subAgentContainer: {
-    width: "80vw",
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "80vw",
   },
   subAgentAccordion: {
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "100%",
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -275,6 +280,8 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
   },
   subAgentBubble: {
+    width: "fit-content",
+    maxWidth: "100%",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusXLarge,
     borderBottomLeftRadius: tokens.borderRadiusSmall,
@@ -664,6 +671,45 @@ export function ChatMessage({
             checkpoint={entry.checkpoint}
           >
             {modelCallContent}
+          </MessageAccordion>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.role === "graph-definition") {
+    let graphName: string | undefined;
+    let graphContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed)) {
+        if (typeof parsed.graphName === "string") {
+          graphName = parsed.graphName;
+        } else {
+          const graph = isObject(parsed.graph) ? parsed.graph : undefined;
+          if (graph && typeof graph.graphKey === "string") {
+            graphName = graph.graphKey;
+          }
+        }
+      }
+      graphContent = toDisplayJson(parsed, entry.content);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {renderSessionLabel()}
+          <MessageAccordion
+            className={styles.modelCallAccordion}
+            itemValue="graph-definition"
+            headerText={`Graph definition:${graphName ? ` ${graphName}` : ""}`}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {graphContent}
           </MessageAccordion>
         </div>
       </div>

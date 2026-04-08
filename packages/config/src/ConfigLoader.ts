@@ -9,12 +9,15 @@ import {
   MemoriesConfigSchema,
   ToolsConfigSchema,
   GatewayConfigSchema,
+  GraphsConfigSchema,
+  DEFAULT_GRAPH_ENTRY,
   type ModelsConfig,
   type ChannelsConfig,
   type AgentsConfig,
   type MemoriesConfig,
   type ToolsConfig,
   type GatewayConfig,
+  type GraphsConfig,
 } from "./schemas.js";
 
 /**
@@ -27,6 +30,7 @@ export interface GloveConfig {
   memories: MemoriesConfig;
   tools: ToolsConfig;
   gateway: GatewayConfig;
+  graphs: GraphsConfig;
 }
 
 /**
@@ -81,8 +85,11 @@ export class ConfigLoader {
     };
     const tools = this.loadFileOptional("tools.json", ToolsConfigSchema) ?? {};
     const gateway = this.loadFileOptional("gateway.json", GatewayConfigSchema) ?? {};
+    const graphs = this.loadFileOptional("graphs.json", GraphsConfigSchema) ?? {
+      default: DEFAULT_GRAPH_ENTRY,
+    };
 
-    return { models, channels, agents, memories, tools, gateway };
+    return { models, channels, agents, memories, tools, gateway, graphs };
   }
 
   /**

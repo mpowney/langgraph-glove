@@ -9,8 +9,10 @@ import {
   ModelRegistry,
   ModelHealthChecker,
   resolveConfigEntry,
+  DEFAULT_GRAPH_ENTRY,
   type GloveConfig,
   type AgentEntry,
+  type GraphEntry,
   type ToolServerEntry,
   type ModelHealthResult,
 } from "@langgraph-glove/config";
@@ -138,20 +140,29 @@ export class Gateway extends EventEmitter {
       // 6. Tool discovery
       const tools = await this.discoverTools(this.config.tools);
       logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
+      this.reportUnavailableConfiguredTools(this.config, tools);
 
-      // 7. Build agent graph (single-agent or multi-agent orchestrator)
-      const graph = this.buildAgentGraph(tools);
+      // 7. Build agent graph (single-agent or multi-agent orchestrator) using graphs.json "default" key
+      const graph = this.buildAgentGraph(tools, "default");
 
       // Populate agent capability list from resolved agent config
       this.agentCapabilities = this.buildAgentCapabilities(this.config);
 
+      const defaultGraphEntry = this.config.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
+      const orchestratorEntry = resolveConfigEntry(
+        this.config.agents as Record<string, AgentEntry>,
+        defaultGraphEntry.orchestratorAgentKey,
+      );
       this.agent = new GloveAgent(graph, {
-        recursionLimit: resolveConfigEntry(
-          this.config.agents as Record<string, AgentEntry>,
-          "default",
-        ).recursionLimit,
+        recursionLimit: orchestratorEntry.recursionLimit,
         toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
         authService: this.authService ?? undefined,
+        graphInfo: {
+          graphKey: "default",
+          mode: (defaultGraphEntry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent",
+          orchestratorAgentKey: defaultGraphEntry.orchestratorAgentKey,
+          subAgentKeys: defaultGraphEntry.subAgentKeys ?? [],
+        },
       });
 
       // 8. Channels
@@ -291,8 +302,9 @@ export class Gateway extends EventEmitter {
     modelHealth: ModelHealthResult[],
   ): void {
     const agents = config.agents as Record<string, AgentEntry>;
-    const defaultEntry = resolveConfigEntry(agents, "default");
-    const defaultModelKey = defaultEntry.modelKey ?? "default";
+    const defaultGraphEntry = config.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
+    const orchestratorEntry = resolveConfigEntry(agents, defaultGraphEntry.orchestratorAgentKey);
+    const defaultModelKey = orchestratorEntry.modelKey ?? "default";
     const defaultModelHealth = modelHealth.find((result) => result.key === defaultModelKey);
 
     const appInfoPatch: {
@@ -317,28 +329,40 @@ export class Gateway extends EventEmitter {
   }
 
   /**
-   * Build the appropriate LangGraph graph based on agents.json:
-   * - If only "default" agent → single-agent ReAct graph
-   * - If multiple agents → orchestrator graph with sub-agents
+   * Build the appropriate LangGraph graph based on graphs.json and agents.json:
+   * - Reads the named graph entry from graphs.json (defaults to "default")
+   * - If the graph entry has no sub-agents → single-agent ReAct graph
+   * - If the graph entry has sub-agents → orchestrator graph with sub-agents
    */
-  private buildAgentGraph(allTools: StructuredToolInterface[]) {
+  private buildAgentGraph(
+    allTools: StructuredToolInterface[],
+    graphKey: string = "default",
+  ) {
     const agents = this.config!.agents as Record<string, AgentEntry>;
+    const resolvedGraphEntry = this.config!.graphs[graphKey];
+    if (!resolvedGraphEntry) {
+      logger.warn(
+        `Graph key "${graphKey}" not found in graphs.json — falling back to default graph entry (orchestrator: "default", no sub-agents)`,
+      );
+    }
+    const graphEntry: GraphEntry = resolvedGraphEntry ?? DEFAULT_GRAPH_ENTRY;
     const models = this.models!;
     const checkpointer = this.checkpointer!;
 
-    const subAgentKeys = Object.keys(agents).filter((k) => k !== "default");
-    const defaultEntry = resolveConfigEntry(agents, "default");
+    const orchestratorKey = graphEntry.orchestratorAgentKey;
+    const subAgentKeys = graphEntry.subAgentKeys ?? [];
+    const orchestratorEntry = resolveConfigEntry(agents, orchestratorKey);
 
     if (subAgentKeys.length === 0) {
       // Single-agent mode — standard ReAct loop
-      const model = models.get(defaultEntry.modelKey ?? "default");
-      const scopedTools = this.scopeTools(allTools, defaultEntry.tools);
-      logger.info(`Single-agent mode (${scopedTools.length} tools)`);
+      const model = models.get(orchestratorEntry.modelKey ?? "default");
+      const scopedTools = this.scopeTools(allTools, orchestratorEntry.tools);
+      logger.info(`Graph "${graphKey}": single-agent mode (${scopedTools.length} tools)`);
 
       return buildSingleAgentGraph({
         model,
         tools: scopedTools,
-        systemPrompt: this.resolveSystemPrompt(defaultEntry.systemPrompt, scopedTools),
+        systemPrompt: this.resolveSystemPrompt(orchestratorEntry.systemPrompt, scopedTools),
         checkpointer,
       });
     }
@@ -356,17 +380,17 @@ export class Gateway extends EventEmitter {
       };
     });
 
-    const orchestratorModel = models.get(defaultEntry.modelKey ?? "default");
-    const orchestratorTools = this.scopeTools(allTools, defaultEntry.tools);
+    const orchestratorModel = models.get(orchestratorEntry.modelKey ?? "default");
+    const orchestratorTools = this.scopeTools(allTools, orchestratorEntry.tools);
 
     logger.info(
-      `Multi-agent orchestrator mode: ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
+      `Graph "${graphKey}": multi-agent orchestrator mode with ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
     );
 
     return buildOrchestratorGraph({
       orchestrator: {
         model: orchestratorModel,
-        systemPrompt: this.resolveSystemPrompt(defaultEntry.systemPrompt, orchestratorTools),
+        systemPrompt: this.resolveSystemPrompt(orchestratorEntry.systemPrompt, orchestratorTools),
         tools: orchestratorTools.length > 0 ? orchestratorTools : undefined,
       },
       subAgents,
@@ -480,6 +504,41 @@ export class Gateway extends EventEmitter {
       // `undefined` means no restriction (all tools); empty array means none.
       tools: entry.tools === undefined ? null : entry.tools,
     }));
+  }
+
+  /**
+   * Log a startup summary of configured tools that were not discovered.
+   *
+   * This highlights provider/tool outages early so operators can correlate
+   * missing capabilities with runtime behavior.
+   */
+  private reportUnavailableConfiguredTools(
+    config: GloveConfig,
+    discoveredTools: StructuredToolInterface[],
+  ): void {
+    const discoveredNames = new Set(discoveredTools.map((tool) => tool.name));
+    const agents = config.agents as Record<string, AgentEntry>;
+
+    const missingByAgent = Object.entries(agents)
+      .map(([agentKey, entry]) => {
+        const configured = entry.tools ?? [];
+        const missing = configured.filter((toolName) => !discoveredNames.has(toolName));
+        return { agentKey, missing };
+      })
+      .filter((row) => row.missing.length > 0);
+
+    if (missingByAgent.length === 0) {
+      logger.info("All configured agent tools are available at startup");
+      return;
+    }
+
+    const missingUnique = [...new Set(missingByAgent.flatMap((row) => row.missing))].sort();
+    logger.warn(
+      `Unavailable configured tools at startup (${missingUnique.length}): ${missingUnique.join(", ")}`,
+    );
+    for (const row of missingByAgent) {
+      logger.warn(`  Agent "${row.agentKey}" missing tools: ${row.missing.join(", ")}`);
+    }
   }
 
   private installSignalHandlers(): void {

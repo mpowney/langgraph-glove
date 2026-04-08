@@ -23,6 +23,7 @@ import path from "node:path";
 import {
   ConfigLoader,
   resolveConfigEntry,
+  DEFAULT_GRAPH_ENTRY,
   type AgentEntry,
   type ModelEntry,
   type ChannelEntry,
@@ -80,11 +81,16 @@ let apiUrl: string | undefined;
 let channelsConfig: Record<string, ChannelEntry> = {};
 try {
   const earlyConfig = new ConfigLoader(configDir, secretsDir).load();
-  defaultAgentDescription = earlyConfig.agents["default"]?.description;
+  const defaultGraphEntry = earlyConfig.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
+  const orchestratorAgentKey = defaultGraphEntry.orchestratorAgentKey;
+  defaultAgentDescription = resolveConfigEntry(
+    earlyConfig.agents as Record<string, AgentEntry>,
+    orchestratorAgentKey,
+  ).description;
   channelsConfig = earlyConfig.channels as Record<string, ChannelEntry>;
   const defaultAgent = resolveConfigEntry(
     earlyConfig.agents as Record<string, AgentEntry>,
-    "default",
+    orchestratorAgentKey,
   );
   defaultModelKey = defaultAgent.modelKey ?? "default";
   const defaultModel = resolveConfigEntry(
