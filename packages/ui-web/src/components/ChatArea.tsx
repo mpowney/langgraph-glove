@@ -63,6 +63,7 @@ export function ChatArea({
           || entry.role === "tool-result"
           || entry.role === "agent-transfer"
           || entry.role === "model-call"
+          || entry.role === "graph-definition"
           || entry.role === "model-response"
           || entry.role === "error";
         return !isSubAgentMessage && !isAccordionMessage;

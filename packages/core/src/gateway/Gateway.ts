@@ -140,6 +140,7 @@ export class Gateway extends EventEmitter {
       // 6. Tool discovery
       const tools = await this.discoverTools(this.config.tools);
       logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
+      this.reportUnavailableConfiguredTools(this.config, tools);
 
       // 7. Build agent graph (single-agent or multi-agent orchestrator) using graphs.json "default" key
       const graph = this.buildAgentGraph(tools, "default");
@@ -503,6 +504,41 @@ export class Gateway extends EventEmitter {
       // `undefined` means no restriction (all tools); empty array means none.
       tools: entry.tools === undefined ? null : entry.tools,
     }));
+  }
+
+  /**
+   * Log a startup summary of configured tools that were not discovered.
+   *
+   * This highlights provider/tool outages early so operators can correlate
+   * missing capabilities with runtime behavior.
+   */
+  private reportUnavailableConfiguredTools(
+    config: GloveConfig,
+    discoveredTools: StructuredToolInterface[],
+  ): void {
+    const discoveredNames = new Set(discoveredTools.map((tool) => tool.name));
+    const agents = config.agents as Record<string, AgentEntry>;
+
+    const missingByAgent = Object.entries(agents)
+      .map(([agentKey, entry]) => {
+        const configured = entry.tools ?? [];
+        const missing = configured.filter((toolName) => !discoveredNames.has(toolName));
+        return { agentKey, missing };
+      })
+      .filter((row) => row.missing.length > 0);
+
+    if (missingByAgent.length === 0) {
+      logger.info("All configured agent tools are available at startup");
+      return;
+    }
+
+    const missingUnique = [...new Set(missingByAgent.flatMap((row) => row.missing))].sort();
+    logger.warn(
+      `Unavailable configured tools at startup (${missingUnique.length}): ${missingUnique.join(", ")}`,
+    );
+    for (const row of missingByAgent) {
+      logger.warn(`  Agent "${row.agentKey}" missing tools: ${row.missing.join(", ")}`);
+    }
   }
 
   private installSignalHandlers(): void {

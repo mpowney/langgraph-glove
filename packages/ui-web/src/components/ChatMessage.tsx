@@ -242,9 +242,14 @@ const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   subAgentContainer: {
-    width: "80vw",
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "80vw",
   },
   subAgentAccordion: {
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "100%",
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -275,6 +280,8 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
   },
   subAgentBubble: {
+    width: "fit-content",
+    maxWidth: "100%",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusXLarge,
     borderBottomLeftRadius: tokens.borderRadiusSmall,
