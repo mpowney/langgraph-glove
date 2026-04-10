@@ -98,7 +98,7 @@ The orchestrator receives auto-generated `transfer_to_<name>` handoff tools for 
 
 ## Configuration
 
-All configuration lives in the `config/` directory as JSON files. Secrets are stored separately in `secrets/` and referenced via `{SECRET:name}` placeholders.
+All configuration lives in the `config/` directory as JSON files. Secrets are stored separately in `secrets/` and referenced via `{SECRET:name}` placeholders. To keep literal text instead of resolving a secret, escape it as `{{SECRET:name}}`.
 
 ### secrets/secrets.json 
 

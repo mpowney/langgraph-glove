@@ -16,7 +16,8 @@ import path from "node:path";
  * ```
  *
  * References of the form `{SECRET:openai-key}` in config values are resolved
- * by {@link resolveSecrets}.
+ * by {@link resolveSecrets}. Use `{{SECRET:openai-key}}` to keep a literal
+ * `{SECRET:openai-key}` value.
  */
 export class SecretStore {
   private readonly secrets = new Map<string, string>();
@@ -75,11 +76,19 @@ export class SecretStore {
 
   /**
    * Replace all `{SECRET:name}` placeholders in a string with actual values.
+   *
+   * Use `{{SECRET:name}}` to escape a placeholder and keep it as literal text.
    */
   resolveString(input: string): string {
-    return input.replace(/\{SECRET:([a-zA-Z0-9_-]+)\}/g, (_match, name: string) => {
-      return this.get(name);
-    });
+    return input.replace(
+      /\{\{SECRET:([a-zA-Z0-9_-]+)\}\}|\{SECRET:([a-zA-Z0-9_-]+)\}/g,
+      (_match, escapedName: string | undefined, name: string | undefined) => {
+        if (escapedName) {
+          return `{SECRET:${escapedName}}`;
+        }
+        return this.get(name as string);
+      },
+    );
   }
 
   /**

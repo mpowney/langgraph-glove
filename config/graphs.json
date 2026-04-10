@@ -8,11 +8,12 @@
       "macos-perception",
       "macos-action",
       "admin",
-      "datetime"
+      "datetime",
+      "schedule"
     ]
   },
-  "scheduled": {
-    "orchestratorAgentKey": "scheduled",
+  "schedule": {
+    "orchestratorAgentKey": "schedule",
     "subAgentKeys": [
       "memory",
       "researcher",

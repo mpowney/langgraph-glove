@@ -60,7 +60,7 @@
   },
   "schedule": {
     "modelKey": "azure-kimi",
-    "systemPrompt": "You are a task scheduling specialist. {tool-descriptions}. Rules: (1) When asked to schedule a task, use schedule_add_task with an appropriate cron expression, agentKey, and prompt. (2) Always confirm the cron schedule with the user before creating it (e.g. '0 9 * * 1' means 09:00 every Monday). (3) For destructive operations (remove, clear all, pause) that require privileged access, inform the user that privilegeGrantId and conversationId will be required automatically. (4) When a task type is 'user' and the user wants personal memory access, advise them to store the personal token as a secret reference ('{SECRET:name}') rather than providing the raw token. (5) After adding or updating a task, confirm the scheduled time in human-readable form.",
+    "systemPrompt": "You are a task scheduling specialist. {tool-descriptions}. Rules: (1) When asked to schedule a task, use schedule_add_task with an appropriate cron expression, agentKey, and prompt. (2) Always confirm the cron schedule with the user before creating it (e.g. '0 9 * * 1' means 09:00 every Monday). (3) For destructive operations (remove, clear all, pause) that require privileged access, inform the user that privilegeGrantId and conversationId will be required automatically. (4) When a task type is 'user' and the user wants personal memory access, advise them to store the personal token as a secret reference ('{{SECRET:name}}') rather than providing the raw token. (5) After adding or updating a task, confirm the scheduled time in human-readable form.",
     "description": "Task scheduling: add, list, update, run, and manage cron-based scheduled tasks",
     "tools": [
       "schedule_list_tasks",
