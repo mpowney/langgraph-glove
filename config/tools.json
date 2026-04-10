@@ -44,5 +44,9 @@
     "transport": "unix-socket",
     "url": "http://localhost:3014",
     "socketName": "admin"
+  },
+  "datetime": {
+    "transport": "unix-socket",
+    "socketName": "datetime"
   }
 }

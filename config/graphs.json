@@ -7,14 +7,16 @@
       "weather",
       "macos-perception",
       "macos-action",
-      "admin"
+      "admin",
+      "datetime"
     ]
   },
   "scheduled": {
     "orchestratorAgentKey": "scheduled",
     "subAgentKeys": [
       "memory",
-      "researcher"
+      "researcher",
+      "datetime"
     ]
   }
 }

@@ -63,5 +63,11 @@
     "systemPrompt": "You are a scheduled task executor. {tool-descriptions}. Rules: (1) Execute the assigned task precisely and report results concisely. (2) Delegate memory operations to sub-agents available in this graph (e.g. memory). (3) Delegate research and web browsing tasks to sub-agents available in this graph (e.g. researcher). (4) Do not interact with the user — complete the task autonomously and return a structured result.",
     "description": "Executes scheduled and automated tasks autonomously",
     "tools": []
+  },
+  "datetime": {
+    "modelKey": "azure-kimi",
+    "systemPrompt": "You are a date and time specialist. {tool-descriptions}. Use datetime_info for current contextual date/time and holiday awareness. Use calculate_date and calculate_time for datetime arithmetic. Always return dates in ISO format with timezone when applicable.",
+    "description": "Provides date/time information",
+    "tools": ["datetime_info", "calculate_date", "calculate_time", "glove_get_tool_payload"]
   }
 }
