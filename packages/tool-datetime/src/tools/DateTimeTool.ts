@@ -47,6 +47,107 @@ interface DateTimeParams {
   state?: string;
 }
 
+type ArithmeticOperation = "add" | "subtract";
+type DateUnit = "day" | "days" | "week" | "weeks" | "month" | "months" | "year" | "years";
+type TimeUnit =
+  | "hour"
+  | "hours"
+  | "minute"
+  | "minutes"
+  | "second"
+  | "seconds"
+  | "millisecond"
+  | "milliseconds";
+
+interface DateCalculationParams {
+  dateTime?: string;
+  operation?: ArithmeticOperation;
+  amount?: number;
+  unit?: DateUnit;
+}
+
+interface TimeCalculationParams {
+  dateTime?: string;
+  operation?: ArithmeticOperation;
+  amount?: number;
+  unit?: TimeUnit;
+}
+
+export const calculateDateToolMetadata: ToolMetadata = {
+  name: "calculate_date",
+  description:
+    "Use {name} to add or subtract calendar date units from a datetime. " +
+    "Provide an optional ISO datetime string; when omitted, the current datetime is used.",
+  parameters: {
+    type: "object",
+    properties: {
+      dateTime: {
+        type: "string",
+        description:
+          "Optional base datetime in ISO 8601 format (for example '2026-04-10T09:30:00Z'). " +
+          "If omitted, the current datetime is used.",
+      },
+      operation: {
+        type: "string",
+        enum: ["add", "subtract"],
+        description: "Whether to add to or subtract from the base datetime. Defaults to 'add'.",
+      },
+      amount: {
+        type: "number",
+        description: "Amount of the selected unit to add or subtract.",
+      },
+      unit: {
+        type: "string",
+        enum: ["day", "days", "week", "weeks", "month", "months", "year", "years"],
+        description: "Calendar unit for date arithmetic.",
+      },
+    },
+    required: ["amount", "unit"],
+  },
+};
+
+export const calculateTimeToolMetadata: ToolMetadata = {
+  name: "calculate_time",
+  description:
+    "Use {name} to add or subtract clock time units from a datetime. " +
+    "Provide an optional ISO datetime string; when omitted, the current datetime is used.",
+  parameters: {
+    type: "object",
+    properties: {
+      dateTime: {
+        type: "string",
+        description:
+          "Optional base datetime in ISO 8601 format (for example '2026-04-10T09:30:00Z'). " +
+          "If omitted, the current datetime is used.",
+      },
+      operation: {
+        type: "string",
+        enum: ["add", "subtract"],
+        description: "Whether to add to or subtract from the base datetime. Defaults to 'add'.",
+      },
+      amount: {
+        type: "number",
+        description: "Amount of the selected unit to add or subtract.",
+      },
+      unit: {
+        type: "string",
+        enum: [
+          "hour",
+          "hours",
+          "minute",
+          "minutes",
+          "second",
+          "seconds",
+          "millisecond",
+          "milliseconds",
+        ],
+        description: "Clock-time unit for time arithmetic.",
+      },
+    },
+    required: ["amount", "unit"],
+  },
+};
+
 /** Format a holiday entry into a short human-readable description. */
 function formatHolidayDetail(h: HolidaysTypes.Holiday): string {
   const suffix = h.substitute ? " (substitute day)" : "";
@@ -108,6 +209,70 @@ function localDateString(date: Date, timezone: string): string {
 function parseDMY(dmy: string): Date {
   const [day, month, year] = dmy.split("/").map(Number);
   return new Date(Date.UTC(year!, month! - 1, day!));
+}
+
+function parseBaseDateTime(value: unknown): Date {
+  if (value === undefined || value === null || value === "") {
+    return new Date();
+  }
+
+  if (typeof value !== "string") {
+    throw new Error("'dateTime' must be a string in ISO 8601 format when provided");
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("'dateTime' is invalid. Provide a valid ISO 8601 datetime string");
+  }
+
+  return parsed;
+}
+
+function parseOperation(value: unknown): ArithmeticOperation {
+  if (value === undefined) return "add";
+  if (value === "add" || value === "subtract") return value;
+  throw new Error("'operation' must be either 'add' or 'subtract'");
+}
+
+function parseAmount(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error("'amount' is required and must be a finite number");
+  }
+  return value;
+}
+
+function normalizeDateUnit(value: unknown): "day" | "week" | "month" | "year" {
+  if (value === "day" || value === "days") return "day";
+  if (value === "week" || value === "weeks") return "week";
+  if (value === "month" || value === "months") return "month";
+  if (value === "year" || value === "years") return "year";
+  throw new Error("'unit' must be one of: day(s), week(s), month(s), year(s)");
+}
+
+function normalizeTimeUnit(value: unknown): "hour" | "minute" | "second" | "millisecond" {
+  if (value === "hour" || value === "hours") return "hour";
+  if (value === "minute" || value === "minutes") return "minute";
+  if (value === "second" || value === "seconds") return "second";
+  if (value === "millisecond" || value === "milliseconds") return "millisecond";
+  throw new Error(
+    "'unit' must be one of: hour(s), minute(s), second(s), millisecond(s)",
+  );
+}
+
+function formatCalculationResult(
+  title: string,
+  base: Date,
+  operation: ArithmeticOperation,
+  amount: number,
+  unit: string,
+  result: Date,
+): string {
+  return [
+    `## ${title}`,
+    `- **Base datetime (ISO 8601 UTC):** ${base.toISOString()}`,
+    `- **Calculation:** ${operation} ${amount} ${unit}`,
+    `- **Result datetime (ISO 8601 UTC):** ${result.toISOString()}`,
+  ].join("\n");
 }
 
 export async function handleDateTime(params: Record<string, unknown>): Promise<string> {
@@ -265,6 +430,61 @@ export async function handleDateTime(params: Record<string, unknown>): Promise<s
   }
 
   return lines.join("\n");
+}
+
+export async function handleCalculateDate(params: Record<string, unknown>): Promise<string> {
+  const { dateTime, operation, amount, unit } = params as DateCalculationParams;
+  const base = parseBaseDateTime(dateTime);
+  const parsedOperation = parseOperation(operation);
+  const parsedAmount = parseAmount(amount);
+  const parsedUnit = normalizeDateUnit(unit);
+  const signedAmount = parsedOperation === "subtract" ? -parsedAmount : parsedAmount;
+
+  const result = new Date(base.getTime());
+  switch (parsedUnit) {
+    case "day":
+      result.setUTCDate(result.getUTCDate() + signedAmount);
+      break;
+    case "week":
+      result.setUTCDate(result.getUTCDate() + signedAmount * 7);
+      break;
+    case "month":
+      result.setUTCMonth(result.getUTCMonth() + signedAmount);
+      break;
+    case "year":
+      result.setUTCFullYear(result.getUTCFullYear() + signedAmount);
+      break;
+  }
+
+  return formatCalculationResult("Date Calculation", base, parsedOperation, parsedAmount, parsedUnit, result);
+}
+
+export async function handleCalculateTime(params: Record<string, unknown>): Promise<string> {
+  const { dateTime, operation, amount, unit } = params as TimeCalculationParams;
+  const base = parseBaseDateTime(dateTime);
+  const parsedOperation = parseOperation(operation);
+  const parsedAmount = parseAmount(amount);
+  const parsedUnit = normalizeTimeUnit(unit);
+  const signedAmount = parsedOperation === "subtract" ? -parsedAmount : parsedAmount;
+
+  let multiplier = 1;
+  switch (parsedUnit) {
+    case "hour":
+      multiplier = 3600000;
+      break;
+    case "minute":
+      multiplier = 60000;
+      break;
+    case "second":
+      multiplier = 1000;
+      break;
+    case "millisecond":
+      multiplier = 1;
+      break;
+  }
+
+  const result = new Date(base.getTime() + signedAmount * multiplier);
+  return formatCalculationResult("Time Calculation", base, parsedOperation, parsedAmount, parsedUnit, result);
 }
 
 function isLeapYear(year: number): boolean {

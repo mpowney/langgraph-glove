@@ -8,11 +8,20 @@
  */
 
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { dateTimeToolMetadata, handleDateTime } from "./tools/DateTimeTool";
+import {
+  calculateDateToolMetadata,
+  calculateTimeToolMetadata,
+  dateTimeToolMetadata,
+  handleCalculateDate,
+  handleCalculateTime,
+  handleDateTime,
+} from "./tools/DateTimeTool";
 
 await launchToolServer({
   toolKey: "datetime",
   register(server) {
     server.register(dateTimeToolMetadata, handleDateTime);
+    server.register(calculateDateToolMetadata, handleCalculateDate);
+    server.register(calculateTimeToolMetadata, handleCalculateTime);
   },
 });
