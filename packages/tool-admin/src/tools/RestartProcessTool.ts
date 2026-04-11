@@ -3,8 +3,7 @@ import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
+import { validatePrivilegeGrant, type ToolMetadata } from "@langgraph-glove/tool-server";
 
 const execFileAsync = promisify(execFile);
 const RESTART_LOG_PREFIX = "[admin_restart_process]";
@@ -45,23 +44,16 @@ function resolveRootDir(): string {
 
 export const restartProcessToolMetadata: ToolMetadata = {
   name: "admin_restart_process",
+  requiresPrivilegedAccess: true,
   description:
     "Use {name} to restart the core gateway process or a named tool server process. " +
     "For tool servers pass the tool key as used in tools.json (e.g. 'weather-us', 'browse'). " +
     "Pass 'core' to restart the main gateway process. " +
     "The tool will stop and re-launch the process using a matching dev/prod command. " +
-    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation. The user provides these by enabling privileged access.",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
     properties: {
-      conversationId: {
-        type: "string",
-        description: "Conversation thread ID for this privileged execution.",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privileged-access grant ID for this privileged execution.",
-      },
       process: {
         type: "string",
         description:
@@ -80,22 +72,15 @@ export const restartProcessToolMetadata: ToolMetadata = {
 
 export const stopProcessToolMetadata: ToolMetadata = {
   name: "admin_stop_process",
+  requiresPrivilegedAccess: true,
   description:
     "Use {name} to stop the core gateway process or a named tool server process without restarting it. " +
     "For tool servers pass the tool key as used in tools.json (e.g. 'weather-us', 'browse'). " +
     "Pass 'core' to stop the main gateway process. " +
-    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation. The user provides these by enabling privileged access.",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
     properties: {
-      conversationId: {
-        type: "string",
-        description: "Conversation thread ID for this privileged execution.",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privileged-access grant ID for this privileged execution.",
-      },
       process: {
         type: "string",
         description:

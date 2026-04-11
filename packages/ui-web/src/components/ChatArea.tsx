@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { makeStyles, tokens } from "@fluentui/react-components";
 import { ChatMessage } from "./ChatMessage";
 import type { ChatEntry } from "../types";
@@ -27,8 +27,15 @@ interface ChatAreaProps {
   myConversationId: string;
   showAll: boolean;
   showAccordionAndSubAgentMessages: boolean;
+  showSystemMessages: boolean;
   onRequestSwitchConversation?: (conversationId: string) => void;
   modelContextWindowTokens?: number;
+}
+
+function formatSessionLabel(conversationId: string): string {
+  return conversationId.startsWith("any")
+    ? conversationId.slice(0, 16)
+    : conversationId.slice(0, 8);
 }
 
 export function ChatArea({
@@ -36,6 +43,7 @@ export function ChatArea({
   myConversationId,
   showAll,
   showAccordionAndSubAgentMessages,
+  showSystemMessages,
   onRequestSwitchConversation,
   modelContextWindowTokens,
 }: ChatAreaProps) {
@@ -47,20 +55,48 @@ export function ChatArea({
       && entry.isStreaming
       && entry.streamSource !== "sub-agent",
   );
-  const filteredMessages = showAccordionAndSubAgentMessages
-    ? messages
-    : messages.filter((entry) => {
-        const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
-        const isAccordionMessage =
-          entry.role === "prompt"
-          || entry.role === "tool-call"
-          || entry.role === "tool-result"
-          || entry.role === "agent-transfer"
-          || entry.role === "model-call"
-          || entry.role === "model-response"
-          || entry.role === "error";
-        return !isSubAgentMessage && !isAccordionMessage;
-      });
+
+  // Build a map from conversationId → chatGuid by scanning graph-definition messages.
+  const chatGuidByConversationId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of messages) {
+      if (entry.role !== "graph-definition") continue;
+      try {
+        const parsed = JSON.parse(entry.content) as unknown;
+        if (
+          parsed != null &&
+          typeof parsed === "object" &&
+          "chatGuid" in parsed &&
+          typeof (parsed as Record<string, unknown>).chatGuid === "string"
+        ) {
+          map.set(entry.conversationId, (parsed as Record<string, unknown>).chatGuid as string);
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+    }
+    return map;
+  }, [messages]);
+  const filteredMessages = messages.filter((entry) => {
+    if (!showSystemMessages && entry.role === "system-event") {
+      return false;
+    }
+    if (showAccordionAndSubAgentMessages) {
+      return true;
+    }
+    const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
+    const isAccordionMessage =
+      entry.role === "prompt"
+      || entry.role === "tool-call"
+      || entry.role === "tool-result"
+      || entry.role === "agent-transfer"
+      || entry.role === "model-call"
+      || entry.role === "graph-definition"
+      || entry.role === "model-response"
+      || entry.role === "system-event"
+      || entry.role === "error";
+    return !isSubAgentMessage && !isAccordionMessage;
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -82,10 +118,11 @@ export function ChatArea({
           modelContextWindowTokens={modelContextWindowTokens}
           sessionLabel={
             isForeignConversation
-              ? entry.conversationId.slice(0, 8)
+              ? formatSessionLabel(entry.conversationId)
               : undefined
           }
           sessionConversationId={isForeignConversation ? entry.conversationId : undefined}
+          chatGuid={isForeignConversation ? chatGuidByConversationId.get(entry.conversationId) : undefined}
           onRequestSwitchConversation={onRequestSwitchConversation}
         />
         );

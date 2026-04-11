@@ -25,6 +25,12 @@ export interface ToolMetadata {
   /** Human-readable description forwarded to the LLM as the tool description. */
   description: string;
   /**
+   * Optional execution hint: when true, runtime should inject privileged
+   * context fields (for example conversationId and privilegeGrantId)
+   * automatically when available.
+   */
+  requiresPrivilegedAccess?: boolean;
+  /**
    * JSON Schema object describing the tool's parameters.
    * Used for documentation / introspection.
    */

@@ -45,9 +45,19 @@
     "url": "http://localhost:3014",
     "socketName": "admin"
   },
+  "datetime": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3015",
+    "socketName": "datetime"
+  },
+  "schedule": {
+    "transport": "http",
+    "url": "http://localhost:3016",
+    "socketName": "schedule"
+  },
   "config": {
     "transport": "http",
-    "url": "http://localhost:3015",
+    "url": "http://localhost:3017",
     "enabled": true
   }
 }

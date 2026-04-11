@@ -98,7 +98,7 @@ The orchestrator receives auto-generated `transfer_to_<name>` handoff tools for 
 
 ## Configuration
 
-All configuration lives in the `config/` directory as JSON files. Secrets are stored separately in `secrets/` and referenced via `{SECRET:name}` placeholders.
+All configuration lives in the `config/` directory as JSON files. Secrets are stored separately in `secrets/` and referenced via `{SECRET:name}` placeholders. To keep literal text instead of resolving a secret, escape it as `{{SECRET:name}}`.
 
 ### secrets/secrets.json 
 
@@ -172,6 +172,47 @@ Each non-default entry inherits from `"default"` (deep-merged), so you only need
 | `description` | Used by the orchestrator to decide when to delegate (required for sub-agents) |
 | `tools` | Tool name allow-list. Empty/missing = all discovered tools |
 | `recursionLimit` | Max ReAct loop steps (default: 25) |
+
+### `config/channels.json` (optional)
+
+Declares channel runtime settings. Secrets in channel settings are resolved via `{SECRET:name}` like all other config files.
+
+```json
+{
+  "cli": {
+    "enabled": true,
+    "settings": {
+      "receiveAgentProcessing": false,
+      "receiveSystem": false
+    }
+  },
+  "web": {
+    "enabled": true,
+    "settings": {
+      "host": "0.0.0.0",
+      "port": 8080,
+      "receiveAgentProcessing": true,
+      "receiveSystem": true
+    }
+  },
+  "bluebubbles": {
+    "enabled": false,
+    "settings": {
+      "serverUrl": "{SECRET:bluebubbles-server-url}",
+      "password": "{SECRET:bluebubbles-password}",
+      "webhookHost": "0.0.0.0",
+      "webhookPort": 5001,
+      "receiveAgentProcessing": false,
+      "receiveSystem": false
+    }
+  }
+}
+```
+
+`receiveAgentProcessing` controls whether a channel receives mirrored user/agent traffic plus prompt, tool, model, and graph observability events from other channels. `receiveSystem` controls whether background runtime events such as scheduler `minute-sweep` and `task-started` notifications are sent to that channel.
+
+The `web` and `bluebubbles` entries are started automatically when they are present and enabled in `channels.json`.
+Use `--cli` to force-enable the CLI channel and `--no-cli` to force-disable it.
 
 ### `config/tools.json` (optional)
 
@@ -312,24 +353,26 @@ node packages/tool-weather-au/dist/main.js
 node packages/tool-weather-eu/dist/main.js
 node packages/tool-weather-us/dist/main.js
 
-# Start the gateway (CLI only)
+# Start the gateway using channels.json
 pnpm start
 
-# Start the gateway with the web UI on http://localhost:8080
-pnpm start:web
+# Start the gateway and force-enable the CLI channel
+pnpm start:cli
 
-# Start the gateway with the web UI only (no CLI input)
+# Start the gateway with config-driven channels but no CLI input
 pnpm start:web-only
 
-# Or invoke node directly (equivalent to pnpm start:web)
-node packages/core/dist/main.js --web
-node packages/core/dist/main.js --web --web-port 3000
+# Or invoke node directly with explicit CLI enablement
+node packages/core/dist/main.js --cli
+
+# Start using config-driven channels with CLI disabled
+node packages/core/dist/main.js --no-cli
 ```
 
 To override the config or data directories:
 
 ```bash
-GLOVE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/core/dist/main.js --web
+GLOVE_CONFIG_DIR=/custom/config GLOVE_SECRETS_DIR=/custom/secrets node packages/core/dist/main.js --cli
 ```
 
 Environment variables for the gateway:
@@ -405,20 +448,20 @@ The `debug:*` scripts run the gateway directly from TypeScript source using `tsx
 ```bash
 # From the workspace root:
 
-# CLI only — debugger listens on ws://127.0.0.1:9229
+# Config-driven channels — debugger listens on ws://127.0.0.1:9229
 pnpm debug
 
-# CLI + Web UI on http://localhost:8080
-LOG_FILE=logs/output.log LOG_LEVEL=VERBOSE pnpm debug:web
+# Config-driven channels with CLI force-enabled
+LOG_FILE=logs/output.log LOG_LEVEL=VERBOSE pnpm debug:cli
 
-# Web UI only (no CLI) — useful for browser-only testing
+# Config-driven channels with CLI disabled — useful for browser-only testing
 pnpm debug:web-only
 ```
 
 To override config or data paths:
 
 ```bash
-GLOVE_CONFIG_DIR=/custom/config pnpm debug:web
+GLOVE_CONFIG_DIR=/custom/config pnpm debug:cli
 ```
 
 To attach VS Code, add a launch configuration in `.vscode/launch.json`:

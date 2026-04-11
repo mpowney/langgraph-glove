@@ -38,7 +38,10 @@ export class TelegramChannel extends Channel {
   private readonly allowedUserIds: Set<number> | null;
 
   constructor(private readonly telegramConfig: TelegramChannelConfig) {
-    super({ receiveAll: telegramConfig.receiveAll });
+    super({
+      receiveAgentProcessing: telegramConfig.receiveAgentProcessing,
+      receiveSystem: telegramConfig.receiveSystem,
+    });
     this.bot = new Bot(telegramConfig.token);
     this.allowedUserIds = telegramConfig.allowedUserIds?.length
       ? new Set(telegramConfig.allowedUserIds)

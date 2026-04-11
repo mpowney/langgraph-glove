@@ -29,6 +29,7 @@ import { createUuid } from "./uuid";
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
 const SHOW_DETAILS_KEY = "glove_show_accordion_and_sub_agents";
+const SHOW_SYSTEM_MESSAGES_KEY = "glove_show_system_messages";
 
 function resolveAuthApiBaseUrl(rawApiUrl: string | undefined): string | null {
   if (!rawApiUrl?.trim()) return null;
@@ -52,6 +53,12 @@ function getOrCreateConversationId(): string {
   const generated = createUuid();
   localStorage.setItem(CONVERSATION_ID_KEY, generated);
   return generated;
+}
+
+function formatSessionLabel(conversationId: string): string {
+  return conversationId.startsWith("any")
+    ? conversationId.slice(0, 16)
+    : conversationId.slice(0, 8);
 }
 
 const useStyles = makeStyles({
@@ -93,6 +100,9 @@ function App() {
   const [showAccordionAndSubAgentMessages, setShowAccordionAndSubAgentMessages] = useState(
     () => localStorage.getItem(SHOW_DETAILS_KEY) !== "false",
   );
+  const [showSystemMessages, setShowSystemMessages] = useState(
+    () => localStorage.getItem(SHOW_SYSTEM_MESSAGES_KEY) !== "false",
+  );
   const [browserOpen, setBrowserOpen] = useState(false);
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
@@ -108,6 +118,11 @@ function App() {
   const setShowAccordionAndSubAgentMessagesPersisted = useCallback((value: boolean) => {
     localStorage.setItem(SHOW_DETAILS_KEY, String(value));
     setShowAccordionAndSubAgentMessages(value);
+  }, []);
+
+  const setShowSystemMessagesPersisted = useCallback((value: boolean) => {
+    localStorage.setItem(SHOW_SYSTEM_MESSAGES_KEY, String(value));
+    setShowSystemMessages(value);
   }, []);
 
   const setPersonalToken = useCallback((token: string) => {
@@ -294,6 +309,8 @@ function App() {
           onToggleShowAll={setShowAllPersisted}
           showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
           onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
+          showSystemMessages={showSystemMessages}
+          onToggleShowSystemMessages={setShowSystemMessagesPersisted}
           onStartNewConversation={handleStartNewConversation}
           memoryAdminEnabled={memoryAvailable}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
@@ -318,6 +335,7 @@ function App() {
           myConversationId={myConversationId}
           showAll={showAll}
           showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
+          showSystemMessages={showSystemMessages}
           onRequestSwitchConversation={handleSwitchConversation}
           modelContextWindowTokens={appInfo?.modelContextWindowTokens}
         />
@@ -373,7 +391,7 @@ function App() {
             <DialogContent>
               <Text block>
                 {pendingConversationSwitchId
-                  ? `Switch to session ${pendingConversationSwitchId.slice(0, 8)}?`
+                  ? `Switch to session ${formatSessionLabel(pendingConversationSwitchId)}?`
                   : "Switch to this conversation?"}
               </Text>
               <Text block>

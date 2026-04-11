@@ -1,8 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
+import { validatePrivilegeGrant } from "@langgraph-glove/tool-server";
 import type { ConfigStore } from "../ConfigStore";
-import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
 
 /** Config file names that may be read or written via this tool. */
 const ALLOWED_FILES = new Set([
@@ -11,6 +11,9 @@ const ALLOWED_FILES = new Set([
   "tools.json",
   "gateway.json",
   "memories.json",
+  "channels.json",
+  "graphs.json",
+  "schedule.json",
 ]);
 
 const PRIVILEGE_PARAMS = {

@@ -123,6 +123,43 @@ export interface AdminApiConfig {
   toolRegistry?: ToolDefinition[];
   /** Agent capability entries served by `GET /api/agents/capabilities`. */
   agentCapabilities?: AgentCapabilityEntry[];
+  /**
+   * Optional callback that lets internal tool servers (e.g. tool-schedule)
+   * trigger an agent invocation via `POST /api/internal/invoke`.
+   *
+   * When not provided the endpoint returns 503.
+   */
+  invokeAgent?: (params: {
+    agentKey: string;
+    conversationId: string;
+    prompt: string;
+    /** Optional graph key from graphs.json (defaults to "default"). */
+    graphKey?: string;
+    /** Optional personal token so user-requested tasks can access encrypted memories. */
+    personalToken?: string;
+    /** Optional scheduled-run observability options for receiveAgentProcessing channels. */
+    observability?: {
+      enabled?: boolean;
+      conversationId?: string;
+      sourceChannel?: string;
+      taskId?: string;
+      scheduleType?: "cron" | "once";
+      trigger?: "cron" | "once-minute-sweep" | "manual-now";
+    };
+  }) => Promise<string>;
+  /** Optional callback for localhost trusted services to emit receiveSystem messages. */
+  sendSystemMessage?: (params: {
+    conversationId: string;
+    text: string;
+    role?: "system-event";
+  }) => Promise<void>;
+  /** Optional callback for trusted services to send agent-style messages to channels. */
+  sendChannelMessage?: (params: {
+    conversationId: string;
+    text: string;
+    role?: "agent" | "error";
+    channelName?: string;
+  }) => Promise<void>;
 }
 
 /**
@@ -143,6 +180,9 @@ export class AdminApi {
   private readonly toolsConfig: Record<string, ToolServerEntry>;
   private readonly toolRegistry: ToolDefinition[];
   private readonly agentCapabilities: AgentCapabilityEntry[];
+  private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
+  private readonly sendSystemMessage?: AdminApiConfig["sendSystemMessage"];
+  private readonly sendChannelMessage?: AdminApiConfig["sendChannelMessage"];
   private readonly app: Express;
   private httpServer?: http.Server;
 
@@ -157,6 +197,9 @@ export class AdminApi {
     this.toolsConfig = config.toolsConfig ?? {};
     this.toolRegistry = config.toolRegistry ?? [];
     this.agentCapabilities = config.agentCapabilities ?? [];
+    this.invokeAgent = config.invokeAgent;
+    this.sendSystemMessage = config.sendSystemMessage;
+    this.sendChannelMessage = config.sendChannelMessage;
 
     this.app = express();
     this.registerRoutes();
@@ -339,6 +382,154 @@ export class AdminApi {
         }
 
         res.json({ valid: true });
+      });
+
+      // Internal endpoint used by tool-schedule and other trusted tool servers to
+      // invoke the agent programmatically.  Restricted to localhost callers.
+      this.app.post("/api/internal/invoke", (req, res) => {
+        void (async () => {
+          // Restrict to loopback addresses only — this endpoint must not be
+          // reachable from external networks.
+          const remoteIp = req.socket.remoteAddress ?? "";
+          if (remoteIp !== "127.0.0.1" && remoteIp !== "::1" && remoteIp !== "::ffff:127.0.0.1") {
+            res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+            return;
+          }
+          if (!this.invokeAgent) {
+            res.status(503).json({ error: "Agent invocation is not available" });
+            return;
+          }
+          const agentKey = readBodyString(req.body, "agentKey");
+          const conversationId = readBodyString(req.body, "conversationId");
+          const prompt = readBodyString(req.body, "prompt");
+          const graphKey = readBodyString(req.body, "graphKey") || undefined;
+          const personalToken = readBodyString(req.body, "personalToken") || undefined;
+          const observabilityRaw =
+            typeof req.body === "object" && req.body !== null
+              ? (req.body as Record<string, unknown>)["observability"]
+              : undefined;
+          const observability =
+            typeof observabilityRaw === "object" && observabilityRaw !== null
+              ? {
+                  enabled:
+                    typeof (observabilityRaw as Record<string, unknown>)["enabled"] === "boolean"
+                      ? ((observabilityRaw as Record<string, unknown>)["enabled"] as boolean)
+                      : undefined,
+                  conversationId:
+                    typeof (observabilityRaw as Record<string, unknown>)["conversationId"] === "string"
+                      ? ((observabilityRaw as Record<string, unknown>)["conversationId"] as string)
+                      : undefined,
+                  sourceChannel:
+                    typeof (observabilityRaw as Record<string, unknown>)["sourceChannel"] === "string"
+                      ? ((observabilityRaw as Record<string, unknown>)["sourceChannel"] as string)
+                      : undefined,
+                  taskId:
+                    typeof (observabilityRaw as Record<string, unknown>)["taskId"] === "string"
+                      ? ((observabilityRaw as Record<string, unknown>)["taskId"] as string)
+                      : undefined,
+                  scheduleType:
+                    (observabilityRaw as Record<string, unknown>)["scheduleType"] === "cron"
+                    || (observabilityRaw as Record<string, unknown>)["scheduleType"] === "once"
+                      ? ((observabilityRaw as Record<string, unknown>)["scheduleType"] as "cron" | "once")
+                      : undefined,
+                  trigger:
+                    (observabilityRaw as Record<string, unknown>)["trigger"] === "cron"
+                    || (observabilityRaw as Record<string, unknown>)["trigger"] === "once-minute-sweep"
+                    || (observabilityRaw as Record<string, unknown>)["trigger"] === "manual-now"
+                      ? ((observabilityRaw as Record<string, unknown>)["trigger"] as "cron" | "once-minute-sweep" | "manual-now")
+                      : undefined,
+                }
+              : undefined;
+          if (!conversationId || !prompt) {
+            res.status(400).json({ error: "conversationId and prompt are required" });
+            return;
+          }
+          try {
+            const result = await this.invokeAgent({
+              agentKey: agentKey || "default",
+              conversationId,
+              prompt,
+              graphKey,
+              personalToken,
+              observability,
+            });
+            res.json({ result });
+          } catch (err) {
+            res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Internal endpoint for trusted local services to emit receiveSystem runtime
+      // observability messages (for example scheduler minute-sweep events).
+      this.app.post("/api/internal/system-message", (req, res) => {
+        void (async () => {
+          const remoteIp = req.socket.remoteAddress ?? "";
+          if (remoteIp !== "127.0.0.1" && remoteIp !== "::1" && remoteIp !== "::ffff:127.0.0.1") {
+            res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+            return;
+          }
+          if (!this.sendSystemMessage) {
+            res.status(503).json({ error: "System message sink is not available" });
+            return;
+          }
+
+          const text = readBodyString(req.body, "text");
+          const conversationId =
+            readBodyString(req.body, "conversationId") || "system:schedule";
+          if (!text) {
+            res.status(400).json({ error: "text is required" });
+            return;
+          }
+
+          try {
+            await this.sendSystemMessage({
+              conversationId,
+              text,
+              role: "system-event",
+            });
+            res.status(204).send();
+          } catch (err) {
+            res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Internal endpoint for trusted local services to deliver responses into
+      // a specific channel conversation context.
+      this.app.post("/api/internal/channel-message", (req, res) => {
+        void (async () => {
+          const remoteIp = req.socket.remoteAddress ?? "";
+          if (remoteIp !== "127.0.0.1" && remoteIp !== "::1" && remoteIp !== "::ffff:127.0.0.1") {
+            res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+            return;
+          }
+          if (!this.sendChannelMessage) {
+            res.status(503).json({ error: "Channel message sink is not available" });
+            return;
+          }
+
+          const conversationId = readBodyString(req.body, "conversationId");
+          const text = readBodyString(req.body, "text");
+          const role = readBodyString(req.body, "role");
+          const channelName = readBodyString(req.body, "channelName") || undefined;
+          if (!conversationId || !text) {
+            res.status(400).json({ error: "conversationId and text are required" });
+            return;
+          }
+
+          try {
+            await this.sendChannelMessage({
+              conversationId,
+              text,
+              role: role === "error" ? "error" : "agent",
+              channelName,
+            });
+            res.status(204).send();
+          } catch (err) {
+            res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
       });
 
       this.app.post("/api/auth/setup", (req, res) => {

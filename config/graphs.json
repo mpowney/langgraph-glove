@@ -1,0 +1,28 @@
+{
+  "default": {
+    "orchestratorAgentKey": "default",
+    "subAgentKeys": [
+      "memory",
+      "researcher",
+      "weather",
+      "macos-perception",
+      "macos-action",
+      "admin",
+      "datetime",
+      "scheduler"
+    ]
+  },
+  "schedule-system": {
+    "orchestratorAgentKey": "schedule-system",
+    "subAgentKeys": [
+      "memory",
+      "researcher",
+      "weather",
+      "macos-perception",
+      "macos-action",
+      "admin",
+      "datetime",
+      "scheduler"
+    ]
+  }
+}

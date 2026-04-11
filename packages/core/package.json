@@ -17,11 +17,13 @@
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist",
     "start": "node dist/main.js",
-    "start:web": "node dist/main.js --web",
-    "start:web-only": "node dist/main.js --web --no-cli",
+    "start:cli": "node dist/main.js --cli",
+    "start:web": "node dist/main.js",
+    "start:web-only": "node dist/main.js --no-cli",
     "debug": "tsx --inspect src/main.ts",
-    "debug:web": "tsx --inspect src/main.ts --web",
-    "debug:web-only": "tsx --inspect src/main.ts --web --no-cli"
+    "debug:cli": "tsx --inspect src/main.ts --cli",
+    "debug:web": "tsx --inspect src/main.ts",
+    "debug:web-only": "tsx --inspect src/main.ts --no-cli"
   },
   "dependencies": {
     "@langchain/core": "^1.1.36",

@@ -242,9 +242,14 @@ const useStyles = makeStyles({
     wordBreak: "break-word",
   },
   subAgentContainer: {
-    width: "80vw",
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "80vw",
   },
   subAgentAccordion: {
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "100%",
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
@@ -275,6 +280,8 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM} ${tokens.spacingVerticalM} ${tokens.spacingHorizontalM}`,
   },
   subAgentBubble: {
+    width: "fit-content",
+    maxWidth: "100%",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusXLarge,
     borderBottomLeftRadius: tokens.borderRadiusSmall,
@@ -416,6 +423,8 @@ interface ChatMessageProps {
   sessionLabel?: string;
   /** Full conversation id for a foreign-session message label. */
   sessionConversationId?: string;
+  /** BlueBubbles chat GUID (e.g. phone number) for this conversation. */
+  chatGuid?: string;
   /** Called when a user wants to switch the active conversation context. */
   onRequestSwitchConversation?: (conversationId: string) => void;
   /** Active model context window tokens for prompt-context estimation. */
@@ -495,6 +504,7 @@ export function ChatMessage({
   collapseSubAgentStream,
   sessionLabel,
   sessionConversationId,
+  chatGuid,
   onRequestSwitchConversation,
   modelContextWindowTokens,
 }: ChatMessageProps) {
@@ -518,6 +528,10 @@ export function ChatMessage({
     if (!sessionLabel) return null;
 
     const canSwitch = Boolean(sessionConversationId && onRequestSwitchConversation);
+    // Extract the meaningful part of the chatGuid (e.g. phone number after `;-;`).
+    const chatGuidDisplay = chatGuid
+      ? (chatGuid.includes(";-;") ? chatGuid.split(";-;").pop()! : chatGuid)
+      : undefined;
     return (
       <Text block className={styles.sessionLabel} style={textAlign ? { textAlign } : undefined}>
         session {" "}
@@ -533,6 +547,7 @@ export function ChatMessage({
         ) : (
           sessionLabel
         )}
+        {chatGuidDisplay && <> · {chatGuidDisplay}</>}
       </Text>
     );
   };
@@ -664,6 +679,77 @@ export function ChatMessage({
             checkpoint={entry.checkpoint}
           >
             {modelCallContent}
+          </MessageAccordion>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.role === "graph-definition") {
+    let graphName: string | undefined;
+    let graphContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed)) {
+        if (typeof parsed.graphName === "string") {
+          graphName = parsed.graphName;
+        } else {
+          const graph = isObject(parsed.graph) ? parsed.graph : undefined;
+          if (graph && typeof graph.graphKey === "string") {
+            graphName = graph.graphKey;
+          }
+        }
+      }
+      graphContent = toDisplayJson(parsed, entry.content);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {renderSessionLabel()}
+          <MessageAccordion
+            className={styles.modelCallAccordion}
+            itemValue="graph-definition"
+            headerText={`Graph definition:${graphName ? ` ${graphName}` : ""}`}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {graphContent}
+          </MessageAccordion>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.role === "system-event") {
+    let title = "System event";
+    let eventContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed) && typeof parsed.event === "string") {
+        title = `System event: ${parsed.event}`;
+      }
+      eventContent = toDisplayJson(parsed, entry.content);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {renderSessionLabel()}
+          <MessageAccordion
+            className={styles.modelCallAccordion}
+            itemValue="system-event"
+            headerText={title}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {eventContent}
           </MessageAccordion>
         </div>
       </div>

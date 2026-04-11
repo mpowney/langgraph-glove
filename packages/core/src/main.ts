@@ -9,37 +9,51 @@
  *   GLOVE_SECRETS_DIR  - path to secrets directory (default: ./secrets)
  *
  * Flags:
- *   --web              - also start the WebChannel (browser UI)
- *   --web-port <n>     - port for the WebChannel  (default: 8080)
- *   --no-cli           - disable the CLI channel
+ *   --cli              - enable the CLI channel regardless of channels.json
+ *   --no-cli           - disable the CLI channel regardless of channels.json
  *   --regenerate-setup-token - print a new setup token and exit (for initial setup or if the original token is lost)
  *   --reset-auth       - wipe all auth state and print a fresh setup token, then exit
  *
  * Usage:
- *   node dist/main.js [--web] [--web-port 3000] [--no-cli]
+ *   node dist/main.js [--cli|--no-cli]
  */
 
 import path from "node:path";
-import { ConfigLoader, resolveConfigEntry, type AgentEntry, type ModelEntry } from "@langgraph-glove/config";
+import {
+  ConfigLoader,
+  resolveConfigEntry,
+  DEFAULT_GRAPH_ENTRY,
+  type AgentEntry,
+  type ModelEntry,
+  type ChannelEntry,
+} from "@langgraph-glove/config";
 import { Gateway } from "./gateway/Gateway";
 import { LogService } from "./logging/LogService";
 import { FileSubscriber } from "./logging/FileSubscriber";
 import { LogLevel } from "./logging/LogLevel";
-import { CliChannel } from "./channels/CliChannel";
-import { WebChannel } from "./channels/WebChannel";
+import { getChannelEntryByKey } from "./channels/Channel";
+import { createCliChannelFromConfig } from "./channels/CliChannel";
+import { createWebChannelFromConfig } from "./channels/WebChannel";
+import { createBlueBubblesChannelFromConfig } from "./channels/BlueBubblesChannel";
 import { AuthService } from "./auth/AuthService";
+import { Logger } from "./logging";
 
 // ---------------------------------------------------------------------------
 // CLI args
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
-const useWeb = args.includes("--web");
-const noCli = args.includes("--no-cli");
 const regenerateSetupToken = args.includes("--regenerate-setup-token");
 const resetAuth = args.includes("--reset-auth");
-const webPortIndex = args.indexOf("--web-port");
-const webPort = webPortIndex !== -1 ? parseInt(args[webPortIndex + 1] ?? "8080", 10) : 8080;
+
+let cliOverride: boolean | undefined;
+for (const arg of args) {
+  if (arg === "--cli") {
+    cliOverride = true;
+  } else if (arg === "--no-cli") {
+    cliOverride = false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Logging - set up before anything else
@@ -47,6 +61,7 @@ const webPort = webPortIndex !== -1 ? parseInt(args[webPortIndex + 1] ?? "8080",
 
 const logLevel = (process.env["LOG_LEVEL"] ?? "INFO").toUpperCase();
 const level = LogLevel[logLevel as keyof typeof LogLevel] ?? LogLevel.INFO;
+const logger = new Logger("main");
 
 if (process.env["LOG_FILE"]) {
   LogService.subscribe(new FileSubscriber(level));
@@ -67,12 +82,20 @@ let defaultAgentDescription: string | undefined;
 let checkpointDbPath: string | undefined;
 let defaultModelKey: string | undefined;
 let defaultModelContextWindowTokens: number | undefined;
+let apiUrl: string | undefined;
+let channelsConfig: Record<string, ChannelEntry> = {};
 try {
   const earlyConfig = new ConfigLoader(configDir, secretsDir).load();
-  defaultAgentDescription = earlyConfig.agents["default"]?.description;
+  const defaultGraphEntry = earlyConfig.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
+  const orchestratorAgentKey = defaultGraphEntry.orchestratorAgentKey;
+  defaultAgentDescription = resolveConfigEntry(
+    earlyConfig.agents as Record<string, AgentEntry>,
+    orchestratorAgentKey,
+  ).description;
+  channelsConfig = earlyConfig.channels as Record<string, ChannelEntry>;
   const defaultAgent = resolveConfigEntry(
     earlyConfig.agents as Record<string, AgentEntry>,
-    "default",
+    orchestratorAgentKey,
   );
   defaultModelKey = defaultAgent.modelKey ?? "default";
   const defaultModel = resolveConfigEntry(
@@ -81,7 +104,13 @@ try {
   );
   defaultModelContextWindowTokens = defaultModel.contextWindowTokens;
   checkpointDbPath = path.resolve(earlyConfig.gateway.dbPath ?? "data/checkpoints.sqlite");
-} catch {
+  const configuredApiHost = earlyConfig.gateway.apiHost ?? "localhost";
+  const browserApiHost = configuredApiHost === "0.0.0.0" ? "localhost" : configuredApiHost;
+  const configuredApiPort = earlyConfig.gateway.apiPort ?? 8081;
+  apiUrl = `http://${browserApiHost}:${configuredApiPort}`;
+} catch (err) {
+  console.warn("Failed to load config during startup (this is expected if the config files are not yet set up). Using defaults for WebChannel appInfo.", { error: (err as Error).message });
+  logger.warn("Failed to load config during startup (this is expected if the config files are not yet set up). Using defaults for WebChannel appInfo.");
   // Config will be validated properly inside Gateway.start() - ignore here
 }
 
@@ -126,25 +155,35 @@ if (resetAuth) {
 }
 
 const channels = [];
-if (!noCli) channels.push(new CliChannel());
-if (useWeb) {
-  const apiPort = parseInt(process.env["GLOVE_API_PORT"] ?? "8081", 10);
-  const apiHost = process.env["GLOVE_API_HOST"] ?? "localhost";
+const cliEntry = getChannelEntryByKey(channelsConfig, "cli");
+const cliEnabled = cliOverride ?? cliEntry?.enabled !== false;
+if (cliEnabled) {
+  const cliChannel = createCliChannelFromConfig(cliEntry);
+  if (cliChannel) {
+    channels.push(cliChannel);
+  }
+}
+
+const webEntry = getChannelEntryByKey(channelsConfig, "web");
+if (webEntry && webEntry.enabled !== false) {
   channels.push(
-    new WebChannel({
-      port: webPort,
-      receiveAll: true,
+    createWebChannelFromConfig(webEntry, {
+      checkpointDbPath,
       appInfo: {
         name: "LangGraph Glove",
         agentDescription: defaultAgentDescription,
-        apiUrl: `http://${apiHost}:${apiPort}`,
+        apiUrl,
         modelKey: defaultModelKey,
         modelContextWindowTokens: defaultModelContextWindowTokens,
         ...(defaultModelContextWindowTokens ? { modelContextWindowSource: "config" } : {}),
       },
-      checkpointDbPath,
     }),
   );
+}
+
+const blueBubblesEntry = getChannelEntryByKey(channelsConfig, "bluebubbles");
+if (blueBubblesEntry && blueBubblesEntry.enabled !== false) {
+  channels.push(createBlueBubblesChannelFromConfig(blueBubblesEntry));
 }
 
 const gateway = new Gateway({

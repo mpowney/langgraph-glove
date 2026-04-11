@@ -5,11 +5,48 @@ import { v4 as uuidv4 } from "uuid";
 import express, { type Express } from "express";
 import { WebSocketServer, WebSocket } from "ws";
 import Database from "better-sqlite3";
+import type { ChannelEntry } from "@langgraph-glove/config";
 import { distPath } from "@langgraph-glove/ui-web";
+import { z } from "zod";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk, StreamSource } from "./Channel";
 import type { AuthService } from "../auth/AuthService";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
+
+export const WebChannelSettingsSchema = z.object({
+  port: z.number().int().positive().optional(),
+  host: z.string().min(1).optional(),
+  receiveAgentProcessing: z.boolean().optional(),
+  receiveSystem: z.boolean().optional(),
+});
+
+export interface WebChannelFactoryContext {
+  checkpointDbPath?: string;
+  appInfo?: WebChannelConfig["appInfo"];
+}
+
+export function createWebChannelFromConfig(
+  entry: ChannelEntry | undefined,
+  context: WebChannelFactoryContext,
+): WebChannel {
+  if (entry?.enabled === false) {
+    throw new Error('Web channel is disabled in channels.json');
+  }
+
+  const result = WebChannelSettingsSchema.safeParse(entry?.settings ?? {});
+  if (!result.success) {
+    throw new Error(`Invalid channels.json web settings: ${result.error.message}`);
+  }
+
+  return new WebChannel({
+    port: result.data.port,
+    host: result.data.host,
+    receiveAgentProcessing: result.data.receiveAgentProcessing ?? true,
+    receiveSystem: result.data.receiveSystem ?? false,
+    appInfo: context.appInfo,
+    checkpointDbPath: context.checkpointDbPath,
+  });
+}
 
 /** Messages sent from browser client → server. */
 type ClientMessage =
@@ -56,7 +93,7 @@ type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
@@ -292,6 +329,8 @@ export class WebChannel extends Channel {
       || message.role === "agent-transfer"
       || message.role === "model-call"
       || message.role === "model-response"
+      || message.role === "graph-definition"
+      || message.role === "system-event"
     ) {
       const payload: ServerMessage = {
         type: "tool_event",
@@ -420,7 +459,10 @@ export class WebChannel extends Channel {
     this.wss?.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;
       const tagged = client as WebSocket & { conversationId?: string };
-      if (this.receiveAll || tagged.conversationId === conversationId) {
+      const receivesBroadcast = message.type === "tool_event"
+        ? (message.role === "system-event" ? this.receiveSystem : this.receiveAgentProcessing)
+        : this.receiveAgentProcessing;
+      if (receivesBroadcast || tagged.conversationId === conversationId) {
         client.send(payload);
       }
     });

@@ -1,8 +1,31 @@
 import readline from "node:readline";
 import process from "node:process";
 import { v4 as uuidv4 } from "uuid";
+import type { ChannelEntry } from "@langgraph-glove/config";
+import { z } from "zod";
 import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk } from "./Channel";
+
+export const CliChannelSettingsSchema = z.object({
+  receiveAgentProcessing: z.boolean().optional(),
+  receiveSystem: z.boolean().optional(),
+});
+
+export function createCliChannelFromConfig(entry?: ChannelEntry): CliChannel | null {
+  if (entry?.enabled === false) {
+    return null;
+  }
+
+  const result = CliChannelSettingsSchema.safeParse(entry?.settings ?? {});
+  if (!result.success) {
+    throw new Error(`Invalid channels.json cli settings: ${result.error.message}`);
+  }
+
+  return new CliChannel({
+    receiveAgentProcessing: result.data.receiveAgentProcessing,
+    receiveSystem: result.data.receiveSystem,
+  });
+}
 
 /**
  * A streaming channel that reads from `stdin` and writes to `stdout`.
