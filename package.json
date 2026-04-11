@@ -20,12 +20,8 @@
     "clean": "pnpm -r clean",
     "start": "node packages/core/dist/main.js",
     "start:cli": "node packages/core/dist/main.js --cli",
-    "start:web": "node packages/core/dist/main.js",
-    "start:web-only": "node packages/core/dist/main.js --no-cli",
     "debug": "pnpm exec tsx --inspect packages/core/src/main.ts",
     "debug:cli": "pnpm exec tsx --inspect packages/core/src/main.ts --cli",
-    "debug:web": "pnpm exec tsx --inspect packages/core/src/main.ts",
-    "debug:web-only": "pnpm exec tsx --inspect packages/core/src/main.ts --no-cli",
     "macos:bundle": "bash scripts/macos-bundle-control-app.sh",
     "macos:bundle:open": "bash scripts/macos-bundle-control-app.sh --open"
   },
