@@ -212,6 +212,38 @@ export class RemoteTool extends StructuredTool {
       }
     }
 
+    if (
+      "sourceChannel" in this.schema.shape &&
+      args.sourceChannel === undefined &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).sourceChannel === "string"
+    ) {
+      args.sourceChannel = (config.configurable as Record<string, unknown>).sourceChannel;
+    }
+
+    if (
+      "sourceConversationId" in this.schema.shape &&
+      args.sourceConversationId === undefined &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).sourceConversationId === "string"
+    ) {
+      args.sourceConversationId = (config.configurable as Record<string, unknown>).sourceConversationId;
+    }
+
+    if (
+      "sourceMetadata" in this.schema.shape &&
+      args.sourceMetadata === undefined &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null
+    ) {
+      const sourceMetadata = (config.configurable as Record<string, unknown>).sourceMetadata;
+      if (sourceMetadata !== undefined) {
+        args.sourceMetadata = sourceMetadata;
+      }
+    }
+
     const result = await this.rpcClient.call(this.name, args);
 
     const maxBytes = maxInlineToolResultBytes();

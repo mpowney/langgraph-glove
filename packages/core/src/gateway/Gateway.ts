@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import express from "express";
 import type { Server } from "node:http";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import { HumanMessage } from "@langchain/core/messages";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
 import { SqliteSaver } from "@langchain/langgraph-checkpoint-sqlite";
 import {
@@ -80,6 +81,8 @@ export class Gateway extends EventEmitter {
   private toolRegistry: ToolDefinition[] = [];
   /** Agent capability entries, populated after `buildAgentGraph()`. */
   private agentCapabilities: AgentCapabilityEntry[] = [];
+  /** Tool set discovered during startup, reused to build non-default graphs on demand. */
+  private discoveredTools: StructuredToolInterface[] = [];
 
   constructor(private readonly options: GatewayOptions) {
     super();
@@ -139,6 +142,7 @@ export class Gateway extends EventEmitter {
 
       // 6. Tool discovery
       const tools = await this.discoverTools(this.config.tools);
+      this.discoveredTools = tools;
       logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
       this.reportUnavailableConfiguredTools(this.config, tools);
 
@@ -199,9 +203,49 @@ export class Gateway extends EventEmitter {
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
         toolRegistry: this.toolRegistry,
         agentCapabilities: this.agentCapabilities,
-        invokeAgent: async ({ conversationId, prompt, personalToken }) => {
-          if (!this.agent) throw new Error("Agent is not running");
-          return this.agent.invoke(prompt, conversationId, undefined, personalToken);
+        invokeAgent: async ({ conversationId, prompt, graphKey, personalToken }) => {
+          return this.invokeConfiguredGraph({
+            conversationId,
+            prompt,
+            personalToken,
+            graphKey,
+          });
+        },
+        sendSystemMessage: async ({ conversationId, text, role }) => {
+          const targets = (this.options.channels ?? []).filter((channel) => channel.receiveSystem);
+          for (const channel of targets) {
+            await channel
+              .sendMessage({
+                conversationId,
+                text,
+                role: role ?? "system-event",
+              })
+              .catch((err: unknown) =>
+                logger.error(`Failed to send system message to channel "${channel.name}"`, err),
+              );
+          }
+        },
+        sendChannelMessage: async ({ conversationId, text, role, channelName }) => {
+          const allChannels = this.options.channels ?? [];
+          const targets = channelName
+            ? allChannels.filter((channel) => channel.name === channelName)
+            : allChannels;
+
+          if (targets.length === 0) {
+            throw new Error(`No channel target available for channelName="${channelName ?? "*"}"`);
+          }
+
+          for (const channel of targets) {
+            await channel
+              .sendMessage({
+                conversationId,
+                text,
+                role: role ?? "agent",
+              })
+              .catch((err: unknown) =>
+                logger.error(`Failed to send channel message to channel "${channel.name}"`, err),
+              );
+          }
         },
       });
       await this.adminApi.listen();
@@ -400,6 +444,46 @@ export class Gateway extends EventEmitter {
       subAgents,
       checkpointer,
     });
+  }
+
+  private async invokeConfiguredGraph(params: {
+    conversationId: string;
+    prompt: string;
+    graphKey?: string;
+    personalToken?: string;
+  }): Promise<string> {
+    const graphKey = params.graphKey?.trim() || "default";
+    if (graphKey === "default") {
+      if (!this.agent) throw new Error("Agent is not running");
+      return this.agent.invoke(params.prompt, params.conversationId, undefined, params.personalToken);
+    }
+
+    if (!this.config || !this.models || !this.checkpointer) {
+      throw new Error("Gateway is not fully initialized");
+    }
+
+    const graph = this.buildAgentGraph(this.discoveredTools, graphKey);
+    const graphEntry = this.config.graphs[graphKey] ?? DEFAULT_GRAPH_ENTRY;
+    const orchestratorEntry = resolveConfigEntry(
+      this.config.agents as Record<string, AgentEntry>,
+      graphEntry.orchestratorAgentKey,
+    );
+
+    const result = await graph.invoke(
+      { messages: [new HumanMessage(params.prompt)] },
+      {
+        configurable: {
+          thread_id: params.conversationId,
+          conversationId: params.conversationId,
+          ...(params.personalToken ? { personalToken: params.personalToken } : {}),
+        },
+        recursionLimit: orchestratorEntry.recursionLimit ?? 25,
+      },
+    );
+
+    const last = result.messages.at(-1);
+    if (!last) throw new Error("Agent returned no messages");
+    return typeof last.content === "string" ? last.content : JSON.stringify(last.content);
   }
 
   /**

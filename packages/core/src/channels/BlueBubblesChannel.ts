@@ -11,7 +11,8 @@ export const BlueBubblesChannelSettingsSchema = z.object({
   password: z.string().min(1).optional(),
   webhookPort: z.number().int().positive().optional(),
   webhookHost: z.string().min(1).optional(),
-  receiveAll: z.boolean().optional(),
+  receiveAgentProcessing: z.boolean().optional(),
+  receiveSystem: z.boolean().optional(),
   /**
    * Inactivity TTL (in milliseconds) after which a new conversation thread is
    * started for the same chat.  If a sender is silent for longer than this
@@ -42,7 +43,8 @@ export function createBlueBubblesChannelFromConfig(entry: ChannelEntry | undefin
     password: result.data.password,
     webhookPort: result.data.webhookPort,
     webhookHost: result.data.webhookHost,
-    receiveAll: result.data.receiveAll,
+    receiveAgentProcessing: result.data.receiveAgentProcessing,
+    receiveSystem: result.data.receiveSystem,
     conversationTtlMs: result.data.conversationTtlMs,
   });
 }

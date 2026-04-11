@@ -133,9 +133,24 @@ export interface AdminApiConfig {
     agentKey: string;
     conversationId: string;
     prompt: string;
+    /** Optional graph key from graphs.json (defaults to "default"). */
+    graphKey?: string;
     /** Optional personal token so user-requested tasks can access encrypted memories. */
     personalToken?: string;
   }) => Promise<string>;
+  /** Optional callback for localhost trusted services to emit receiveSystem messages. */
+  sendSystemMessage?: (params: {
+    conversationId: string;
+    text: string;
+    role?: "system-event";
+  }) => Promise<void>;
+  /** Optional callback for trusted services to send agent-style messages to channels. */
+  sendChannelMessage?: (params: {
+    conversationId: string;
+    text: string;
+    role?: "agent" | "error";
+    channelName?: string;
+  }) => Promise<void>;
 }
 
 /**
@@ -157,6 +172,8 @@ export class AdminApi {
   private readonly toolRegistry: ToolDefinition[];
   private readonly agentCapabilities: AgentCapabilityEntry[];
   private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
+  private readonly sendSystemMessage?: AdminApiConfig["sendSystemMessage"];
+  private readonly sendChannelMessage?: AdminApiConfig["sendChannelMessage"];
   private readonly app: Express;
   private httpServer?: http.Server;
 
@@ -172,6 +189,8 @@ export class AdminApi {
     this.toolRegistry = config.toolRegistry ?? [];
     this.agentCapabilities = config.agentCapabilities ?? [];
     this.invokeAgent = config.invokeAgent;
+    this.sendSystemMessage = config.sendSystemMessage;
+    this.sendChannelMessage = config.sendChannelMessage;
 
     this.app = express();
     this.registerRoutes();
@@ -374,6 +393,7 @@ export class AdminApi {
           const agentKey = readBodyString(req.body, "agentKey");
           const conversationId = readBodyString(req.body, "conversationId");
           const prompt = readBodyString(req.body, "prompt");
+          const graphKey = readBodyString(req.body, "graphKey") || undefined;
           const personalToken = readBodyString(req.body, "personalToken") || undefined;
           if (!conversationId || !prompt) {
             res.status(400).json({ error: "conversationId and prompt are required" });
@@ -384,9 +404,82 @@ export class AdminApi {
               agentKey: agentKey || "default",
               conversationId,
               prompt,
+              graphKey,
               personalToken,
             });
             res.json({ result });
+          } catch (err) {
+            res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Internal endpoint for trusted local services to emit receiveSystem runtime
+      // observability messages (for example scheduler minute-sweep events).
+      this.app.post("/api/internal/system-message", (req, res) => {
+        void (async () => {
+          const remoteIp = req.socket.remoteAddress ?? "";
+          if (remoteIp !== "127.0.0.1" && remoteIp !== "::1" && remoteIp !== "::ffff:127.0.0.1") {
+            res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+            return;
+          }
+          if (!this.sendSystemMessage) {
+            res.status(503).json({ error: "System message sink is not available" });
+            return;
+          }
+
+          const text = readBodyString(req.body, "text");
+          const conversationId =
+            readBodyString(req.body, "conversationId") || "system:schedule";
+          if (!text) {
+            res.status(400).json({ error: "text is required" });
+            return;
+          }
+
+          try {
+            await this.sendSystemMessage({
+              conversationId,
+              text,
+              role: "system-event",
+            });
+            res.status(204).send();
+          } catch (err) {
+            res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
+      });
+
+      // Internal endpoint for trusted local services to deliver responses into
+      // a specific channel conversation context.
+      this.app.post("/api/internal/channel-message", (req, res) => {
+        void (async () => {
+          const remoteIp = req.socket.remoteAddress ?? "";
+          if (remoteIp !== "127.0.0.1" && remoteIp !== "::1" && remoteIp !== "::ffff:127.0.0.1") {
+            res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+            return;
+          }
+          if (!this.sendChannelMessage) {
+            res.status(503).json({ error: "Channel message sink is not available" });
+            return;
+          }
+
+          const conversationId = readBodyString(req.body, "conversationId");
+          const text = readBodyString(req.body, "text");
+          const role = readBodyString(req.body, "role");
+          const channelName = readBodyString(req.body, "channelName") || undefined;
+          if (!conversationId || !text) {
+            res.status(400).json({ error: "conversationId and text are required" });
+            return;
+          }
+
+          try {
+            await this.sendChannelMessage({
+              conversationId,
+              text,
+              role: role === "error" ? "error" : "agent",
+              channelName,
+            });
+            res.status(204).send();
           } catch (err) {
             res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
           }

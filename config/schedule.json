@@ -1,3 +1,23 @@
 {
-  "tasks": []
+  "executionGraphKey": "schedule-system",
+  "tasks": [
+    {
+      "name": "Check on Henry reminder",
+      "type": "user",
+      "scheduleType": "once",
+      "runAt": "2026-04-11T09:24:00.000Z",
+      "prompt": "Check how Henry is doing",
+      "enabled": true,
+      "personalToken": null,
+      "conversationId": "schedule-2cbe9860-9874-47d9-8d9b-76361c669438",
+      "delivery": {
+        "sendAgentReplyToSource": true,
+        "startConversation": false
+      },
+      "id": "2cbe9860-9874-47d9-8d9b-76361c669438",
+      "onceState": "completed",
+      "lastRunAt": "2026-04-11T09:24:00.000Z",
+      "completedAt": "2026-04-11T09:24:08.248Z"
+    }
+  ]
 }

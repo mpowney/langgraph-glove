@@ -31,6 +31,7 @@ import {
   resumeSchedulerToolMetadata,
   handleResumeScheduler,
 } from "./tools/PauseResumeTool";
+import { getStatusToolMetadata, handleGetStatus } from "./tools/GetStatusTool";
 
 const adminApiUrl = process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081";
 const configDir = path.resolve(process.env["GLOVE_CONFIG_DIR"] ?? "config");
@@ -47,6 +48,7 @@ async function invokeAgent(params: {
   agentKey: string;
   conversationId: string;
   prompt: string;
+  graphKey?: string;
   personalToken?: string;
 }): Promise<string> {
   const base = adminApiUrl.endsWith("/") ? adminApiUrl.slice(0, -1) : adminApiUrl;
@@ -68,10 +70,53 @@ async function invokeAgent(params: {
   return data.result ?? "";
 }
 
+async function emitSystemEvent(event: {
+  event: string;
+  timestamp: string;
+  taskId?: string;
+  details?: Record<string, unknown>;
+}): Promise<void> {
+  const base = adminApiUrl.endsWith("/") ? adminApiUrl.slice(0, -1) : adminApiUrl;
+  const response = await fetch(`${base}/api/internal/system-message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      conversationId: "system:schedule",
+      text: JSON.stringify(event),
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`emitSystemEvent HTTP ${response.status}: ${body || response.statusText}`);
+  }
+}
+
+async function sendChannelMessage(params: {
+  conversationId: string;
+  text: string;
+  role?: "agent" | "error";
+  channelName?: string;
+}): Promise<void> {
+  const base = adminApiUrl.endsWith("/") ? adminApiUrl.slice(0, -1) : adminApiUrl;
+  const response = await fetch(`${base}/api/internal/channel-message`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    throw new Error(`sendChannelMessage HTTP ${response.status}: ${body || response.statusText}`);
+  }
+}
+
 const service = new ScheduleService({
   configPath: scheduleFile,
   secretsDir,
   invokeAgent,
+  emitSystemEvent,
+  sendChannelMessage,
 });
 
 await service.start();
@@ -89,5 +134,6 @@ await launchToolServer({
     server.register(clearAllTasksToolMetadata, handleClearAllTasks(service, adminApiUrl));
     server.register(pauseSchedulerToolMetadata, handlePauseScheduler(service, adminApiUrl));
     server.register(resumeSchedulerToolMetadata, handleResumeScheduler(service, adminApiUrl));
+    server.register(getStatusToolMetadata, handleGetStatus(service));
   },
 });

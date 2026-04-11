@@ -7,7 +7,8 @@ import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk } from "./Channel";
 
 export const CliChannelSettingsSchema = z.object({
-  receiveAll: z.boolean().optional(),
+  receiveAgentProcessing: z.boolean().optional(),
+  receiveSystem: z.boolean().optional(),
 });
 
 export function createCliChannelFromConfig(entry?: ChannelEntry): CliChannel | null {
@@ -20,7 +21,10 @@ export function createCliChannelFromConfig(entry?: ChannelEntry): CliChannel | n
     throw new Error(`Invalid channels.json cli settings: ${result.error.message}`);
   }
 
-  return new CliChannel({ receiveAll: result.data.receiveAll });
+  return new CliChannel({
+    receiveAgentProcessing: result.data.receiveAgentProcessing,
+    receiveSystem: result.data.receiveSystem,
+  });
 }
 
 /**

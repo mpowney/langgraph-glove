@@ -23,6 +23,7 @@ import {
 import { Dismiss24Regular, ArrowClockwise24Regular } from "@fluentui/react-icons";
 import type { ToolDefinition, AgentCapabilityEntry, AgentCapabilityRegistry } from "../types";
 import { ParameterTable } from "./ParameterTable";
+import { createUuid } from "../uuid";
 
 // ---------------------------------------------------------------------------
 // Styles
@@ -134,7 +135,71 @@ const useStyles = makeStyles({
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     fontSize: tokens.fontSizeBase200,
   },
+  statusCard: {
+    margin: `0 ${tokens.spacingHorizontalM}`,
+    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    borderRadius: tokens.borderRadiusMedium,
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXS,
+  },
+  statusHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+  },
+  statusMeta: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+    flexWrap: "wrap",
+  },
+  statusGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalM}`,
+  },
+  statusLabel: {
+    color: tokens.colorNeutralForeground2,
+    fontSize: tokens.fontSizeBase200,
+  },
+  statusValue: {
+    fontWeight: tokens.fontWeightSemibold,
+    fontSize: tokens.fontSizeBase200,
+  },
+  statusError: {
+    color: tokens.colorPaletteRedForeground1,
+    fontSize: tokens.fontSizeBase200,
+  },
 });
+
+interface ScheduleStatus {
+  paused: boolean;
+  minuteSweepRunning: boolean;
+  lastSweepMinute?: string;
+  totalTasks: number;
+  enabledTasks: number;
+  cronTasks: number;
+  onceTasks: number;
+  enabledCronTasks: number;
+  enabledOnceTasks: number;
+  lastExecutionAt?: string;
+  lastExecutionTaskId?: string;
+  lastExecutionResult?: "success" | "failed";
+  lastExecutionError?: string;
+}
+
+interface ScheduleStatusRpcResult {
+  success: boolean;
+  status: ScheduleStatus;
+}
+
+interface RpcResponse<T> {
+  id: string;
+  result?: T;
+  error?: string;
+}
 
 // ---------------------------------------------------------------------------
 // Sub-components
@@ -277,13 +342,53 @@ export interface ToolsPanelProps {
 
 export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsPanelProps) {
   const styles = useStyles();
-  const [activeTab, setActiveTab] = useState<"catalog" | "agents">("catalog");
+  const [activeTab, setActiveTab] = useState<"catalog" | "agents" | "schedule">("catalog");
   const [filter, setFilter] = useState("");
 
   const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [registry, setRegistry] = useState<AgentCapabilityRegistry | null>(null);
   const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [scheduleStatus, setScheduleStatus] = useState<ScheduleStatus | null>(null);
+  const [scheduleStatusLoading, setScheduleStatusLoading] = useState(false);
+  const [scheduleStatusError, setScheduleStatusError] = useState<string | null>(null);
+
+  const loadScheduleStatus = React.useCallback(async () => {
+    setScheduleStatusLoading(true);
+    setScheduleStatusError(null);
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}),
+    };
+
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/tools/_schedule/rpc`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({
+          id: createUuid(),
+          method: "schedule_get_status",
+          params: {},
+        }),
+      });
+
+      if (!response.ok) throw new Error(`Schedule status: HTTP ${response.status}`);
+      const payload = (await response.json()) as RpcResponse<ScheduleStatusRpcResult>;
+      if (payload.error) throw new Error(payload.error);
+      if (!payload.result?.status) throw new Error("Schedule status result missing payload");
+      setScheduleStatus(payload.result.status);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const recommendedMessage =
+        message.includes("HTTP 400")
+        || /not configured for HTTP RPC/i.test(message)
+          ? "Schedule status is unavailable because the schedule tool is not configured for HTTP transport. Update tools.json to use transport: \"http\" for the schedule tool to enable this status check."
+          : message;
+      setScheduleStatusError(recommendedMessage);
+    } finally {
+      setScheduleStatusLoading(false);
+    }
+  }, [apiBaseUrl, authToken]);
 
   const load = React.useCallback(async () => {
     setLoadState("loading");
@@ -303,11 +408,12 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
       setTools(toolData);
       setRegistry(capData);
       setLoadState("idle");
+      void loadScheduleStatus();
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : String(err));
       setLoadState("error");
     }
-  }, [apiBaseUrl, authToken]);
+  }, [apiBaseUrl, authToken, loadScheduleStatus]);
 
   // Auto-fetch on open
   React.useEffect(() => {
@@ -316,6 +422,16 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
       void load();
     }
   }, [open, load]);
+
+  React.useEffect(() => {
+    if (!open) return;
+    const timer = window.setInterval(() => {
+      void loadScheduleStatus();
+    }, 30_000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [open, loadScheduleStatus]);
 
   const toolCount = useMemo(() => tools.length, [tools]);
   const agentCount = useMemo(() => registry?.agents.length ?? 0, [registry]);
@@ -347,7 +463,7 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
             </div>
           }
         >
-          Tools &amp; Agents
+          Tools, Agents, and Schedule
         </DrawerHeaderTitle>
       </DrawerHeader>
 
@@ -358,7 +474,7 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
             <TabList
               selectedValue={activeTab}
               onTabSelect={(_: unknown, data: SelectTabData) =>
-                setActiveTab(data.value as "catalog" | "agents")
+                setActiveTab(data.value as "catalog" | "agents" | "schedule")
               }
               size="small"
             >
@@ -378,19 +494,22 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
                   </Badge>
                 )}
               </Tab>
+              <Tab value="schedule">Schedule</Tab>
             </TabList>
           </div>
 
           {/* Search */}
-          <div className={styles.searchRow}>
-            <Input
-              size="small"
-              placeholder={activeTab === "catalog" ? "Filter tools…" : "Filter agents…"}
-              value={filter}
-              onChange={(_, d) => setFilter(d.value)}
-              style={{ width: "100%" }}
-            />
-          </div>
+          {activeTab !== "schedule" && (
+            <div className={styles.searchRow}>
+              <Input
+                size="small"
+                placeholder={activeTab === "catalog" ? "Filter tools…" : "Filter agents…"}
+                value={filter}
+                onChange={(_, d) => setFilter(d.value)}
+                style={{ width: "100%" }}
+              />
+            </div>
+          )}
 
           {/* Content */}
           {loadState === "loading" && (
@@ -407,6 +526,48 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
           )}
           {loadState === "idle" && activeTab === "agents" && !registry && (
             <Text className={styles.empty}>No capability data available.</Text>
+          )}
+          {loadState === "idle" && activeTab === "schedule" && (
+            <div className={styles.statusCard}>
+              <div className={styles.statusHeader}>
+                <Text weight="semibold">Schedule status</Text>
+                <Button
+                  appearance="subtle"
+                  size="small"
+                  icon={<ArrowClockwise24Regular />}
+                  onClick={() => void loadScheduleStatus()}
+                  disabled={scheduleStatusLoading}
+                  aria-label="Refresh schedule status"
+                />
+              </div>
+              {scheduleStatus && (
+                <>
+                  <div className={styles.statusMeta}>
+                    <Badge appearance="tint" color={scheduleStatus.paused ? "warning" : "success"} size="small">
+                      {scheduleStatus.paused ? "paused" : "running"}
+                    </Badge>
+                    <Badge appearance="tint" color="informative" size="small">
+                      minute sweep {scheduleStatus.minuteSweepRunning ? "active" : "idle"}
+                    </Badge>
+                  </div>
+                  <div className={styles.statusGrid}>
+                    <Text className={styles.statusLabel}>tasks</Text>
+                    <Text className={styles.statusValue}>{scheduleStatus.enabledTasks}/{scheduleStatus.totalTasks}</Text>
+                    <Text className={styles.statusLabel}>cron enabled</Text>
+                    <Text className={styles.statusValue}>{scheduleStatus.enabledCronTasks}</Text>
+                    <Text className={styles.statusLabel}>once enabled</Text>
+                    <Text className={styles.statusValue}>{scheduleStatus.enabledOnceTasks}</Text>
+                    <Text className={styles.statusLabel}>last result</Text>
+                    <Text className={styles.statusValue}>{scheduleStatus.lastExecutionResult ?? "none"}</Text>
+                  </div>
+                  {scheduleStatus.lastExecutionError && (
+                    <Text className={styles.statusError}>{scheduleStatus.lastExecutionError}</Text>
+                  )}
+                </>
+              )}
+              {!scheduleStatus && scheduleStatusLoading && <Spinner size="tiny" label="Loading schedule status…" />}
+              {scheduleStatusError && <Text className={styles.statusError}>{scheduleStatusError}</Text>}
+            </div>
           )}
         </div>
       </DrawerBody>

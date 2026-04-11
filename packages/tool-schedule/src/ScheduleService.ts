@@ -6,6 +6,7 @@
  *
  * ```json
  * {
+ *   "executionGraphKey": "schedule-system",
  *   "tasks": [
  *     {
  *       "id": "<uuid>",
@@ -51,6 +52,44 @@ import { SecretStore } from "@langgraph-glove/config";
 // ---------------------------------------------------------------------------
 
 export type TaskType = "user" | "agent" | "system";
+export type ScheduleType = "cron" | "once";
+export type OnceTaskState = "pending" | "running" | "completed" | "failed";
+
+export interface TaskSourceContext {
+  /** Channel name where the scheduling request originated (for example "web" or "bluebubbles"). */
+  channel: string;
+  /** Channel-scoped conversation identifier to continue in the same context. */
+  conversationId: string;
+  /** Optional source sender identifier. */
+  sender?: string;
+  /** Channel-specific metadata captured when scheduling was requested (for example BlueBubbles chatGuid). */
+  metadata?: Record<string, unknown>;
+  /** ISO timestamp when source context was captured. */
+  capturedAt?: string;
+}
+
+export interface TaskDeliveryConfig {
+  /** When true, send the final agent response back to sourceContext channel/conversation. */
+  sendAgentReplyToSource?: boolean;
+  /** When true, send a starter message before invoking the task prompt. */
+  startConversation?: boolean;
+  /** Optional starter text used when startConversation=true. */
+  starterText?: string;
+}
+
+export interface SchedulerSystemEvent {
+  event:
+    | "scheduler-started"
+    | "scheduler-paused"
+    | "scheduler-resumed"
+    | "minute-sweep"
+    | "task-started"
+    | "task-completed"
+    | "task-failed";
+  timestamp: string;
+  taskId?: string;
+  details?: Record<string, unknown>;
+}
 
 export interface ScheduledTask {
   /** Stable unique identifier for this task. */
@@ -64,11 +103,12 @@ export interface ScheduledTask {
    * - `"system"` — maintenance / housekeeping
    */
   type: TaskType;
-  /**
-   * Standard cron expression (5 or 6 fields).
-   * Examples: `"0 3 * * *"`, `"*\/15 * * * *"`.
-   */
-  cron: string;
+  /** Task schedule mode. Defaults to "cron" for legacy entries. */
+  scheduleType?: ScheduleType;
+  /** Cron expression when scheduleType = "cron". */
+  cron?: string;
+  /** ISO datetime when scheduleType = "once". Normalized to minute precision. */
+  runAt?: string;
   /**
    * Key of the agent that should handle this task (e.g. `"memory"`,
    * `"researcher"`, `"default"`).  If omitted the orchestrator default agent
@@ -94,10 +134,40 @@ export interface ScheduledTask {
    * Auto-generated if omitted.
    */
   conversationId?: string;
+  /** Once-task state tracking. */
+  onceState?: OnceTaskState;
+  /** Timestamp of latest run attempt. */
+  lastRunAt?: string;
+  /** Timestamp when a once task completed successfully. */
+  completedAt?: string;
+  /** Last execution error, when present. */
+  lastError?: string;
+  /** Original channel context used to continue follow-up interaction in-place. */
+  sourceContext?: TaskSourceContext;
+  /** Delivery behavior for proactive/start and post-run reply messaging. */
+  delivery?: TaskDeliveryConfig;
 }
 
 export interface ScheduleConfig {
+  /** Graph key used when executing scheduled tasks via gateway invoke API. */
+  executionGraphKey?: string;
   tasks: ScheduledTask[];
+}
+
+export interface SchedulerStatus {
+  paused: boolean;
+  minuteSweepRunning: boolean;
+  lastSweepMinute?: string;
+  totalTasks: number;
+  enabledTasks: number;
+  cronTasks: number;
+  onceTasks: number;
+  enabledCronTasks: number;
+  enabledOnceTasks: number;
+  lastExecutionAt?: string;
+  lastExecutionTaskId?: string;
+  lastExecutionResult?: "success" | "failed";
+  lastExecutionError?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -107,9 +177,18 @@ export interface ScheduleConfig {
 const SECRET_PATTERN = /^\{SECRET:([^}]+)\}$/;
 
 export class ScheduleService {
+  private static readonly DEFAULT_EXECUTION_GRAPH_KEY = "schedule-system";
   private tasks: ScheduledTask[] = [];
   private cronJobs = new Map<string, cron.ScheduledTask>();
+  private minuteSweepJob: cron.ScheduledTask | null = null;
+  private minuteSweepRunning = false;
+  private lastSweepMinute: string | null = null;
   private paused = false;
+  private lastExecutionAt?: string;
+  private lastExecutionTaskId?: string;
+  private lastExecutionResult?: "success" | "failed";
+  private lastExecutionError?: string;
+  private executionGraphKey = ScheduleService.DEFAULT_EXECUTION_GRAPH_KEY;
   private readonly configPath: string;
   private readonly secretStore: SecretStore;
   /** Called by the cron runner to execute a task against the gateway agent. */
@@ -117,6 +196,7 @@ export class ScheduleService {
     agentKey: string;
     conversationId: string;
     prompt: string;
+    graphKey?: string;
     personalToken?: string;
   }) => Promise<string>;
 
@@ -127,14 +207,32 @@ export class ScheduleService {
       agentKey: string;
       conversationId: string;
       prompt: string;
+      graphKey?: string;
       personalToken?: string;
     }) => Promise<string>;
+    emitSystemEvent?: (event: SchedulerSystemEvent) => Promise<void> | void;
+    sendChannelMessage?: (params: {
+      conversationId: string;
+      text: string;
+      role?: "agent" | "error";
+      channelName?: string;
+    }) => Promise<void>;
   }) {
     this.configPath = options.configPath;
     this.secretStore = new SecretStore();
     this.secretStore.load(options.secretsDir);
     this.invokeAgent = options.invokeAgent;
+    this.emitSystemEvent = options.emitSystemEvent;
+    this.sendChannelMessage = options.sendChannelMessage;
   }
+
+  private readonly emitSystemEvent?: (event: SchedulerSystemEvent) => Promise<void> | void;
+  private readonly sendChannelMessage?: (params: {
+    conversationId: string;
+    text: string;
+    role?: "agent" | "error";
+    channelName?: string;
+  }) => Promise<void>;
 
   // -------------------------------------------------------------------------
   // Lifecycle
@@ -144,6 +242,12 @@ export class ScheduleService {
   async start(): Promise<void> {
     await this.load();
     this.rebuildCronJobs();
+    this.startMinuteSweep();
+    await this.emitEvent("scheduler-started", {
+      paused: this.paused,
+      cronTaskCount: this.countEnabledCronTasks(),
+      onceTaskCount: this.countEnabledOnceTasks(),
+    });
     console.log(`[ScheduleService] Started with ${this.tasks.length} task(s)`);
   }
 
@@ -153,6 +257,10 @@ export class ScheduleService {
       job.stop();
     }
     this.cronJobs.clear();
+    if (this.minuteSweepJob) {
+      this.minuteSweepJob.stop();
+      this.minuteSweepJob = null;
+    }
     console.log("[ScheduleService] Stopped");
   }
 
@@ -165,17 +273,50 @@ export class ScheduleService {
     for (const job of this.cronJobs.values()) {
       job.stop();
     }
+    if (this.minuteSweepJob) {
+      this.minuteSweepJob.stop();
+    }
+    void this.emitEvent("scheduler-paused", {
+      cronTaskCount: this.countEnabledCronTasks(),
+      onceTaskCount: this.countEnabledOnceTasks(),
+    });
     console.log("[ScheduleService] Paused");
   }
 
   resume(): void {
     this.paused = false;
     this.rebuildCronJobs();
+    this.startMinuteSweep();
+    void this.emitEvent("scheduler-resumed", {
+      cronTaskCount: this.countEnabledCronTasks(),
+      onceTaskCount: this.countEnabledOnceTasks(),
+    });
     console.log("[ScheduleService] Resumed");
   }
 
   get isPaused(): boolean {
     return this.paused;
+  }
+
+  getStatus(): SchedulerStatus {
+    const cronTasks = this.tasks.filter((task) => this.getScheduleType(task) === "cron").length;
+    const onceTasks = this.tasks.length - cronTasks;
+    const enabledTasks = this.tasks.filter((task) => task.enabled).length;
+    return {
+      paused: this.paused,
+      minuteSweepRunning: this.minuteSweepRunning,
+      ...(this.lastSweepMinute ? { lastSweepMinute: this.lastSweepMinute } : {}),
+      totalTasks: this.tasks.length,
+      enabledTasks,
+      cronTasks,
+      onceTasks,
+      enabledCronTasks: this.countEnabledCronTasks(),
+      enabledOnceTasks: this.countEnabledOnceTasks(),
+      ...(this.lastExecutionAt ? { lastExecutionAt: this.lastExecutionAt } : {}),
+      ...(this.lastExecutionTaskId ? { lastExecutionTaskId: this.lastExecutionTaskId } : {}),
+      ...(this.lastExecutionResult ? { lastExecutionResult: this.lastExecutionResult } : {}),
+      ...(this.lastExecutionError ? { lastExecutionError: this.lastExecutionError } : {}),
+    };
   }
 
   // -------------------------------------------------------------------------
@@ -193,18 +334,15 @@ export class ScheduleService {
 
   async addTask(input: Omit<ScheduledTask, "id"> & { id?: string }): Promise<ScheduledTask> {
     const id = input.id ?? uuidv4();
-    if (!cron.validate(input.cron)) {
-      throw new Error(`Invalid cron expression: "${input.cron}"`);
-    }
-    const task: ScheduledTask = {
+    const task = this.normaliseAndValidateTask({
       ...input,
       id,
-      enabled: input.enabled ?? true,
       conversationId: input.conversationId ?? `schedule-${id}`,
-    };
+      enabled: input.enabled ?? true,
+    });
     this.tasks.push(task);
     await this.save();
-    if (!this.paused && task.enabled) {
+    if (!this.paused && task.enabled && task.scheduleType !== "once") {
       this.scheduleSingleTask(task);
     }
     return this.sanitiseForOutput(task);
@@ -213,10 +351,10 @@ export class ScheduleService {
   async updateTask(id: string, updates: Partial<Omit<ScheduledTask, "id">>): Promise<ScheduledTask> {
     const idx = this.tasks.findIndex((t) => t.id === id);
     if (idx === -1) throw new Error(`Task "${id}" not found`);
-    if (updates.cron !== undefined && !cron.validate(updates.cron)) {
-      throw new Error(`Invalid cron expression: "${updates.cron}"`);
-    }
-    const updated = { ...this.tasks[idx] as ScheduledTask, ...updates };
+    const updated = this.normaliseAndValidateTask({
+      ...(this.tasks[idx] as ScheduledTask),
+      ...updates,
+    });
     this.tasks[idx] = updated;
     await this.save();
     // Rebuild this task's cron job to pick up changes
@@ -225,7 +363,7 @@ export class ScheduleService {
       existing.stop();
       this.cronJobs.delete(id);
     }
-    if (!this.paused && updated.enabled) {
+    if (!this.paused && updated.enabled && updated.scheduleType !== "once") {
       this.scheduleSingleTask(updated);
     }
     return this.sanitiseForOutput(updated);
@@ -259,7 +397,7 @@ export class ScheduleService {
   async runTaskNow(id: string): Promise<string> {
     const task = this.tasks.find((t) => t.id === id);
     if (!task) throw new Error(`Task "${id}" not found`);
-    return this.executeTask(task);
+    return this.executeTask(task, "manual-now");
   }
 
   // -------------------------------------------------------------------------
@@ -274,7 +412,7 @@ export class ScheduleService {
     this.cronJobs.clear();
     if (this.paused) return;
     for (const task of this.tasks) {
-      if (task.enabled) {
+      if (task.enabled && this.getScheduleType(task) === "cron") {
         this.scheduleSingleTask(task);
       }
     }
@@ -282,24 +420,78 @@ export class ScheduleService {
   }
 
   private scheduleSingleTask(task: ScheduledTask): void {
-    if (!cron.validate(task.cron)) {
-      console.error(`[ScheduleService] Skipping task "${task.id}" — invalid cron: "${task.cron}"`);
+    const cronExpr = task.cron?.trim() ?? "";
+    if (!cron.validate(cronExpr)) {
+      console.error(`[ScheduleService] Skipping task "${task.id}" — invalid cron: "${cronExpr}"`);
       return;
     }
-    const job = cron.schedule(task.cron, () => {
-      this.executeTask(task).catch((err: unknown) => {
+    const job = cron.schedule(cronExpr, () => {
+      this.executeTask(task, "cron").catch((err: unknown) => {
         console.error(`[ScheduleService] Task "${task.id}" (${task.name}) failed:`, err);
       });
     });
     this.cronJobs.set(task.id, job);
-    console.log(`[ScheduleService] Scheduled task "${task.id}" (${task.name}) @ ${task.cron}`);
+    console.log(`[ScheduleService] Scheduled task "${task.id}" (${task.name}) @ ${cronExpr}`);
   }
 
-  private async executeTask(task: ScheduledTask): Promise<string> {
+  private startMinuteSweep(): void {
+    if (this.minuteSweepJob) {
+      this.minuteSweepJob.stop();
+      this.minuteSweepJob = null;
+    }
+    this.minuteSweepJob = cron.schedule("* * * * *", () => {
+      this.runDueOnceTasks().catch((err: unknown) => {
+        console.error("[ScheduleService] Minute sweep failed:", err);
+      });
+    });
+    console.log("[ScheduleService] Started once-task minute sweep");
+  }
+
+  private async runDueOnceTasks(): Promise<void> {
+    if (this.paused || this.minuteSweepRunning) return;
+    const minute = this.currentMinuteIso();
+    if (this.lastSweepMinute === minute) return;
+
+    this.minuteSweepRunning = true;
+    this.lastSweepMinute = minute;
+    try {
+      const dueTasks = this.tasks.filter((task) => this.isOnceTaskDue(task, minute));
+      await this.emitEvent("minute-sweep", {
+        minute,
+        dueCount: dueTasks.length,
+      });
+      for (const task of dueTasks) {
+        await this.executeTask(task, "once-minute-sweep").catch((err: unknown) => {
+          console.error(`[ScheduleService] Once task "${task.id}" (${task.name}) failed:`, err);
+        });
+      }
+    } finally {
+      this.minuteSweepRunning = false;
+    }
+  }
+
+  private async executeTask(task: ScheduledTask, trigger: "cron" | "once-minute-sweep" | "manual-now"): Promise<string> {
     console.log(`[ScheduleService] Executing task "${task.id}" (${task.name})`);
+
+    const scheduleType = this.getScheduleType(task);
+    if (scheduleType === "once") {
+      await this.markOnceTaskStarted(task.id);
+    }
+
+    await this.emitEvent("task-started", {
+      taskId: task.id,
+      name: task.name,
+      scheduleType,
+      trigger,
+    });
+
     const personalToken = await this.resolvePersonalToken(task);
     const agentKey = task.agentKey ?? "default";
     const conversationId = task.conversationId ?? `schedule-${task.id}`;
+
+    if (task.delivery?.startConversation && task.delivery.starterText) {
+      await this.deliverToSource(task, task.delivery.starterText, "agent");
+    }
 
     // When a specific agent is targeted the prompt is prefixed so the
     // orchestrator knows which sub-agent should handle it.
@@ -308,9 +500,84 @@ export class ScheduleService {
         ? `[Scheduled task — delegate to the ${agentKey} agent] ${task.prompt}`
         : task.prompt;
 
-    const result = await this.invokeAgent({ agentKey, conversationId, prompt, personalToken });
-    console.log(`[ScheduleService] Task "${task.id}" completed`);
-    return result;
+    try {
+      const result = await this.invokeAgent({
+        agentKey,
+        conversationId,
+        prompt,
+        graphKey: this.executionGraphKey,
+        personalToken,
+      });
+
+      if (scheduleType === "once") {
+        await this.markOnceTaskCompleted(task.id);
+      }
+      this.lastExecutionAt = new Date().toISOString();
+      this.lastExecutionTaskId = task.id;
+      this.lastExecutionResult = "success";
+      this.lastExecutionError = undefined;
+
+      if (task.delivery?.sendAgentReplyToSource !== false) {
+        await this.deliverToSource(task, result, "agent");
+      }
+
+      await this.emitEvent("task-completed", {
+        taskId: task.id,
+        name: task.name,
+        scheduleType,
+        trigger,
+      });
+      console.log(`[ScheduleService] Task "${task.id}" completed`);
+      return result;
+    } catch (err) {
+      const errText = this.stringifyError(err);
+      if (scheduleType === "once") {
+        await this.markOnceTaskFailed(task.id, errText);
+      }
+      this.lastExecutionAt = new Date().toISOString();
+      this.lastExecutionTaskId = task.id;
+      this.lastExecutionResult = "failed";
+      this.lastExecutionError = errText;
+
+      if (task.delivery?.sendAgentReplyToSource !== false) {
+        await this.deliverToSource(task, `Scheduled task failed: ${errText}`, "error");
+      }
+
+      await this.emitEvent("task-failed", {
+        taskId: task.id,
+        name: task.name,
+        scheduleType,
+        trigger,
+        error: errText,
+      });
+      throw err;
+    }
+  }
+
+  private async deliverToSource(
+    task: ScheduledTask,
+    text: string,
+    role: "agent" | "error",
+  ): Promise<void> {
+    if (!this.sendChannelMessage) return;
+    const source = task.sourceContext;
+    if (!source?.channel) return;
+
+    const chatGuid = typeof source.metadata?.chatGuid === "string"
+      ? source.metadata.chatGuid
+      : undefined;
+    const targetConversationId =
+      source.channel === "bluebubbles"
+        ? (chatGuid ?? source.conversationId)
+        : source.conversationId;
+    if (!targetConversationId) return;
+
+    await this.sendChannelMessage({
+      channelName: source.channel,
+      conversationId: targetConversationId,
+      text,
+      role,
+    });
   }
 
   /**
@@ -348,6 +615,187 @@ export class ScheduleService {
     };
   }
 
+  private getScheduleType(task: ScheduledTask): ScheduleType {
+    return task.scheduleType === "once" ? "once" : "cron";
+  }
+
+  private normaliseAndValidateTask(task: ScheduledTask): ScheduledTask {
+    const scheduleType = task.scheduleType === "once" ? "once" : "cron";
+    const normalised: ScheduledTask = {
+      ...task,
+      name: task.name.trim(),
+      type: task.type,
+      prompt: task.prompt.trim(),
+      enabled: task.enabled ?? true,
+      scheduleType,
+      agentKey: task.agentKey?.trim() || undefined,
+      conversationId: task.conversationId?.trim() || `schedule-${task.id}`,
+      personalToken: task.personalToken ?? null,
+      sourceContext: this.normaliseSourceContext(task.sourceContext),
+      delivery: this.normaliseDelivery(task.delivery),
+    };
+
+    if (!normalised.name) throw new Error("Task name is required");
+    if (!normalised.prompt) throw new Error("Task prompt is required");
+
+    if (scheduleType === "cron") {
+      const cronExpr = normalised.cron?.trim() ?? "";
+      if (!cronExpr) throw new Error("'cron' is required when scheduleType is 'cron'");
+      if (!cron.validate(cronExpr)) {
+        throw new Error(`Invalid cron expression: "${cronExpr}"`);
+      }
+      normalised.cron = cronExpr;
+      delete normalised.runAt;
+      delete normalised.onceState;
+      delete normalised.completedAt;
+      delete normalised.lastError;
+      return normalised;
+    }
+
+    const runAtMinute = this.normalizeToMinuteIso(normalised.runAt);
+    if (!runAtMinute) {
+      throw new Error("'runAt' is required when scheduleType is 'once'");
+    }
+
+    normalised.runAt = runAtMinute;
+    delete normalised.cron;
+    normalised.onceState = this.normaliseOnceState(normalised.onceState);
+    if (normalised.onceState !== "completed") {
+      delete normalised.completedAt;
+    }
+    if (normalised.onceState !== "failed") {
+      delete normalised.lastError;
+    }
+    return normalised;
+  }
+
+  private normaliseSourceContext(input: TaskSourceContext | undefined): TaskSourceContext | undefined {
+    if (!input) return undefined;
+    const channel = input.channel?.trim();
+    const conversationId = input.conversationId?.trim();
+    if (!channel || !conversationId) return undefined;
+    return {
+      channel,
+      conversationId,
+      ...(input.sender?.trim() ? { sender: input.sender.trim() } : {}),
+      ...(input.metadata ? { metadata: input.metadata } : {}),
+      capturedAt: input.capturedAt ?? new Date().toISOString(),
+    };
+  }
+
+  private normaliseDelivery(input: TaskDeliveryConfig | undefined): TaskDeliveryConfig {
+    const sendAgentReplyToSource = input?.sendAgentReplyToSource ?? true;
+    const startConversation = input?.startConversation ?? false;
+    return {
+      sendAgentReplyToSource,
+      startConversation,
+      ...(input?.starterText?.trim() ? { starterText: input.starterText.trim() } : {}),
+    };
+  }
+
+  private normaliseOnceState(state: OnceTaskState | undefined): OnceTaskState {
+    if (state === "running" || state === "completed" || state === "failed") return state;
+    return "pending";
+  }
+
+  private currentMinuteIso(): string {
+    return new Date(Math.floor(Date.now() / 60000) * 60000).toISOString();
+  }
+
+  private normalizeToMinuteIso(value: string | undefined): string | null {
+    if (!value?.trim()) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    parsed.setUTCSeconds(0, 0);
+    return parsed.toISOString();
+  }
+
+  private isOnceTaskDue(task: ScheduledTask, minuteIso: string): boolean {
+    if (!task.enabled) return false;
+    if (this.getScheduleType(task) !== "once") return false;
+    const runAtMinute = this.normalizeToMinuteIso(task.runAt);
+    if (!runAtMinute) return false;
+    if (task.onceState === "completed") return false;
+    if (task.onceState === "running") return false;
+    if (task.lastRunAt && this.normalizeToMinuteIso(task.lastRunAt) === minuteIso) {
+      return false;
+    }
+    return runAtMinute <= minuteIso;
+  }
+
+  private async markOnceTaskStarted(taskId: string): Promise<void> {
+    const idx = this.tasks.findIndex((task) => task.id === taskId);
+    if (idx === -1) return;
+    const task = this.tasks[idx] as ScheduledTask;
+    if (this.getScheduleType(task) !== "once") return;
+    this.tasks[idx] = {
+      ...task,
+      onceState: "running",
+      lastRunAt: this.currentMinuteIso(),
+      lastError: undefined,
+    };
+    await this.save();
+  }
+
+  private async markOnceTaskCompleted(taskId: string): Promise<void> {
+    const idx = this.tasks.findIndex((task) => task.id === taskId);
+    if (idx === -1) return;
+    const task = this.tasks[idx] as ScheduledTask;
+    if (this.getScheduleType(task) !== "once") return;
+    this.tasks[idx] = {
+      ...task,
+      onceState: "completed",
+      completedAt: new Date().toISOString(),
+    };
+    await this.save();
+  }
+
+  private async markOnceTaskFailed(taskId: string, error: string): Promise<void> {
+    const idx = this.tasks.findIndex((task) => task.id === taskId);
+    if (idx === -1) return;
+    const task = this.tasks[idx] as ScheduledTask;
+    if (this.getScheduleType(task) !== "once") return;
+    this.tasks[idx] = {
+      ...task,
+      onceState: "failed",
+      lastError: error,
+    };
+    await this.save();
+  }
+
+  private countEnabledCronTasks(): number {
+    return this.tasks.filter((task) => task.enabled && this.getScheduleType(task) === "cron").length;
+  }
+
+  private countEnabledOnceTasks(): number {
+    return this.tasks.filter((task) => task.enabled && this.getScheduleType(task) === "once").length;
+  }
+
+  private async emitEvent(
+    event: SchedulerSystemEvent["event"],
+    details?: Record<string, unknown>,
+  ): Promise<void> {
+    if (!this.emitSystemEvent) return;
+    try {
+      await this.emitSystemEvent({
+        event,
+        timestamp: new Date().toISOString(),
+        ...(details ? { details } : {}),
+      });
+    } catch {
+      // Keep scheduler flow resilient when observability sinks are unavailable.
+    }
+  }
+
+  private stringifyError(err: unknown): string {
+    if (err instanceof Error) return err.message;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return String(err);
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Persistence
   // -------------------------------------------------------------------------
@@ -356,7 +804,27 @@ export class ScheduleService {
     try {
       const raw = await fs.readFile(this.configPath, "utf-8");
       const parsed = JSON.parse(raw) as ScheduleConfig;
-      this.tasks = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      this.executionGraphKey =
+        typeof parsed.executionGraphKey === "string" && parsed.executionGraphKey.trim().length > 0
+          ? parsed.executionGraphKey.trim()
+          : ScheduleService.DEFAULT_EXECUTION_GRAPH_KEY;
+      const incoming = Array.isArray(parsed.tasks) ? parsed.tasks : [];
+      this.tasks = incoming
+        .filter((candidate): candidate is ScheduledTask => typeof candidate === "object" && candidate !== null)
+        .map((candidate) => {
+          const id =
+            typeof candidate.id === "string" && candidate.id.trim()
+              ? candidate.id
+              : uuidv4();
+          const base: ScheduledTask = {
+            ...candidate,
+            id,
+            enabled: candidate.enabled ?? true,
+            conversationId: candidate.conversationId ?? `schedule-${id}`,
+            scheduleType: candidate.scheduleType === "once" ? "once" : "cron",
+          };
+          return this.normaliseAndValidateTask(base);
+        });
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         // No schedule file yet — start with empty list
@@ -369,7 +837,10 @@ export class ScheduleService {
   }
 
   private async save(): Promise<void> {
-    const config: ScheduleConfig = { tasks: this.tasks };
+    const config: ScheduleConfig = {
+      executionGraphKey: this.executionGraphKey,
+      tasks: this.tasks,
+    };
     const dir = path.dirname(this.configPath);
     if (!fsSync.existsSync(dir)) {
       await fs.mkdir(dir, { recursive: true });

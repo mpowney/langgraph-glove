@@ -51,7 +51,7 @@
     "socketName": "datetime"
   },
   "schedule": {
-    "transport": "unix-socket",
+    "transport": "http",
     "url": "http://localhost:3016",
     "socketName": "schedule"
   }

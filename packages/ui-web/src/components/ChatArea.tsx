@@ -27,6 +27,7 @@ interface ChatAreaProps {
   myConversationId: string;
   showAll: boolean;
   showAccordionAndSubAgentMessages: boolean;
+  showSystemMessages: boolean;
   onRequestSwitchConversation?: (conversationId: string) => void;
   modelContextWindowTokens?: number;
 }
@@ -42,6 +43,7 @@ export function ChatArea({
   myConversationId,
   showAll,
   showAccordionAndSubAgentMessages,
+  showSystemMessages,
   onRequestSwitchConversation,
   modelContextWindowTokens,
 }: ChatAreaProps) {
@@ -75,21 +77,26 @@ export function ChatArea({
     }
     return map;
   }, [messages]);
-  const filteredMessages = showAccordionAndSubAgentMessages
-    ? messages
-    : messages.filter((entry) => {
-        const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
-        const isAccordionMessage =
-          entry.role === "prompt"
-          || entry.role === "tool-call"
-          || entry.role === "tool-result"
-          || entry.role === "agent-transfer"
-          || entry.role === "model-call"
-          || entry.role === "graph-definition"
-          || entry.role === "model-response"
-          || entry.role === "error";
-        return !isSubAgentMessage && !isAccordionMessage;
-      });
+  const filteredMessages = messages.filter((entry) => {
+    if (!showSystemMessages && entry.role === "system-event") {
+      return false;
+    }
+    if (showAccordionAndSubAgentMessages) {
+      return true;
+    }
+    const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
+    const isAccordionMessage =
+      entry.role === "prompt"
+      || entry.role === "tool-call"
+      || entry.role === "tool-result"
+      || entry.role === "agent-transfer"
+      || entry.role === "model-call"
+      || entry.role === "graph-definition"
+      || entry.role === "model-response"
+      || entry.role === "system-event"
+      || entry.role === "error";
+    return !isSubAgentMessage && !isAccordionMessage;
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
