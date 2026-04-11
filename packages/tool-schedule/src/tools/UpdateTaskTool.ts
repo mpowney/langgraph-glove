@@ -19,7 +19,16 @@ export const updateTaskToolMetadata: ToolMetadata = {
         enum: ["user", "agent", "system"],
         description: "New task type.",
       },
+      scheduleType: {
+        type: "string",
+        enum: ["cron", "once"],
+        description: "New schedule type.",
+      },
       cron: { type: "string", description: "New cron expression." },
+      runAt: {
+        type: "string",
+        description: "New once-off run timestamp (ISO datetime).",
+      },
       agentKey: { type: "string", description: "New target agent key." },
       prompt: { type: "string", description: "New prompt." },
       enabled: { type: "boolean", description: "Enable or disable the task." },
@@ -29,6 +38,22 @@ export const updateTaskToolMetadata: ToolMetadata = {
           "Updated personal token. Use '{SECRET:name}' references instead of raw values.",
       },
       conversationId: { type: "string", description: "New conversation ID." },
+      sourceChannel: { type: "string", description: "Updated source channel key." },
+      sourceConversationId: { type: "string", description: "Updated source conversation ID." },
+      sourceMetadata: {
+        type: "object",
+        description: "Updated source metadata payload.",
+        additionalProperties: true,
+      },
+      sendAgentReplyToSource: {
+        type: "boolean",
+        description: "Enable or disable sending task replies to source channel context.",
+      },
+      startConversation: {
+        type: "boolean",
+        description: "Enable or disable proactive starter message before execution.",
+      },
+      starterText: { type: "string", description: "Updated starter message text." },
     },
     required: ["id"],
   },
@@ -49,7 +74,15 @@ export function handleUpdateTask(service: ScheduleService) {
       }
       updates.type = t;
     }
+    if (typeof params["scheduleType"] === "string") {
+      const scheduleType = params["scheduleType"].trim();
+      if (!["cron", "once"].includes(scheduleType)) {
+        throw new Error("'scheduleType' must be one of: cron, once");
+      }
+      updates.scheduleType = scheduleType as "cron" | "once";
+    }
     if (typeof params["cron"] === "string") updates.cron = params["cron"].trim();
+    if (typeof params["runAt"] === "string") updates.runAt = params["runAt"].trim();
     if (typeof params["agentKey"] === "string") updates.agentKey = params["agentKey"].trim();
     if (typeof params["prompt"] === "string") updates.prompt = params["prompt"].trim();
     if (typeof params["enabled"] === "boolean") updates.enabled = params["enabled"];
@@ -58,6 +91,38 @@ export function handleUpdateTask(service: ScheduleService) {
     }
     if (typeof params["conversationId"] === "string") {
       updates.conversationId = params["conversationId"].trim();
+    }
+
+    const sourceChannel = typeof params["sourceChannel"] === "string" ? params["sourceChannel"].trim() : "";
+    const sourceConversationId = typeof params["sourceConversationId"] === "string" ? params["sourceConversationId"].trim() : "";
+    if (sourceChannel && sourceConversationId) {
+      const sourceMetadata =
+        typeof params["sourceMetadata"] === "object" && params["sourceMetadata"] !== null
+          ? (params["sourceMetadata"] as Record<string, unknown>)
+          : undefined;
+      updates.sourceContext = {
+        channel: sourceChannel,
+        conversationId: sourceConversationId,
+        ...(sourceMetadata ? { metadata: sourceMetadata } : {}),
+      };
+    }
+
+    if (
+      typeof params["sendAgentReplyToSource"] === "boolean"
+      || typeof params["startConversation"] === "boolean"
+      || typeof params["starterText"] === "string"
+    ) {
+      updates.delivery = {
+        ...(typeof params["sendAgentReplyToSource"] === "boolean"
+          ? { sendAgentReplyToSource: params["sendAgentReplyToSource"] }
+          : {}),
+        ...(typeof params["startConversation"] === "boolean"
+          ? { startConversation: params["startConversation"] }
+          : {}),
+        ...(typeof params["starterText"] === "string"
+          ? { starterText: params["starterText"].trim() }
+          : {}),
+      };
     }
 
     const task = await service.updateTask(id, updates);

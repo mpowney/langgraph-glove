@@ -50,7 +50,7 @@ export type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
@@ -105,7 +105,7 @@ export interface AppInfo {
 export interface ChatEntry {
   id: string;
   conversationId: string;
-  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "error";
+  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event" | "error";
   content: string;
   isStreaming?: boolean;
   /** Source stream classification for agent chunks. */

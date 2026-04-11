@@ -49,16 +49,17 @@ export interface OutgoingMessage {
    * Who produced this message.  `"user"` is used when mirroring an incoming
    * message from another channel; `"agent"` (default) is the model's reply;
    * `"prompt"` is the full prompt array sent to the model (emitted to
-   * `receiveAll` channels for observability); `"tool-call"` is a tool
-   * invocation emitted to `receiveAll` channels; `"tool-result"` is the
+    * `receiveAgentProcessing` channels for observability); `"tool-call"` is a tool
+    * invocation emitted to `receiveAgentProcessing` channels; `"tool-result"` is the
    * corresponding tool output; `"agent-transfer"` is a handoff from the
   * orchestrator to a sub-agent; `"model-call"` carries redacted model
   * invocation options (including tool definitions) for observability;
   * `"model-response"` carries the redacted response payload returned from
   * a model invocation; "graph-definition" carries graph routing metadata for
-  * the current dispatch.
+  * the current dispatch; "system-event" carries background runtime events
+    * (for example scheduler scan progress) for receiveSystem channels.
    */
-  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "error";
+  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event" | "error";
   /**
    * Optional structured metadata for `"tool-call"` and `"tool-result"` events.
    * Carries the tool definition (parameter schema/descriptions) and the agent
@@ -78,7 +79,13 @@ export interface ChannelConfig {
    * logging, or mirroring conversations across channels.
    * Default: `false`.
    */
-  receiveAll?: boolean;
+  receiveAgentProcessing?: boolean;
+  /**
+   * When `true`, this channel receives runtime system events such as
+   * scheduler sweeps and task lifecycle notifications.
+   * Default: `false`.
+   */
+  receiveSystem?: boolean;
 }
 
 /**
@@ -107,11 +114,15 @@ export abstract class Channel extends EventEmitter {
    * When `true`, this channel receives the agent's responses to messages from
    * all other channels in addition to its own.
    */
-  readonly receiveAll: boolean;
+  readonly receiveAgentProcessing: boolean;
+
+  /** When `true`, this channel receives runtime system events. */
+  readonly receiveSystem: boolean;
 
   protected constructor(config: ChannelConfig = {}) {
     super();
-    this.receiveAll = config.receiveAll ?? false;
+    this.receiveAgentProcessing = config.receiveAgentProcessing ?? false;
+    this.receiveSystem = config.receiveSystem ?? false;
   }
 
   /**

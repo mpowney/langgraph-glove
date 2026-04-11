@@ -1,9 +1,10 @@
-import { HumanMessage, AIMessageChunk, ToolMessage } from "@langchain/core/messages";
+import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Channel, IncomingMessage, OutgoingStreamChunk, StreamSource } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
+import { isGenericToolName, toolNameFromToolCallId, resolveToolName } from "./toolNameUtils.js";
 
 const logger = new Logger("Agent.ts");
 
@@ -141,44 +142,10 @@ function normalizeStreamTextDelta(previous: string | undefined, incoming: string
   };
 }
 
-function isGenericToolName(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return normalized.length === 0 || ["tool", "structuredtool", "dynamictool", "remotetool"].includes(normalized);
-}
-
-function toolNameFromToolCallId(toolCallId?: string): string | undefined {
-  if (!toolCallId) return undefined;
-  // Example: "functions.web_search:5" -> "web_search"
-  const match = toolCallId.match(/(?:^|\.)([a-zA-Z0-9_-]+)(?::\d+)?$/);
-  if (!match) return undefined;
-  const candidate = match[1];
-  return isGenericToolName(candidate) ? undefined : candidate;
-}
-
-function resolveToolName(
-  runName: string | undefined,
-  tool: unknown,
-  toolCallId: string | undefined,
-): string {
-  if (typeof runName === "string" && !isGenericToolName(runName)) {
-    return runName;
-  }
-
-  const fromCallId = toolNameFromToolCallId(toolCallId);
-  if (fromCallId) return fromCallId;
-
-  if (isObject(tool)) {
-    if (typeof tool.name === "string" && !isGenericToolName(tool.name)) {
-      return tool.name;
-    }
-    const kwargs = isObject(tool.kwargs) ? tool.kwargs : undefined;
-    if (kwargs && typeof kwargs.name === "string" && !isGenericToolName(kwargs.name)) {
-      return kwargs.name;
-    }
-  }
-
-  return "tool";
-}
+// resolveToolName, isGenericToolName, toolNameFromToolCallId are imported from ./toolNameUtils.js
+// Keep a reference to suppress unused-import warnings for the re-exported helpers.
+void isGenericToolName;
+void toolNameFromToolCallId;
 
 function resolveChunkStreamSource(
   langgraphNode: string | undefined,
@@ -355,7 +322,7 @@ export interface AgentConfig {
    */
   authService?: PrivilegeGrantChecker;
   /**
-   * Optional static graph metadata emitted to `receiveAll` channels when a
+  * Optional static graph metadata emitted to `receiveAgentProcessing` channels when a
    * message is dispatched, so observers can see which graph processed it.
    */
   graphInfo?: GraphDispatchInfo;
@@ -423,8 +390,10 @@ export class GloveAgent {
         await this.dispatchMessage(message, channel).catch(async (err) => {
           const detail = formatError(err);
           logger.error(`Error handling message on channel "${channel.name}": ${detail}`, err);
-          const receiveAllOthers = this.channels.filter((ch) => ch.receiveAll && ch !== channel);
-          const errorTargets = [channel, ...receiveAllOthers];
+          const receiveAgentProcessingOthers = this.channels.filter(
+            (ch) => ch.receiveAgentProcessing && ch !== channel,
+          );
+          const errorTargets = [channel, ...receiveAgentProcessingOthers];
           for (const ch of errorTargets) {
             await ch
               .sendMessage({
@@ -459,6 +428,7 @@ export class GloveAgent {
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
     personalToken?: string,
     privilegeGrantId?: string,
+    runtimeContext?: Record<string, unknown>,
   ): Promise<string> {
     const result = await this.graph.invoke(
       { messages: [new HumanMessage(text)] },
@@ -468,6 +438,7 @@ export class GloveAgent {
           conversationId,
           ...(personalToken ? { personalToken } : {}),
           ...(privilegeGrantId ? { privilegeGrantId } : {}),
+          ...(runtimeContext ?? {}),
         },
         recursionLimit: this.config.recursionLimit ?? 25,
         callbacks,
@@ -495,6 +466,7 @@ export class GloveAgent {
     onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, metadata?: ToolEventMetadata) => void,
     personalToken?: string,
     privilegeGrantId?: string,
+    runtimeContext?: Record<string, unknown>,
   ): AsyncGenerator<OutgoingStreamChunk> {
     const streamedToolArgsByKey = new Map<string, string>();
     const streamedTextBySourceKey = new Map<string, string>();
@@ -581,6 +553,7 @@ export class GloveAgent {
           conversationId,
           ...(personalToken ? { personalToken } : {}),
           ...(privilegeGrantId ? { privilegeGrantId } : {}),
+          ...(runtimeContext ?? {}),
         },
         streamMode: "messages",
         recursionLimit: this.config.recursionLimit ?? 25,
@@ -670,15 +643,6 @@ export class GloveAgent {
             ...(source.agentKey ? { agentKey: source.agentKey } : {}),
           };
         }
-      } else if (chunk instanceof ToolMessage && onToolEvent) {
-        const toolName = chunk.name ?? undefined;
-        const content =
-          typeof chunk.content === "string"
-            ? chunk.content
-            : JSON.stringify(chunk.content);
-        const toolDef = toolName && this.config.toolLookup ? this.config.toolLookup(toolName) : undefined;
-        const meta: ToolEventMetadata | undefined = toolDef ? { tool: toolDef } : undefined;
-        onToolEvent("tool-result", JSON.stringify({ name: toolName, content }), meta);
       }
     }
   }
@@ -806,9 +770,9 @@ export class GloveAgent {
       return;
     }
 
-    const receiveAllChannels = this.channels.filter((ch) => ch.receiveAll);
-    const mirrorTargets = receiveAllChannels.filter((ch) => ch !== sourceChannel);
-    const observabilityTargets = receiveAllChannels;
+    const receiveAgentProcessingChannels = this.channels.filter((ch) => ch.receiveAgentProcessing);
+    const mirrorTargets = receiveAgentProcessingChannels.filter((ch) => ch !== sourceChannel);
+    const observabilityTargets = receiveAgentProcessingChannels;
 
     if (observabilityTargets.length > 0 && this.config.graphInfo) {
       const graphInfoText = JSON.stringify(
@@ -833,7 +797,7 @@ export class GloveAgent {
       }
     }
 
-    // Mirror the user's message to other receiveAll channels before the agent replies.
+    // Mirror the user's message to other receiveAgentProcessing channels before the agent replies.
     // Do not mirror back to the source channel; UI channels already render their own local input.
     for (const ch of mirrorTargets) {
       await ch
@@ -842,8 +806,8 @@ export class GloveAgent {
     }
 
     // Build a per-dispatch callback handler that logs prompts and also forwards
-    // them to receiveAll channels so they can be inspected in real time.
-    // This includes the source channel when it is configured with receiveAll=true.
+    // them to receiveAgentProcessing channels so they can be inspected in real time.
+    // This includes the source channel when it is configured with receiveAgentProcessing=true.
     const sendPrompt = observabilityTargets.length
       ? (formatted: string): void => {
           for (const ch of observabilityTargets) {
@@ -875,7 +839,7 @@ export class GloveAgent {
       : undefined;
     const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
 
-    // Forward tool calls, results, and agent transfers to receiveAll channels.
+    // Forward tool calls, results, and agent transfers to receiveAgentProcessing channels.
     const toolLookup = this.config.toolLookup;
     const onToolEvent = observabilityTargets.length
       ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolEventMetadata?: ToolEventMetadata): void => {
@@ -887,15 +851,15 @@ export class GloveAgent {
         }
       : undefined;
 
-    // Emit tool-call events from actual tool execution input so the UI shows
-    // the exact arguments that were invoked, independent of provider-specific
-    // model chunk formats.
+    // Emit tool-call and tool-result events from callback hooks so UI
+    // observability does not depend on provider-specific stream chunk types.
+    const toolRunNameByRunId = new Map<string, string>();
     const toolStartCallback = onToolEvent
       ? BaseCallbackHandler.fromMethods({
           handleToolStart: (
             tool,
             input,
-            _runId,
+            runId,
             _parentRunId,
             _tags,
             _metadata,
@@ -907,6 +871,7 @@ export class GloveAgent {
               tool,
               typeof toolCallId === "string" ? toolCallId : undefined,
             );
+            toolRunNameByRunId.set(String(runId), toolName);
             const args = parseJsonMaybe(input);
             const toolDef = toolLookup ? toolLookup(toolName) : undefined;
             const meta: ToolEventMetadata | undefined = toolDef
@@ -923,11 +888,49 @@ export class GloveAgent {
               meta,
             );
           },
+          handleToolEnd: (output, runId): void => {
+            const runKey = String(runId);
+            const toolName = toolRunNameByRunId.get(runKey);
+            toolRunNameByRunId.delete(runKey);
+            const content = (() => {
+              if (typeof output === "string") return output;
+              try {
+                return JSON.stringify(output);
+              } catch {
+                return String(output);
+              }
+            })();
+            const toolDef = toolName && toolLookup ? toolLookup(toolName) : undefined;
+            const meta: ToolEventMetadata | undefined = toolDef
+              ? { tool: toolDef }
+              : undefined;
+            onToolEvent("tool-result", JSON.stringify({ name: toolName, content }), meta);
+          },
+          handleToolError: (_error, runId): void => {
+            toolRunNameByRunId.delete(String(runId));
+          },
         })
       : undefined;
     const callbacks: BaseCallbackHandler[] = toolStartCallback
       ? [handler, toolStartCallback]
       : [handler];
+
+    const safeSourceMetadata = (() => {
+      if (!message.metadata) return {};
+      const {
+        personalToken: _omitPersonalToken,
+        privilegeGrantId: _omitPrivilegeGrantId,
+        contextOnly: _omitContextOnly,
+        ...rest
+      } = message.metadata;
+      return rest;
+    })();
+    const runtimeContext = {
+      ...safeSourceMetadata,
+      sourceChannel: sourceChannel.name,
+      sourceConversationId: message.conversationId,
+      sourceMetadata: safeSourceMetadata,
+    };
 
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
@@ -938,6 +941,7 @@ export class GloveAgent {
         onToolEvent,
         personalToken,
         privilegeGrantId,
+        runtimeContext,
       );
 
       // Intercept the stream so we can buffer the complete response for observers
@@ -974,6 +978,7 @@ export class GloveAgent {
           callbacks,
           personalToken,
           privilegeGrantId,
+          runtimeContext,
         );
 
         await sourceChannel.sendMessage({
@@ -995,6 +1000,7 @@ export class GloveAgent {
         callbacks,
         personalToken,
         privilegeGrantId,
+        runtimeContext,
       );
       await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 

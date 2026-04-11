@@ -182,7 +182,8 @@ Declares channel runtime settings. Secrets in channel settings are resolved via 
   "cli": {
     "enabled": true,
     "settings": {
-      "receiveAll": false
+      "receiveAgentProcessing": false,
+      "receiveSystem": false
     }
   },
   "web": {
@@ -190,7 +191,8 @@ Declares channel runtime settings. Secrets in channel settings are resolved via 
     "settings": {
       "host": "0.0.0.0",
       "port": 8080,
-      "receiveAll": true
+      "receiveAgentProcessing": true,
+      "receiveSystem": true
     }
   },
   "bluebubbles": {
@@ -199,11 +201,15 @@ Declares channel runtime settings. Secrets in channel settings are resolved via 
       "serverUrl": "{SECRET:bluebubbles-server-url}",
       "password": "{SECRET:bluebubbles-password}",
       "webhookHost": "0.0.0.0",
-      "webhookPort": 5001
+      "webhookPort": 5001,
+      "receiveAgentProcessing": false,
+      "receiveSystem": false
     }
   }
 }
 ```
+
+`receiveAgentProcessing` controls whether a channel receives mirrored user/agent traffic plus prompt, tool, model, and graph observability events from other channels. `receiveSystem` controls whether background runtime events such as scheduler `minute-sweep` and `task-started` notifications are sent to that channel.
 
 The `web` and `bluebubbles` entries are started automatically when they are present and enabled in `channels.json`.
 Use `--cli` to force-enable the CLI channel and `--no-cli` to force-disable it.

@@ -724,6 +724,38 @@ export function ChatMessage({
     );
   }
 
+  if (entry.role === "system-event") {
+    let title = "System event";
+    let eventContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed) && typeof parsed.event === "string") {
+        title = `System event: ${parsed.event}`;
+      }
+      eventContent = toDisplayJson(parsed, entry.content);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {renderSessionLabel()}
+          <MessageAccordion
+            className={styles.modelCallAccordion}
+            itemValue="system-event"
+            headerText={title}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {eventContent}
+          </MessageAccordion>
+        </div>
+      </div>
+    );
+  }
+
   if (entry.role === "model-response") {
     let modelName: string | undefined;
     let modelResponseContent = entry.content;

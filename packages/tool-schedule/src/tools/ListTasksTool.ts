@@ -5,7 +5,8 @@ export const listTasksToolMetadata: ToolMetadata = {
   name: "schedule_list_tasks",
   description:
     "List all scheduled tasks. Returns each task's id, name, type (user/agent/system), " +
-    "cron expression, target agentKey, enabled status, and prompt. " +
+    "scheduleType (cron/once), schedule fields (cron or runAt), target agentKey, " +
+    "enabled status, and prompt. " +
     "Does not require privileged access.",
   parameters: {
     type: "object",

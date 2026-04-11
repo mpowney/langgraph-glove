@@ -9,15 +9,20 @@
       "macos-action",
       "admin",
       "datetime",
-      "schedule"
+      "scheduler"
     ]
   },
-  "schedule": {
-    "orchestratorAgentKey": "schedule",
+  "schedule-system": {
+    "orchestratorAgentKey": "schedule-system",
     "subAgentKeys": [
       "memory",
       "researcher",
-      "datetime"
+      "weather",
+      "macos-perception",
+      "macos-action",
+      "admin",
+      "datetime",
+      "scheduler"
     ]
   }
 }

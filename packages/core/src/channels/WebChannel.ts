@@ -16,7 +16,8 @@ import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 export const WebChannelSettingsSchema = z.object({
   port: z.number().int().positive().optional(),
   host: z.string().min(1).optional(),
-  receiveAll: z.boolean().optional(),
+  receiveAgentProcessing: z.boolean().optional(),
+  receiveSystem: z.boolean().optional(),
 });
 
 export interface WebChannelFactoryContext {
@@ -40,7 +41,8 @@ export function createWebChannelFromConfig(
   return new WebChannel({
     port: result.data.port,
     host: result.data.host,
-    receiveAll: result.data.receiveAll ?? true,
+    receiveAgentProcessing: result.data.receiveAgentProcessing ?? true,
+    receiveSystem: result.data.receiveSystem ?? false,
     appInfo: context.appInfo,
     checkpointDbPath: context.checkpointDbPath,
   });
@@ -91,7 +93,7 @@ type ServerMessage =
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
       type: "tool_event";
-      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition";
+      role: "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event";
       text: string;
       conversationId: string;
       checkpoint?: CheckpointMetadata;
@@ -328,6 +330,7 @@ export class WebChannel extends Channel {
       || message.role === "model-call"
       || message.role === "model-response"
       || message.role === "graph-definition"
+      || message.role === "system-event"
     ) {
       const payload: ServerMessage = {
         type: "tool_event",
@@ -456,7 +459,10 @@ export class WebChannel extends Channel {
     this.wss?.clients.forEach((client) => {
       if (client.readyState !== WebSocket.OPEN) return;
       const tagged = client as WebSocket & { conversationId?: string };
-      if (this.receiveAll || tagged.conversationId === conversationId) {
+      const receivesBroadcast = message.type === "tool_event"
+        ? (message.role === "system-event" ? this.receiveSystem : this.receiveAgentProcessing)
+        : this.receiveAgentProcessing;
+      if (receivesBroadcast || tagged.conversationId === conversationId) {
         client.send(payload);
       }
     });
