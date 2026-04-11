@@ -817,6 +817,7 @@ export class GloveAgent {
           graphName: this.config.graphInfo.graphKey,
           graph: this.config.graphInfo,
           sourceChannel: sourceChannel.name,
+          ...(message.metadata?.chatGuid !== undefined ? { chatGuid: message.metadata.chatGuid } : {}),
         },
         null,
         2,

@@ -20,7 +20,8 @@
       "password": "{SECRET:bluebubbles-password}",
       "webhookHost": "0.0.0.0",
       "webhookPort": 5001,
-      "receiveAll": false
+      "receiveAll": false,
+      "conversationTtlMs": 1800000
     }
   }
 }

@@ -12,6 +12,16 @@ export const BlueBubblesChannelSettingsSchema = z.object({
   webhookPort: z.number().int().positive().optional(),
   webhookHost: z.string().min(1).optional(),
   receiveAll: z.boolean().optional(),
+  /**
+   * Inactivity TTL (in milliseconds) after which a new conversation thread is
+   * started for the same chat.  If a sender is silent for longer than this
+   * duration their next message begins a fresh LangGraph thread, preventing
+   * the agent context from growing indefinitely.
+   *
+   * Set to `0` to disable TTL (conversation threads last forever — the
+   * original behaviour).  Default: `1800000` (30 minutes).
+   */
+  conversationTtlMs: z.number().int().nonnegative().optional(),
 });
 
 export function createBlueBubblesChannelFromConfig(entry: ChannelEntry | undefined): BlueBubblesChannel {
@@ -33,6 +43,7 @@ export function createBlueBubblesChannelFromConfig(entry: ChannelEntry | undefin
     webhookPort: result.data.webhookPort,
     webhookHost: result.data.webhookHost,
     receiveAll: result.data.receiveAll,
+    conversationTtlMs: result.data.conversationTtlMs,
   });
 }
 
@@ -64,6 +75,16 @@ export interface BlueBubblesChannelConfig extends ChannelConfig {
    * Default: `"0.0.0.0"`.
    */
   webhookHost?: string;
+  /**
+   * Inactivity TTL (in milliseconds) after which a new conversation thread is
+   * started for the same chat.  If a sender is silent for longer than this
+   * duration their next message begins a fresh LangGraph thread, preventing
+   * the agent context from growing indefinitely.
+   *
+   * Set to `0` to disable TTL (conversation threads last forever — the
+   * original behaviour).  Default: `1800000` (30 minutes).
+   */
+  conversationTtlMs?: number;
 }
 
 /**
@@ -91,6 +112,25 @@ export class BlueBubblesChannel extends Channel {
   private readonly password?: string;
   private readonly webhookPort: number;
   private readonly webhookHost: string;
+  /**
+   * Inactivity TTL in ms.  `0` means disabled (conversations last forever).
+   * Default: 30 minutes.
+   */
+  private readonly conversationTtlMs: number;
+  /**
+   * Per-chat sliding-window conversation state.
+   * Key: BlueBubbles chat GUID.
+   * Value: current LangGraph thread ID and the timestamp of the last activity.
+   */
+  private readonly conversationMap = new Map<string, { conversationId: string; lastActivityAt: number }>();
+  /**
+   * Reverse-lookup map: LangGraph thread ID → BlueBubbles chat GUID.
+   * Required so that `sendMessage` can resolve the correct chat GUID when the
+   * Agent replies using the internal thread ID as `conversationId`.
+   */
+  private readonly conversationToChatGuid = new Map<string, string>();
+  /** Timer handle for periodic stale-entry cleanup. */
+  private cleanupTimer?: ReturnType<typeof setInterval>;
 
   constructor(config: BlueBubblesChannelConfig) {
     super(config);
@@ -98,6 +138,7 @@ export class BlueBubblesChannel extends Channel {
     this.password = config.password;
     this.webhookPort = config.webhookPort ?? 5001;
     this.webhookHost = config.webhookHost ?? "0.0.0.0";
+    this.conversationTtlMs = config.conversationTtlMs ?? 30 * 60 * 1000;
     this.app = express();
     this.app.use(express.json());
     this.app.post("/webhook", (req, res) => {
@@ -107,6 +148,17 @@ export class BlueBubblesChannel extends Channel {
   }
 
   async start(): Promise<void> {
+    // Schedule periodic cleanup of stale conversation map entries only when
+    // the TTL feature is active.
+    if (this.conversationTtlMs > 0) {
+      // Cap the cleanup interval to 1 hour so stale entries are evicted in a
+      // reasonable time regardless of how long the TTL is configured to be.
+      const cleanupIntervalMs = Math.min(Math.max(this.conversationTtlMs, 60_000), 60 * 60_000);
+      this.cleanupTimer = setInterval(() => this.evictStaleConversations(), cleanupIntervalMs);
+      // Allow the Node.js process to exit even if this timer is still active.
+      this.cleanupTimer.unref();
+    }
+
     return new Promise((resolve) => {
       this.webhookServer = this.app.listen(this.webhookPort, this.webhookHost, () => {
         console.log(
@@ -118,6 +170,10 @@ export class BlueBubblesChannel extends Channel {
   }
 
   async stop(): Promise<void> {
+    if (this.cleanupTimer !== undefined) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = undefined;
+    }
     return new Promise((resolve, reject) =>
       this.webhookServer?.close((err) => (err ? reject(err) : resolve())),
     );
@@ -128,15 +184,24 @@ export class BlueBubblesChannel extends Channel {
   }
 
   /**
-   * Sends a message to the iMessage chat identified by `conversationId`
-   * (which is the BlueBubbles chat GUID).
+   * Sends a message to the iMessage chat identified by `conversationId`.
+   *
+   * When TTL-based conversation IDs are enabled `conversationId` is an
+   * internal UUID that must be translated back to the BlueBubbles chat GUID
+   * via the reverse-lookup map before calling the API.
    */
   async sendMessage(message: OutgoingMessage): Promise<void> {
     const url = `${this.serverUrl}/api/v1/message/text${this.password ? `?password=${encodeURIComponent(this.password)}` : ""}`;
     const plainText = this.stripMarkdown(message.text);
 
+    // Translate internal thread ID → BlueBubbles chat GUID when needed.
+    const chatGuid =
+      this.conversationTtlMs === 0
+        ? message.conversationId
+        : (this.conversationToChatGuid.get(message.conversationId) ?? message.conversationId);
+
     const body = {
-      chatGuid: message.conversationId,
+      chatGuid,
       message: plainText,
       tempGuid: uuidv4(),
     };
@@ -172,10 +237,11 @@ export class BlueBubblesChannel extends Channel {
 
     const message: IncomingMessage = {
       id: data.guid ?? uuidv4(),
-      conversationId: chatGuid,
+      conversationId: this.resolveConversationId(chatGuid),
       text,
       sender,
       timestamp: new Date(),
+      metadata: { chatGuid },
     };
 
     try {
@@ -183,9 +249,58 @@ export class BlueBubblesChannel extends Channel {
     } catch (err) {
       console.error("[BlueBubblesChannel] Error handling message:", err);
       await this.sendMessage({
-        conversationId: chatGuid,
+        conversationId: message.conversationId,
         text: "Sorry, an error occurred while processing your message.",
       }).catch(console.error);
+    }
+  }
+
+  /**
+   * Return the current LangGraph thread ID for `chatGuid`, creating a new one
+   * when the TTL has elapsed since the last activity (sliding-window expiry).
+   *
+   * When `conversationTtlMs` is `0` the chat GUID itself is used as the
+   * conversation ID, preserving the original unlimited-history behaviour.
+   */
+  private resolveConversationId(chatGuid: string): string {
+    if (this.conversationTtlMs === 0) {
+      return chatGuid;
+    }
+
+    const now = Date.now();
+    const existing = this.conversationMap.get(chatGuid);
+
+    if (existing && now - existing.lastActivityAt < this.conversationTtlMs) {
+      // Still within the active TTL window — reuse the existing thread.
+      existing.lastActivityAt = now;
+      return existing.conversationId;
+    }
+
+    // Either a brand-new chat or the TTL has elapsed — start a fresh thread.
+    const conversationId = uuidv4();
+    if (existing) {
+      // Remove the stale reverse-lookup entry before overwriting.
+      this.conversationToChatGuid.delete(existing.conversationId);
+      console.log(
+        `[BlueBubblesChannel] Conversation TTL elapsed for chat ${chatGuid}; starting new thread ${conversationId}`,
+      );
+    }
+    this.conversationMap.set(chatGuid, { conversationId, lastActivityAt: now });
+    this.conversationToChatGuid.set(conversationId, chatGuid);
+    return conversationId;
+  }
+
+  /**
+   * Remove conversation map entries whose TTL has elapsed.  Called
+   * periodically by the cleanup timer to prevent unbounded memory growth.
+   */
+  private evictStaleConversations(): void {
+    const now = Date.now();
+    for (const [chatGuid, entry] of this.conversationMap) {
+      if (now - entry.lastActivityAt >= this.conversationTtlMs) {
+        this.conversationMap.delete(chatGuid);
+        this.conversationToChatGuid.delete(entry.conversationId);
+      }
     }
   }
 

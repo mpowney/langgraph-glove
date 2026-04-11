@@ -423,6 +423,8 @@ interface ChatMessageProps {
   sessionLabel?: string;
   /** Full conversation id for a foreign-session message label. */
   sessionConversationId?: string;
+  /** BlueBubbles chat GUID (e.g. phone number) for this conversation. */
+  chatGuid?: string;
   /** Called when a user wants to switch the active conversation context. */
   onRequestSwitchConversation?: (conversationId: string) => void;
   /** Active model context window tokens for prompt-context estimation. */
@@ -502,6 +504,7 @@ export function ChatMessage({
   collapseSubAgentStream,
   sessionLabel,
   sessionConversationId,
+  chatGuid,
   onRequestSwitchConversation,
   modelContextWindowTokens,
 }: ChatMessageProps) {
@@ -525,6 +528,10 @@ export function ChatMessage({
     if (!sessionLabel) return null;
 
     const canSwitch = Boolean(sessionConversationId && onRequestSwitchConversation);
+    // Extract the meaningful part of the chatGuid (e.g. phone number after `;-;`).
+    const chatGuidDisplay = chatGuid
+      ? (chatGuid.includes(";-;") ? chatGuid.split(";-;").pop()! : chatGuid)
+      : undefined;
     return (
       <Text block className={styles.sessionLabel} style={textAlign ? { textAlign } : undefined}>
         session {" "}
@@ -540,6 +547,7 @@ export function ChatMessage({
         ) : (
           sessionLabel
         )}
+        {chatGuidDisplay && <> · {chatGuidDisplay}</>}
       </Text>
     );
   };
