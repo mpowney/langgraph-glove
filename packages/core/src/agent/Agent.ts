@@ -958,9 +958,12 @@ export class GloveAgent {
       } = message.metadata;
       return rest;
     })();
-    const runtimeContext = Object.keys(safeSourceMetadata).length > 0
-      ? safeSourceMetadata
-      : undefined;
+    const runtimeContext = {
+      ...safeSourceMetadata,
+      sourceChannel: sourceChannel.name,
+      sourceConversationId: message.conversationId,
+      sourceMetadata: safeSourceMetadata,
+    };
 
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
