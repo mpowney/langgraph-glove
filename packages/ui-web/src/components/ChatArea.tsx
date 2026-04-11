@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useMemo, useRef } from "react";
 import { makeStyles, tokens } from "@fluentui/react-components";
 import { ChatMessage } from "./ChatMessage";
 import type { ChatEntry } from "../types";
@@ -53,6 +53,28 @@ export function ChatArea({
       && entry.isStreaming
       && entry.streamSource !== "sub-agent",
   );
+
+  // Build a map from conversationId → chatGuid by scanning graph-definition messages.
+  const chatGuidByConversationId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const entry of messages) {
+      if (entry.role !== "graph-definition") continue;
+      try {
+        const parsed = JSON.parse(entry.content) as unknown;
+        if (
+          parsed != null &&
+          typeof parsed === "object" &&
+          "chatGuid" in parsed &&
+          typeof (parsed as Record<string, unknown>).chatGuid === "string"
+        ) {
+          map.set(entry.conversationId, (parsed as Record<string, unknown>).chatGuid as string);
+        }
+      } catch {
+        // ignore malformed JSON
+      }
+    }
+    return map;
+  }, [messages]);
   const filteredMessages = showAccordionAndSubAgentMessages
     ? messages
     : messages.filter((entry) => {
@@ -93,6 +115,7 @@ export function ChatArea({
               : undefined
           }
           sessionConversationId={isForeignConversation ? entry.conversationId : undefined}
+          chatGuid={isForeignConversation ? chatGuidByConversationId.get(entry.conversationId) : undefined}
           onRequestSwitchConversation={onRequestSwitchConversation}
         />
         );

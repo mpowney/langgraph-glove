@@ -241,6 +241,7 @@ export class BlueBubblesChannel extends Channel {
       text,
       sender,
       timestamp: new Date(),
+      metadata: { chatGuid },
     };
 
     try {
