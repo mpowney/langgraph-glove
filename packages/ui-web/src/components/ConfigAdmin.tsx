@@ -734,6 +734,18 @@ export function ConfigAdmin({
     if (selectedFile) saveFilePrefs(selectedFile, { tab: editorTab, wordWrap: newWrap });
   }, [selectedFile, editorTab, wordWrap]);
 
+  const handleReloadFile = useCallback(async () => {
+    if (!selectedFile || !isDirty) return;
+    const latestContent = await loadFileContent(selectedFile);
+    if (typeof latestContent === "string") {
+      setDraftContent(latestContent);
+      setIsDirty(false);
+      setValidationIssues([]);
+      setShowValidation(false);
+      setSaveNotice(null);
+    }
+  }, [selectedFile, isDirty, loadFileContent]);
+
   const handleCheck = useCallback(() => {
     if (!selectedFile) return;
     // Run validation immediately (don't wait for debounce) and show dialog
@@ -1031,6 +1043,15 @@ export function ConfigAdmin({
                     )}
                   </div>
                   <div className={styles.editorToolbarRight}>
+                    <Button
+                      appearance="subtle"
+                      icon={<ArrowReset24Regular />}
+                      size="small"
+                      title="Reload file"
+                      aria-label="Reload file"
+                      onClick={() => { void handleReloadFile(); }}
+                      disabled={!isDirty}
+                    />
                     {editorTab === "raw" && (
                       <Button
                         appearance="subtle"

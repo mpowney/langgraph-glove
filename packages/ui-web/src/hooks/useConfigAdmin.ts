@@ -183,9 +183,11 @@ export function useConfigAdmin(
         setSelectedFile(filename);
         setAllConfigs((prev) => ({ ...prev, [filename]: content }));
         setReadState("idle");
+        return content;
       } catch (err) {
         setReadError(toErrorMessage(err));
         setReadState("error");
+        return undefined;
       }
     },
     [configToolUrl, privilegeGrantId, conversationId, authToken],
