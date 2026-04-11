@@ -87,7 +87,6 @@ export interface SchedulerSystemEvent {
     | "task-completed"
     | "task-failed";
   timestamp: string;
-  taskId?: string;
   details?: Record<string, unknown>;
 }
 
