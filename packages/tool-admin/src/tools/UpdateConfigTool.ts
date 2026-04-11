@@ -1,7 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
+import { validatePrivilegeGrant, type ToolMetadata } from "@langgraph-glove/tool-server";
 
 /** Allowed config file names that may be read or overwritten. */
 const ALLOWED_FILES = new Set([
@@ -14,24 +13,17 @@ const ALLOWED_FILES = new Set([
 
 export const updateConfigToolMetadata: ToolMetadata = {
   name: "admin_update_config",
+  requiresPrivilegedAccess: true,
   description:
     "Use {name} to read or overwrite one of the system JSON config files " +
     "(agents.json, models.json, tools.json, gateway.json, memories.json). " +
     "To read a file omit the `content` parameter. " +
     "To overwrite a file supply valid JSON as the `content` string. " +
     "Changes take effect after the relevant process is restarted. " +
-    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation and are injected from runtime privileged context. Do not ask the user to provide them.",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
     properties: {
-      conversationId: {
-        type: "string",
-        description: "Conversation thread ID for this privileged execution (auto-injected by runtime context).",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privileged-access grant ID (auto-injected by runtime context).",
-      },
       file: {
         type: "string",
         enum: Array.from(ALLOWED_FILES),

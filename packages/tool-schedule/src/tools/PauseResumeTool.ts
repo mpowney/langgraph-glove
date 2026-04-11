@@ -1,26 +1,16 @@
-import type { ToolMetadata } from "@langgraph-glove/tool-server";
+import { validatePrivilegeGrant, type ToolMetadata } from "@langgraph-glove/tool-server";
 import type { ScheduleService } from "../ScheduleService";
-import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
 
 export const pauseSchedulerToolMetadata: ToolMetadata = {
   name: "schedule_pause",
+  requiresPrivilegedAccess: true,
   description:
     "Pause the task scheduler. While paused, no scheduled tasks will fire automatically. " +
     "Existing tasks are preserved and will resume when schedule_resume is called. " +
-    "Requires privileged access.",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
-    properties: {
-      conversationId: {
-        type: "string",
-        description: "Active conversation ID (required for privilege validation).",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privilege grant ID.",
-      },
-    },
-    required: ["conversationId", "privilegeGrantId"],
+    properties: {},
   },
 };
 
@@ -34,23 +24,14 @@ export function handlePauseScheduler(service: ScheduleService, adminApiUrl: stri
 
 export const resumeSchedulerToolMetadata: ToolMetadata = {
   name: "schedule_resume",
+  requiresPrivilegedAccess: true,
   description:
     "Resume the task scheduler after it was paused with schedule_pause. " +
     "All enabled tasks will be rescheduled immediately. " +
-    "Requires privileged access.",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
-    properties: {
-      conversationId: {
-        type: "string",
-        description: "Active conversation ID (required for privilege validation).",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privilege grant ID.",
-      },
-    },
-    required: ["conversationId", "privilegeGrantId"],
+    properties: {},
   },
 };
 

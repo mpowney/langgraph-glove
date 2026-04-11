@@ -1,12 +1,12 @@
-import type { ToolMetadata } from "@langgraph-glove/tool-server";
+import { validatePrivilegeGrant, type ToolMetadata } from "@langgraph-glove/tool-server";
 import type { ScheduleService } from "../ScheduleService";
-import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
 
 export const removeTaskToolMetadata: ToolMetadata = {
   name: "schedule_remove_task",
+  requiresPrivilegedAccess: true,
   description:
     "Remove a scheduled task by its id. " +
-    "Requires privileged access (conversationId and privilegeGrantId must be supplied).",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
     properties: {
@@ -14,16 +14,8 @@ export const removeTaskToolMetadata: ToolMetadata = {
         type: "string",
         description: "Id of the task to remove.",
       },
-      conversationId: {
-        type: "string",
-        description: "Active conversation ID (required for privilege validation).",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privilege grant ID.",
-      },
     },
-    required: ["id", "conversationId", "privilegeGrantId"],
+    required: ["id"],
   },
 };
 
@@ -39,22 +31,13 @@ export function handleRemoveTask(service: ScheduleService, adminApiUrl: string) 
 
 export const clearAllTasksToolMetadata: ToolMetadata = {
   name: "schedule_clear_all_tasks",
+  requiresPrivilegedAccess: true,
   description:
     "Remove ALL scheduled tasks. This is a destructive and irreversible operation. " +
-    "Requires privileged access (conversationId and privilegeGrantId must be supplied).",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
-    properties: {
-      conversationId: {
-        type: "string",
-        description: "Active conversation ID (required for privilege validation).",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privilege grant ID.",
-      },
-    },
-    required: ["conversationId", "privilegeGrantId"],
+    properties: {},
   },
 };
 

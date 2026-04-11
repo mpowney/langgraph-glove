@@ -151,18 +151,9 @@ function readToolExecutionContext(config: unknown): ToolExecutionContext {
   return { conversationId, privilegeGrantId };
 }
 
-function toolSchemaDeclaresParam(
-  tool: StructuredToolInterface,
-  paramName: "conversationId" | "privilegeGrantId",
-): boolean {
-  if (!("schema" in tool)) return false;
-  const schema = (tool as { schema?: unknown }).schema;
-  if (!schema || typeof schema !== "object") return false;
-  if (!("shape" in schema)) return false;
-
-  const shape = (schema as { shape?: unknown }).shape;
-  if (!shape || typeof shape !== "object") return false;
-  return paramName in (shape as Record<string, unknown>);
+function toolRequiresPrivilegedAccess(tool: StructuredToolInterface): boolean {
+  if (!("requiresPrivilegedAccess" in tool)) return false;
+  return (tool as { requiresPrivilegedAccess?: unknown }).requiresPrivilegedAccess === true;
 }
 
 function injectToolContextArgs(
@@ -176,7 +167,7 @@ function injectToolContextArgs(
   const args = { ...toolCall.args };
 
   if (
-    toolSchemaDeclaresParam(tool, "conversationId") &&
+    toolRequiresPrivilegedAccess(tool) &&
     !args.conversationId &&
     context.conversationId
   ) {
@@ -184,7 +175,7 @@ function injectToolContextArgs(
   }
 
   if (
-    toolSchemaDeclaresParam(tool, "privilegeGrantId") &&
+    toolRequiresPrivilegedAccess(tool) &&
     !args.privilegeGrantId &&
     context.privilegeGrantId
   ) {
