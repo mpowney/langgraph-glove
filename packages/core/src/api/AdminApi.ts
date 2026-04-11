@@ -5,7 +5,14 @@ import Database from "better-sqlite3";
 import type { Request } from "express";
 import type { ToolServerEntry } from "@langgraph-glove/config";
 import type { AuthService, AuthenticatedUser } from "../auth/AuthService";
-import type { ToolDefinition, AgentCapabilityEntry, AgentCapabilityRegistry } from "../rpc/RpcProtocol";
+import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
+import type {
+  ToolDefinition,
+  AgentCapabilityEntry,
+  AgentCapabilityRegistry,
+  RpcRequest,
+  RpcResponse,
+} from "../rpc/RpcProtocol";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -185,6 +192,7 @@ export class AdminApi {
   private readonly sendChannelMessage?: AdminApiConfig["sendChannelMessage"];
   private readonly app: Express;
   private httpServer?: http.Server;
+  private readonly unixSocketRpcClients = new Map<string, UnixSocketRpcClient>();
 
   constructor(config: AdminApiConfig = {}) {
     this.port = config.port ?? 8081;
@@ -683,16 +691,60 @@ export class AdminApi {
         res.status(404).json({ error: `Tool "${toolName}" is not configured` });
         return;
       }
-      if (entry.transport !== "http" || !entry.url) {
-        res.status(400).json({
-          error: `Tool "${toolName}" is not configured for HTTP RPC`,
-        });
-        return;
-      }
 
       const rest = typeof req.params["0"] === "string" && req.params["0"].length > 0
         ? `/${req.params["0"]}`
         : "";
+
+      if (entry.transport === "unix-socket") {
+        if (!entry.socketName) {
+          res.status(500).json({ error: `Tool "${toolName}" is missing required socketName` });
+          return;
+        }
+        if (req.method !== "POST") {
+          res.status(405).json({ error: "Unix-socket tool RPC proxy only supports POST /rpc" });
+          return;
+        }
+        if (rest !== "/rpc") {
+          res.status(400).json({
+            error: "Unix-socket tool RPC proxy only supports the /rpc endpoint",
+          });
+          return;
+        }
+
+        const body = req.body as Partial<RpcRequest> | undefined;
+        if (!body || typeof body.id !== "string" || typeof body.method !== "string") {
+          res.status(400).json({ error: "Invalid RPC request: missing id or method" });
+          return;
+        }
+
+        const params =
+          body.params && typeof body.params === "object" && !Array.isArray(body.params)
+            ? (body.params as Record<string, unknown>)
+            : {};
+
+        const client = this.getOrCreateUnixSocketRpcClient(entry.socketName);
+        try {
+          const result = await client.call(body.method, params);
+          const response: RpcResponse = { id: body.id, result };
+          res.json(response);
+        } catch (err) {
+          const response: RpcResponse = {
+            id: body.id,
+            error: err instanceof Error ? err.message : String(err),
+          };
+          res.json(response);
+        }
+        return;
+      }
+
+      if (entry.transport !== "http" || !entry.url) {
+        res.status(400).json({
+          error: `Tool "${toolName}" has an unsupported transport configuration`,
+        });
+        return;
+      }
+
       const queryIndex = req.originalUrl.indexOf("?");
       const query = queryIndex >= 0 ? req.originalUrl.slice(queryIndex) : "";
 
@@ -814,6 +866,15 @@ export class AdminApi {
     }
   }
 
+  private getOrCreateUnixSocketRpcClient(socketName: string): UnixSocketRpcClient {
+    const existing = this.unixSocketRpcClients.get(socketName);
+    if (existing) return existing;
+
+    const client = new UnixSocketRpcClient(socketName);
+    this.unixSocketRpcClients.set(socketName, client);
+    return client;
+  }
+
   /** Start the HTTP server. */
   listen(): Promise<void> {
     return new Promise((resolve, reject) => {
@@ -826,11 +887,25 @@ export class AdminApi {
   /** Stop the HTTP server. */
   close(): Promise<void> {
     return new Promise((resolve, reject) => {
+      const finalize = async (): Promise<void> => {
+        for (const client of this.unixSocketRpcClients.values()) {
+          await client.disconnect().catch(() => undefined);
+        }
+        this.unixSocketRpcClients.clear();
+      };
+
       if (!this.httpServer) {
-        resolve();
+        void finalize().then(() => resolve(), reject);
         return;
       }
-      this.httpServer.close((err) => (err ? reject(err) : resolve()));
+
+      this.httpServer.close((err) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        void finalize().then(() => resolve(), reject);
+      });
     });
   }
 }

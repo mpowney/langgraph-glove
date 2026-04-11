@@ -56,8 +56,9 @@
     "socketName": "schedule"
   },
   "config": {
-    "transport": "http",
+    "transport": "unix-socket",
     "url": "http://localhost:3017",
-    "enabled": true
+    "enabled": true,
+    "socketName": "config"
   }
 }
