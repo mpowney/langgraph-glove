@@ -808,22 +808,40 @@ export class ScheduleService {
           ? parsed.executionGraphKey.trim()
           : ScheduleService.DEFAULT_EXECUTION_GRAPH_KEY;
       const incoming = Array.isArray(parsed.tasks) ? parsed.tasks : [];
-      this.tasks = incoming
-        .filter((candidate): candidate is ScheduledTask => typeof candidate === "object" && candidate !== null)
-        .map((candidate) => {
-          const id =
-            typeof candidate.id === "string" && candidate.id.trim()
-              ? candidate.id
-              : uuidv4();
-          const base: ScheduledTask = {
-            ...candidate,
-            id,
-            enabled: candidate.enabled ?? true,
-            conversationId: candidate.conversationId ?? `schedule-${id}`,
-            scheduleType: candidate.scheduleType === "once" ? "once" : "cron",
-          };
-          return this.normaliseAndValidateTask(base);
-        });
+      const loadedTasks: ScheduledTask[] = [];
+
+      for (const candidate of incoming) {
+        if (typeof candidate !== "object" || candidate === null) {
+          continue;
+        }
+
+        const id =
+          typeof candidate.id === "string" && candidate.id.trim()
+            ? candidate.id
+            : uuidv4();
+        const base: ScheduledTask = {
+          ...candidate,
+          id,
+          enabled: candidate.enabled ?? true,
+          conversationId: candidate.conversationId ?? `schedule-${id}`,
+          scheduleType: candidate.scheduleType === "once" ? "once" : "cron",
+        };
+
+        try {
+          loadedTasks.push(this.normaliseAndValidateTask(base));
+        } catch (taskError) {
+          const taskName =
+            typeof candidate.name === "string" && candidate.name.trim().length > 0
+              ? candidate.name
+              : "<unnamed>";
+          const message = taskError instanceof Error ? taskError.message : String(taskError);
+          console.warn(
+            `[ScheduleService] Skipping invalid persisted task "${taskName}" (${id}): ${message}`,
+          );
+        }
+      }
+
+      this.tasks = loadedTasks;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === "ENOENT") {
         // No schedule file yet — start with empty list
