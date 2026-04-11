@@ -4,7 +4,11 @@ import { z } from "zod";
 // Secret reference pattern: {SECRET:secret-name}
 // ---------------------------------------------------------------------------
 
-/** Regex that matches `{SECRET:some-name}` placeholders in config values. */
+/**
+ * Regex that matches `{SECRET:some-name}` placeholders in config values.
+ *
+ * Use `{{SECRET:some-name}}` when you want the literal placeholder text.
+ */
 export const SECRET_REF_PATTERN = /\{SECRET:([a-zA-Z0-9_-]+)\}/g;
 
 // ---------------------------------------------------------------------------

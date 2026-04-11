@@ -10,10 +10,10 @@ export async function validatePrivilegeGrant(
     : "";
 
   if (!grantId) {
-    throw new Error("privilegeGrantId is required for privileged admin tool execution");
+    throw new Error("Privileged context is missing. Please enable privileged access and try again.");
   }
   if (!conversationId) {
-    throw new Error("conversationId is required for privileged admin tool execution");
+    throw new Error("Privileged context is missing. Please enable privileged access and try again.");
   }
 
   const base = adminApiUrl.endsWith("/") ? adminApiUrl.slice(0, -1) : adminApiUrl;
@@ -26,6 +26,6 @@ export async function validatePrivilegeGrant(
   });
 
   if (!response.ok) {
-    throw new Error("Unauthorized: privileged access grant is missing, invalid, or expired");
+    throw new Error("Privileged access is missing, invalid, or expired. Please enable privileged access and try again.");
   }
 }

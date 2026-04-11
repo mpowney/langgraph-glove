@@ -1,6 +1,5 @@
 import { spawn } from "node:child_process";
-import type { ToolMetadata } from "@langgraph-glove/tool-server";
-import { validatePrivilegeGrant } from "../validatePrivilegeGrant";
+import { validatePrivilegeGrant, type ToolMetadata } from "@langgraph-glove/tool-server";
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const MAX_TIMEOUT_SECONDS = 300;
@@ -8,24 +7,17 @@ const MAX_OUTPUT_BYTES = 64 * 1024; // 64 KiB
 
 export const shellCommandToolMetadata: ToolMetadata = {
   name: "admin_shell",
+  requiresPrivilegedAccess: true,
   description:
     "Use {name} to run an arbitrary shell command on the host and return its output. " +
     "stdout and stderr are both captured and returned. " +
     "The command is executed with /bin/sh so shell features such as pipes, " +
     "redirections, and environment variable expansion are available. " +
     "Use with caution — this tool has full access to the host shell environment. " +
-    "IMPORTANT: conversationId and privilegeGrantId are required by backend validation and are injected from runtime privileged context. Do not ask the user to provide them.",
+    "Requires privileged access. Privileged context is injected automatically by runtime when enabled.",
   parameters: {
     type: "object",
     properties: {
-      conversationId: {
-        type: "string",
-        description: "Conversation thread ID for this privileged execution (auto-injected by runtime context).",
-      },
-      privilegeGrantId: {
-        type: "string",
-        description: "Short-lived privileged-access grant ID (auto-injected by runtime context).",
-      },
       command: {
         type: "string",
         description:

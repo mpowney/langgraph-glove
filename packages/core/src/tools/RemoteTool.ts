@@ -61,6 +61,11 @@ export interface RemoteToolConfig {
    * Used by LangGraph for structured function-calling.
    */
   schema: z.ZodObject<z.ZodRawShape>;
+  /**
+   * When true, privileged context (conversationId / privilegeGrantId) is
+   * injected from LangGraph configurable at execution time.
+   */
+  requiresPrivilegedAccess?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,6 +154,7 @@ export class RemoteTool extends StructuredTool {
   readonly name: string;
   readonly description: string;
   readonly schema: z.ZodObject<z.ZodRawShape>;
+  readonly requiresPrivilegedAccess: boolean;
 
   constructor(
     private readonly rpcClient: RpcClient,
@@ -158,6 +164,7 @@ export class RemoteTool extends StructuredTool {
     this.name = config.name;
     this.description = config.description;
     this.schema = config.schema;
+    this.requiresPrivilegedAccess = config.requiresPrivilegedAccess ?? false;
   }
 
   protected async _call(
@@ -180,7 +187,7 @@ export class RemoteTool extends StructuredTool {
     }
 
     if (
-      "privilegeGrantId" in this.schema.shape &&
+      this.requiresPrivilegedAccess &&
       typeof config?.configurable === "object" &&
       config.configurable !== null &&
       typeof (config.configurable as Record<string, unknown>).privilegeGrantId === "string"
@@ -189,7 +196,7 @@ export class RemoteTool extends StructuredTool {
     }
 
     if (
-      "conversationId" in this.schema.shape &&
+      this.requiresPrivilegedAccess &&
       typeof config?.configurable === "object" &&
       config.configurable !== null
     ) {
@@ -241,6 +248,7 @@ export class RemoteTool extends StructuredTool {
           name: meta.name,
           description: meta.description,
           schema: jsonSchemaToZodObject(meta.parameters),
+          requiresPrivilegedAccess: meta.requiresPrivilegedAccess,
         }),
     );
   }

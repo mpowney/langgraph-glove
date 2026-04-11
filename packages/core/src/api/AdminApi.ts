@@ -123,6 +123,19 @@ export interface AdminApiConfig {
   toolRegistry?: ToolDefinition[];
   /** Agent capability entries served by `GET /api/agents/capabilities`. */
   agentCapabilities?: AgentCapabilityEntry[];
+  /**
+   * Optional callback that lets internal tool servers (e.g. tool-schedule)
+   * trigger an agent invocation via `POST /api/internal/invoke`.
+   *
+   * When not provided the endpoint returns 503.
+   */
+  invokeAgent?: (params: {
+    agentKey: string;
+    conversationId: string;
+    prompt: string;
+    /** Optional personal token so user-requested tasks can access encrypted memories. */
+    personalToken?: string;
+  }) => Promise<string>;
 }
 
 /**
@@ -143,6 +156,7 @@ export class AdminApi {
   private readonly toolsConfig: Record<string, ToolServerEntry>;
   private readonly toolRegistry: ToolDefinition[];
   private readonly agentCapabilities: AgentCapabilityEntry[];
+  private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
   private readonly app: Express;
   private httpServer?: http.Server;
 
@@ -157,6 +171,7 @@ export class AdminApi {
     this.toolsConfig = config.toolsConfig ?? {};
     this.toolRegistry = config.toolRegistry ?? [];
     this.agentCapabilities = config.agentCapabilities ?? [];
+    this.invokeAgent = config.invokeAgent;
 
     this.app = express();
     this.registerRoutes();
@@ -339,6 +354,43 @@ export class AdminApi {
         }
 
         res.json({ valid: true });
+      });
+
+      // Internal endpoint used by tool-schedule and other trusted tool servers to
+      // invoke the agent programmatically.  Restricted to localhost callers.
+      this.app.post("/api/internal/invoke", (req, res) => {
+        void (async () => {
+          // Restrict to loopback addresses only — this endpoint must not be
+          // reachable from external networks.
+          const remoteIp = req.socket.remoteAddress ?? "";
+          if (remoteIp !== "127.0.0.1" && remoteIp !== "::1" && remoteIp !== "::ffff:127.0.0.1") {
+            res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+            return;
+          }
+          if (!this.invokeAgent) {
+            res.status(503).json({ error: "Agent invocation is not available" });
+            return;
+          }
+          const agentKey = readBodyString(req.body, "agentKey");
+          const conversationId = readBodyString(req.body, "conversationId");
+          const prompt = readBodyString(req.body, "prompt");
+          const personalToken = readBodyString(req.body, "personalToken") || undefined;
+          if (!conversationId || !prompt) {
+            res.status(400).json({ error: "conversationId and prompt are required" });
+            return;
+          }
+          try {
+            const result = await this.invokeAgent({
+              agentKey: agentKey || "default",
+              conversationId,
+              prompt,
+              personalToken,
+            });
+            res.json({ result });
+          } catch (err) {
+            res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+          }
+        })();
       });
 
       this.app.post("/api/auth/setup", (req, res) => {
