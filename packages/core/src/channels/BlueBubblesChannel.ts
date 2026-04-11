@@ -19,7 +19,7 @@ export function createBlueBubblesChannelFromConfig(entry: ChannelEntry | undefin
     throw new Error('Missing "bluebubbles" channel config in channels.json');
   }
   if (entry.enabled === false) {
-    throw new Error('BlueBubbles channel is disabled in channels.json; enable it or run without --bluebubbles');
+    throw new Error('BlueBubbles channel is disabled in channels.json');
   }
 
   const result = BlueBubblesChannelSettingsSchema.safeParse(entry.settings ?? {});

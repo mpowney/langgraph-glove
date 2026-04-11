@@ -29,7 +29,7 @@ export function createWebChannelFromConfig(
   context: WebChannelFactoryContext,
 ): WebChannel {
   if (entry?.enabled === false) {
-    throw new Error('Web channel is disabled in channels.json; enable it or run without --web');
+    throw new Error('Web channel is disabled in channels.json');
   }
 
   const result = WebChannelSettingsSchema.safeParse(entry?.settings ?? {});

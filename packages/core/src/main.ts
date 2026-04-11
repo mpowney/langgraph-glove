@@ -9,14 +9,13 @@
  *   GLOVE_SECRETS_DIR  - path to secrets directory (default: ./secrets)
  *
  * Flags:
- *   --web              - also start the WebChannel (browser UI)
- *   --bluebubbles      - also start the BlueBubbles channel (requires channels.json config)
- *   --no-cli           - disable the CLI channel
+ *   --cli              - enable the CLI channel regardless of channels.json
+ *   --no-cli           - disable the CLI channel regardless of channels.json
  *   --regenerate-setup-token - print a new setup token and exit (for initial setup or if the original token is lost)
  *   --reset-auth       - wipe all auth state and print a fresh setup token, then exit
  *
  * Usage:
- *   node dist/main.js [--web] [--bluebubbles] [--no-cli]
+ *   node dist/main.js [--cli|--no-cli]
  */
 
 import path from "node:path";
@@ -44,11 +43,17 @@ import { Logger } from "./logging";
 // ---------------------------------------------------------------------------
 
 const args = process.argv.slice(2);
-const useWeb = args.includes("--web");
-const useBlueBubbles = args.includes("--bluebubbles");
-const noCli = args.includes("--no-cli");
 const regenerateSetupToken = args.includes("--regenerate-setup-token");
 const resetAuth = args.includes("--reset-auth");
+
+let cliOverride: boolean | undefined;
+for (const arg of args) {
+  if (arg === "--cli") {
+    cliOverride = true;
+  } else if (arg === "--no-cli") {
+    cliOverride = false;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Logging - set up before anything else
@@ -150,16 +155,17 @@ if (resetAuth) {
 }
 
 const channels = [];
-if (!noCli) {
-  const cliEntry = getChannelEntryByKey(channelsConfig, "cli");
+const cliEntry = getChannelEntryByKey(channelsConfig, "cli");
+const cliEnabled = cliOverride ?? cliEntry?.enabled !== false;
+if (cliEnabled) {
   const cliChannel = createCliChannelFromConfig(cliEntry);
   if (cliChannel) {
     channels.push(cliChannel);
   }
 }
 
-if (useWeb) {
-  const webEntry = getChannelEntryByKey(channelsConfig, "web");
+const webEntry = getChannelEntryByKey(channelsConfig, "web");
+if (webEntry && webEntry.enabled !== false) {
   channels.push(
     createWebChannelFromConfig(webEntry, {
       checkpointDbPath,
@@ -175,8 +181,8 @@ if (useWeb) {
   );
 }
 
-if (useBlueBubbles) {
-  const blueBubblesEntry = getChannelEntryByKey(channelsConfig, "bluebubbles");
+const blueBubblesEntry = getChannelEntryByKey(channelsConfig, "bluebubbles");
+if (blueBubblesEntry && blueBubblesEntry.enabled !== false) {
   channels.push(createBlueBubblesChannelFromConfig(blueBubblesEntry));
 }
 
