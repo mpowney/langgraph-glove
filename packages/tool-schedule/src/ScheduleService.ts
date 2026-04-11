@@ -90,6 +90,15 @@ export interface SchedulerSystemEvent {
   details?: Record<string, unknown>;
 }
 
+export interface ScheduledInvokeObservabilityOptions {
+  enabled?: boolean;
+  conversationId?: string;
+  sourceChannel?: string;
+  taskId?: string;
+  scheduleType?: ScheduleType;
+  trigger?: "cron" | "once-minute-sweep" | "manual-now";
+}
+
 export interface ScheduledTask {
   /** Stable unique identifier for this task. */
   id: string;
@@ -197,6 +206,7 @@ export class ScheduleService {
     prompt: string;
     graphKey?: string;
     personalToken?: string;
+    observability?: ScheduledInvokeObservabilityOptions;
   }) => Promise<string>;
 
   constructor(options: {
@@ -208,6 +218,7 @@ export class ScheduleService {
       prompt: string;
       graphKey?: string;
       personalToken?: string;
+      observability?: ScheduledInvokeObservabilityOptions;
     }) => Promise<string>;
     emitSystemEvent?: (event: SchedulerSystemEvent) => Promise<void> | void;
     sendChannelMessage?: (params: {
@@ -506,6 +517,14 @@ export class ScheduleService {
         prompt,
         graphKey: this.executionGraphKey,
         personalToken,
+        observability: {
+          enabled: true,
+          conversationId,
+          sourceChannel: task.sourceContext?.channel ?? "scheduled",
+          taskId: task.id,
+          scheduleType,
+          trigger,
+        },
       });
 
       if (scheduleType === "once") {

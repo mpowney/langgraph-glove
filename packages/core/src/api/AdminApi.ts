@@ -137,6 +137,15 @@ export interface AdminApiConfig {
     graphKey?: string;
     /** Optional personal token so user-requested tasks can access encrypted memories. */
     personalToken?: string;
+    /** Optional scheduled-run observability options for receiveAgentProcessing channels. */
+    observability?: {
+      enabled?: boolean;
+      conversationId?: string;
+      sourceChannel?: string;
+      taskId?: string;
+      scheduleType?: "cron" | "once";
+      trigger?: "cron" | "once-minute-sweep" | "manual-now";
+    };
   }) => Promise<string>;
   /** Optional callback for localhost trusted services to emit receiveSystem messages. */
   sendSystemMessage?: (params: {
@@ -395,6 +404,42 @@ export class AdminApi {
           const prompt = readBodyString(req.body, "prompt");
           const graphKey = readBodyString(req.body, "graphKey") || undefined;
           const personalToken = readBodyString(req.body, "personalToken") || undefined;
+          const observabilityRaw =
+            typeof req.body === "object" && req.body !== null
+              ? (req.body as Record<string, unknown>)["observability"]
+              : undefined;
+          const observability =
+            typeof observabilityRaw === "object" && observabilityRaw !== null
+              ? {
+                  enabled:
+                    typeof (observabilityRaw as Record<string, unknown>)["enabled"] === "boolean"
+                      ? ((observabilityRaw as Record<string, unknown>)["enabled"] as boolean)
+                      : undefined,
+                  conversationId:
+                    typeof (observabilityRaw as Record<string, unknown>)["conversationId"] === "string"
+                      ? ((observabilityRaw as Record<string, unknown>)["conversationId"] as string)
+                      : undefined,
+                  sourceChannel:
+                    typeof (observabilityRaw as Record<string, unknown>)["sourceChannel"] === "string"
+                      ? ((observabilityRaw as Record<string, unknown>)["sourceChannel"] as string)
+                      : undefined,
+                  taskId:
+                    typeof (observabilityRaw as Record<string, unknown>)["taskId"] === "string"
+                      ? ((observabilityRaw as Record<string, unknown>)["taskId"] as string)
+                      : undefined,
+                  scheduleType:
+                    (observabilityRaw as Record<string, unknown>)["scheduleType"] === "cron"
+                    || (observabilityRaw as Record<string, unknown>)["scheduleType"] === "once"
+                      ? ((observabilityRaw as Record<string, unknown>)["scheduleType"] as "cron" | "once")
+                      : undefined,
+                  trigger:
+                    (observabilityRaw as Record<string, unknown>)["trigger"] === "cron"
+                    || (observabilityRaw as Record<string, unknown>)["trigger"] === "once-minute-sweep"
+                    || (observabilityRaw as Record<string, unknown>)["trigger"] === "manual-now"
+                      ? ((observabilityRaw as Record<string, unknown>)["trigger"] as "cron" | "once-minute-sweep" | "manual-now")
+                      : undefined,
+                }
+              : undefined;
           if (!conversationId || !prompt) {
             res.status(400).json({ error: "conversationId and prompt are required" });
             return;
@@ -406,6 +451,7 @@ export class AdminApi {
               prompt,
               graphKey,
               personalToken,
+              observability,
             });
             res.json({ result });
           } catch (err) {

@@ -15,6 +15,7 @@
 import path from "node:path";
 import { launchToolServer } from "@langgraph-glove/tool-server";
 import { ScheduleService } from "./ScheduleService";
+import type { ScheduledInvokeObservabilityOptions } from "./ScheduleService";
 import { listTasksToolMetadata, handleListTasks } from "./tools/ListTasksTool";
 import { addTaskToolMetadata, handleAddTask } from "./tools/AddTaskTool";
 import { updateTaskToolMetadata, handleUpdateTask } from "./tools/UpdateTaskTool";
@@ -50,6 +51,7 @@ async function invokeAgent(params: {
   prompt: string;
   graphKey?: string;
   personalToken?: string;
+  observability?: ScheduledInvokeObservabilityOptions;
 }): Promise<string> {
   const base = adminApiUrl.endsWith("/") ? adminApiUrl.slice(0, -1) : adminApiUrl;
   const response = await fetch(`${base}/api/internal/invoke`, {

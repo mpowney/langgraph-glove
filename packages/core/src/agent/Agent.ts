@@ -4,6 +4,7 @@ import type { Channel, IncomingMessage, OutgoingStreamChunk, StreamSource } from
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
+import { isGenericToolName, toolNameFromToolCallId, resolveToolName } from "./toolNameUtils.js";
 
 const logger = new Logger("Agent.ts");
 
@@ -141,44 +142,10 @@ function normalizeStreamTextDelta(previous: string | undefined, incoming: string
   };
 }
 
-function isGenericToolName(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return normalized.length === 0 || ["tool", "structuredtool", "dynamictool", "remotetool"].includes(normalized);
-}
-
-function toolNameFromToolCallId(toolCallId?: string): string | undefined {
-  if (!toolCallId) return undefined;
-  // Example: "functions.web_search:5" -> "web_search"
-  const match = toolCallId.match(/(?:^|\.)([a-zA-Z0-9_-]+)(?::\d+)?$/);
-  if (!match) return undefined;
-  const candidate = match[1];
-  return isGenericToolName(candidate) ? undefined : candidate;
-}
-
-function resolveToolName(
-  runName: string | undefined,
-  tool: unknown,
-  toolCallId: string | undefined,
-): string {
-  if (typeof runName === "string" && !isGenericToolName(runName)) {
-    return runName;
-  }
-
-  const fromCallId = toolNameFromToolCallId(toolCallId);
-  if (fromCallId) return fromCallId;
-
-  if (isObject(tool)) {
-    if (typeof tool.name === "string" && !isGenericToolName(tool.name)) {
-      return tool.name;
-    }
-    const kwargs = isObject(tool.kwargs) ? tool.kwargs : undefined;
-    if (kwargs && typeof kwargs.name === "string" && !isGenericToolName(kwargs.name)) {
-      return kwargs.name;
-    }
-  }
-
-  return "tool";
-}
+// resolveToolName, isGenericToolName, toolNameFromToolCallId are imported from ./toolNameUtils.js
+// Keep a reference to suppress unused-import warnings for the re-exported helpers.
+void isGenericToolName;
+void toolNameFromToolCallId;
 
 function resolveChunkStreamSource(
   langgraphNode: string | undefined,

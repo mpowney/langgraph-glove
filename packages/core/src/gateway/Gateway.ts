@@ -1,6 +1,7 @@
 import { EventEmitter } from "node:events";
 import express from "express";
 import type { Server } from "node:http";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { HumanMessage } from "@langchain/core/messages";
 import type { BaseCheckpointSaver } from "@langchain/langgraph";
@@ -31,6 +32,9 @@ import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
 import { WebChannel } from "../channels/WebChannel";
 import type { ToolDefinition, AgentCapabilityEntry } from "../rpc/RpcProtocol";
+import type { ToolEventMetadata } from "../rpc/RpcProtocol";
+import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
+import { resolveToolName } from "../agent/toolNameUtils.js";
 
 const logger = new Logger("Gateway");
 
@@ -203,12 +207,13 @@ export class Gateway extends EventEmitter {
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
         toolRegistry: this.toolRegistry,
         agentCapabilities: this.agentCapabilities,
-        invokeAgent: async ({ conversationId, prompt, graphKey, personalToken }) => {
+        invokeAgent: async ({ conversationId, prompt, graphKey, personalToken, observability }) => {
           return this.invokeConfiguredGraph({
             conversationId,
             prompt,
             personalToken,
             graphKey,
+            observability,
           });
         },
         sendSystemMessage: async ({ conversationId, text, role }) => {
@@ -451,11 +456,168 @@ export class Gateway extends EventEmitter {
     prompt: string;
     graphKey?: string;
     personalToken?: string;
+    observability?: {
+      enabled?: boolean;
+      conversationId?: string;
+      sourceChannel?: string;
+      taskId?: string;
+      scheduleType?: "cron" | "once";
+      trigger?: "cron" | "once-minute-sweep" | "manual-now";
+    };
   }): Promise<string> {
     const graphKey = params.graphKey?.trim() || "default";
+    const targets = (this.options.channels ?? []).filter((channel) => channel.receiveAgentProcessing);
+    const observabilityEnabled = params.observability?.enabled === true && targets.length > 0;
+    const observabilityConversationId =
+      params.observability?.conversationId?.trim() || params.conversationId;
+
+    const sendObservability = (
+      role: "prompt" | "tool-call" | "tool-result" | "model-call" | "model-response" | "graph-definition" | "system-event" | "agent-transfer",
+      text: string,
+      toolEventMetadata?: ToolEventMetadata,
+    ): void => {
+      if (!observabilityEnabled) return;
+      for (const channel of targets) {
+        channel
+          .sendMessage({
+            conversationId: observabilityConversationId,
+            text,
+            role,
+            ...(toolEventMetadata ? { toolEventMetadata } : {}),
+          })
+          .catch((err: unknown) =>
+            logger.error(`Failed to send observability message to channel "${channel.name}"`, err),
+          );
+      }
+    };
+
+    if (observabilityEnabled) {
+      sendObservability(
+        "graph-definition",
+        JSON.stringify(
+          {
+            type: "graph-info",
+            graphName: graphKey,
+            graph: {
+              graphKey,
+              mode: graphKey === "default" ? "single-agent" : "multi-agent",
+            },
+            sourceChannel: params.observability?.sourceChannel ?? "scheduled",
+            schedule: {
+              taskId: params.observability?.taskId,
+              scheduleType: params.observability?.scheduleType,
+              trigger: params.observability?.trigger,
+            },
+          },
+          null,
+          2,
+        ),
+      );
+    }
+
+    const llmHandler = new LlmCallbackHandler(
+      observabilityEnabled ? (formatted: string) => sendObservability("prompt", formatted) : undefined,
+      observabilityEnabled
+        ? (payload: Record<string, unknown>) =>
+            sendObservability("model-call", JSON.stringify(payload, null, 2))
+        : undefined,
+      observabilityEnabled
+        ? (payload: Record<string, unknown>) =>
+            sendObservability("model-response", JSON.stringify(payload, null, 2))
+        : undefined,
+    );
+
+    const toolRunNameByRunId = new Map<string, string>();
+    const toolCallbackHandler = observabilityEnabled
+      ? BaseCallbackHandler.fromMethods({
+          handleToolStart: (
+            tool,
+            input,
+            runId,
+            _parentRunId,
+            _tags,
+            _metadata,
+            runName,
+            toolCallId,
+          ): void => {
+            const toolName = resolveToolName(
+              typeof runName === "string" ? runName : undefined,
+              tool,
+              typeof toolCallId === "string" ? toolCallId : undefined,
+            );
+            toolRunNameByRunId.set(String(runId), toolName);
+
+            const parsedInput = parseJsonMaybe(input);
+            const toolDef = this.toolRegistry.find((entry) => entry.name === toolName);
+            const meta: ToolEventMetadata | undefined = toolDef
+              ? { tool: toolDef }
+              : undefined;
+
+            if (toolName.startsWith("transfer_to_")) {
+              const targetAgent = toolName.replace(/^transfer_to_/, "");
+              const request = typeof parsedInput === "object" && parsedInput !== null && "request" in parsedInput
+                ? (() => {
+                    const val = (parsedInput as Record<string, unknown>)["request"];
+                    if (typeof val === "string") return val;
+                    if (val == null) return "";
+                    try { return JSON.stringify(val); } catch { return String(val); }
+                  })()
+                : "";
+              sendObservability(
+                "agent-transfer",
+                JSON.stringify({ agent: targetAgent, request }),
+              );
+            } else {
+              sendObservability(
+                "tool-call",
+                JSON.stringify({
+                  name: toolName,
+                  args: parsedInput,
+                  ...(typeof toolCallId === "string" && toolCallId.length > 0 ? { id: toolCallId } : {}),
+                  type: "tool_call",
+                }),
+                meta,
+              );
+            }
+          },
+          handleToolEnd: (output, runId): void => {
+            const runKey = String(runId);
+            const toolName = toolRunNameByRunId.get(runKey);
+            toolRunNameByRunId.delete(runKey);
+            const toolDef = toolName ? this.toolRegistry.find((entry) => entry.name === toolName) : undefined;
+            const meta: ToolEventMetadata | undefined = toolDef
+              ? { tool: toolDef }
+              : undefined;
+            const content = typeof output === "string" ? output : safeStringify(output);
+            sendObservability("tool-result", JSON.stringify({ name: toolName, content }), meta);
+          },
+          handleToolError: (_error, runId): void => {
+            toolRunNameByRunId.delete(String(runId));
+          },
+        })
+      : undefined;
+    const callbacks: BaseCallbackHandler[] = toolCallbackHandler
+      ? [llmHandler, toolCallbackHandler]
+      : [llmHandler];
+
     if (graphKey === "default") {
       if (!this.agent) throw new Error("Agent is not running");
-      return this.agent.invoke(params.prompt, params.conversationId, undefined, params.personalToken);
+      return this.agent.invoke(
+        params.prompt,
+        params.conversationId,
+        callbacks,
+        params.personalToken,
+        undefined,
+        {
+          sourceChannel: params.observability?.sourceChannel ?? "scheduled",
+          sourceConversationId: params.conversationId,
+          sourceMetadata: {
+            trigger: params.observability?.trigger,
+            taskId: params.observability?.taskId,
+            scheduleType: params.observability?.scheduleType,
+          },
+        },
+      );
     }
 
     if (!this.config || !this.models || !this.checkpointer) {
@@ -478,6 +640,7 @@ export class Gateway extends EventEmitter {
           ...(params.personalToken ? { personalToken: params.personalToken } : {}),
         },
         recursionLimit: orchestratorEntry.recursionLimit ?? 25,
+        callbacks,
       },
     );
 
@@ -647,6 +810,25 @@ export class Gateway extends EventEmitter {
       () => process.removeListener("SIGINT", onSIGINT),
       () => process.removeListener("SIGTERM", onSIGTERM),
     );
+  }
+}
+
+function parseJsonMaybe(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  const trimmed = value.trim();
+  if (!trimmed) return "";
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return value;
+  }
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
   }
 }
 
