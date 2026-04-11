@@ -132,38 +132,62 @@ already_stopped=0
 skipped=0
 kept=0
 tmp_pid_file="$(mktemp)"
+results_dir="$(mktemp -d)"
+job_index=0
+job_pids=()
 
-while IFS=: read -r tool_name pid log_file; do
-  if [[ -z "${tool_name:-}" || -z "${pid:-}" ]]; then
-    continue
-  fi
+log_tool_progress() {
+  local tool_name="$1"
+  local message="$2"
+  echo "[$tool_name] $message"
+}
+
+process_tool_entry() {
+  local tool_name="$1"
+  local pid="$2"
+  local log_file="$3"
+  local result_file="$4"
+  local output_line="${tool_name}:${pid}:${log_file}"
+  local found_pid
+  local target_pid
+
+  log_tool_progress "$tool_name" "Checking stop request (seed pid=$pid)"
 
   if ! targeted_tool "$tool_name"; then
-    echo "${tool_name}:${pid}:${log_file}" >> "$tmp_pid_file"
-    ((kept += 1))
-    continue
+    {
+      echo "STATUS\tkept"
+      echo "KEEP\t${output_line}"
+    } > "$result_file"
+    log_tool_progress "$tool_name" "Skipping; not selected by current target filter"
+    return 0
   fi
 
   if ! [[ "$pid" =~ ^[0-9]+$ ]]; then
-    echo "Skipping $tool_name (invalid pid: $pid)"
-    ((skipped += 1))
-    echo "${tool_name}:${pid}:${log_file}" >> "$tmp_pid_file"
-    continue
+    {
+      echo "STATUS\tskipped"
+      echo "KEEP\t${output_line}"
+      echo "MSG\tSkipping $tool_name (invalid pid: $pid)"
+    } > "$result_file"
+    log_tool_progress "$tool_name" "Skipping; invalid pid '$pid'"
+    return 0
   fi
 
-  tool_pids=()
+  local tool_pids=()
   while IFS= read -r found_pid; do
     [[ -z "${found_pid:-}" ]] && continue
     tool_pids+=("$found_pid")
   done < <(collect_tool_pids "$tool_name" "$pid")
 
   if [[ ${#tool_pids[@]} -eq 0 ]]; then
-    echo "$tool_name already stopped (seed pid=$pid)"
-    ((already_stopped += 1))
-    continue
+    {
+      echo "STATUS\talready"
+      echo "MSG\t$tool_name already stopped (seed pid=$pid)"
+    } > "$result_file"
+    log_tool_progress "$tool_name" "Already stopped; no matching processes found"
+    return 0
   fi
 
-  valid_targets=()
+  local valid_targets=()
   for target_pid in "${tool_pids[@]}"; do
     if safe_command_match "$tool_name" "$target_pid"; then
       valid_targets+=("$target_pid")
@@ -171,18 +195,26 @@ while IFS=: read -r tool_name pid log_file; do
   done
 
   if [[ ${#valid_targets[@]} -eq 0 ]]; then
-    echo "Skipping $tool_name (seed pid=$pid) due to command mismatch"
-    ((skipped += 1))
-    echo "${tool_name}:${pid}:${log_file}" >> "$tmp_pid_file"
-    continue
+    {
+      echo "STATUS\tskipped"
+      echo "KEEP\t${output_line}"
+      echo "MSG\tSkipping $tool_name (seed pid=$pid) due to command mismatch"
+    } > "$result_file"
+    log_tool_progress "$tool_name" "Skipping; matched processes failed command safety checks"
+    return 0
   fi
 
+  log_tool_progress "$tool_name" "Attempting graceful stop for ${#valid_targets[@]} matching process(es)"
+
   # Kill children first, then parent-like entries, to avoid orphaned workers.
+  local i
   for ((i=${#valid_targets[@]}-1; i>=0; i--)); do
     kill -HUP "${valid_targets[$i]}" 2>/dev/null || true
   done
 
   # Wait briefly for graceful shutdown.
+  local any_alive
+  local _
   for _ in {1..20}; do
     any_alive=0
     for target_pid in "${valid_targets[@]}"; do
@@ -197,25 +229,74 @@ while IFS=: read -r tool_name pid log_file; do
     sleep 0.1
   done
 
+  log_tool_progress "$tool_name" "Checking for any processes still alive after graceful stop"
   for target_pid in "${valid_targets[@]}"; do
     if kill -0 "$target_pid" 2>/dev/null; then
+      log_tool_progress "$tool_name" "Force killing remaining pid $target_pid"
       kill -9 "$target_pid" 2>/dev/null || true
     fi
   done
 
-  echo "Stopped $tool_name (seed pid=$pid, matched=${#valid_targets[@]})"
-  ((terminated += 1))
+  {
+    echo "STATUS\tterminated"
+    echo "MSG\tStopped $tool_name (seed pid=$pid, matched=${#valid_targets[@]})"
+  } > "$result_file"
+  log_tool_progress "$tool_name" "Stop sequence complete"
+}
+
+while IFS=: read -r tool_name pid log_file; do
+  if [[ -z "${tool_name:-}" || -z "${pid:-}" ]]; then
+    continue
+  fi
+
+  result_file="$results_dir/result_$job_index"
+  process_tool_entry "$tool_name" "$pid" "$log_file" "$result_file" &
+  job_pids+=("$!")
+  ((job_index += 1))
 done < "$PID_FILE"
+
+for job_pid in "${job_pids[@]}"; do
+  if ! wait "$job_pid"; then
+    echo "A stop worker exited unexpectedly" >&2
+  fi
+done
+
+if [[ -d "$results_dir" ]]; then
+  while IFS= read -r result_file; do
+    [[ -f "$result_file" ]] || continue
+    while IFS=$'\t' read -r kind value; do
+      case "$kind" in
+        STATUS)
+          case "$value" in
+            terminated)
+              ((terminated += 1))
+              ;;
+            already)
+              ((already_stopped += 1))
+              ;;
+            skipped)
+              ((skipped += 1))
+              ;;
+            kept)
+              ((kept += 1))
+              ;;
+          esac
+          ;;
+        KEEP)
+          echo "$value" >> "$tmp_pid_file"
+          ;;
+        MSG)
+          echo "$value"
+          ;;
+      esac
+    done < "$result_file"
+  done < <(find "$results_dir" -type f -name 'result_*' | sort)
+fi
+
+rm -rf "$results_dir"
 
 if [[ -s "$tmp_pid_file" ]]; then
   mv "$tmp_pid_file" "$PID_FILE"
 else
   rm -f "$tmp_pid_file" "$PID_FILE"
-fi
-
-echo ""
-if [[ ${#TARGET_ARGS[@]} -eq 0 ]]; then
-  echo "Tool stop complete (all tools). Terminated: $terminated, already stopped: $already_stopped, skipped: $skipped"
-else
-  echo "Tool stop complete (targeted). Terminated: $terminated, already stopped: $already_stopped, skipped: $skipped, kept running: $kept"
 fi
