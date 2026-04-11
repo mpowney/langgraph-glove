@@ -651,6 +651,7 @@ export function ConfigAdmin({
     loadHistory,
     loadVersion,
     validateContent,
+    validateContentWithSchema,
     clearSelectedVersion,
   } = useConfigAdmin(configToolUrl, privilegeGrantId, conversationId, authToken);
 
@@ -662,6 +663,7 @@ export function ConfigAdmin({
   const [showValidation, setShowValidation] = useState(false);
   const [historyDialogOpen, setHistoryDialogOpen] = useState(false);
   const [checkDialogOpen, setCheckDialogOpen] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
   const [restartDialogOpen, setRestartDialogOpen] = useState(false);
   const [isRestarting, setIsRestarting] = useState(false);
   const [restartResult, setRestartResult] = useState<string | null>(null);
@@ -746,14 +748,27 @@ export function ConfigAdmin({
     }
   }, [selectedFile, isDirty, loadFileContent]);
 
-  const handleCheck = useCallback(() => {
+  const handleCheck = useCallback(async () => {
     if (!selectedFile) return;
-    // Run validation immediately (don't wait for debounce) and show dialog
-    const issues = validateContent(selectedFile, draftContent);
-    setValidationIssues(issues);
-    setShowValidation(true);
-    setCheckDialogOpen(true);
-  }, [selectedFile, draftContent, validateContent]);
+    setIsChecking(true);
+    try {
+      // Validate against canonical backend Zod schema for this config file.
+      const issues = await validateContentWithSchema(selectedFile, draftContent);
+      setValidationIssues(issues);
+    } catch (err) {
+      setValidationIssues([
+        {
+          path: "(root)",
+          message: `Validation request failed: ${err instanceof Error ? err.message : String(err)}`,
+          severity: "error",
+        },
+      ]);
+    } finally {
+      setShowValidation(true);
+      setCheckDialogOpen(true);
+      setIsChecking(false);
+    }
+  }, [selectedFile, draftContent, validateContentWithSchema]);
 
   const handleSave = useCallback(async () => {
     if (!selectedFile) return;
@@ -1102,10 +1117,10 @@ export function ConfigAdmin({
                   <div className={styles.editorBottomBarRight}>
                     <Button
                       appearance="secondary"
-                      icon={<CheckmarkCircle24Regular />}
+                      icon={isChecking ? <Spinner size="tiny" /> : <CheckmarkCircle24Regular />}
                       size="small"
-                      onClick={handleCheck}
-                      disabled={!draftContent}
+                      onClick={() => { void handleCheck(); }}
+                      disabled={!draftContent || isChecking}
                     >
                       Check
                     </Button>

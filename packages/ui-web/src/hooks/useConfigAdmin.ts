@@ -11,6 +11,7 @@ import {
   writeConfigFile,
   listConfigHistory,
   getConfigVersion,
+  validateConfigFile,
 } from "./configRpcClient";
 
 type LoadingState = "idle" | "loading" | "error";
@@ -276,6 +277,21 @@ export function useConfigAdmin(
     [allConfigs],
   );
 
+  const validateContentWithSchema = useCallback(
+    async (filename: string, content: string): Promise<ConfigValidationIssue[]> => {
+      if (!privilegeGrantId || !conversationId) return [];
+      return validateConfigFile(
+        configToolUrl,
+        filename,
+        content,
+        privilegeGrantId,
+        conversationId,
+        authToken,
+      );
+    },
+    [configToolUrl, privilegeGrantId, conversationId, authToken],
+  );
+
   const clearSelectedVersion = useCallback(() => {
     setSelectedVersion(null);
     setVersionError(null);
@@ -305,6 +321,7 @@ export function useConfigAdmin(
     loadHistory,
     loadVersion,
     validateContent,
+    validateContentWithSchema,
     clearSelectedVersion,
   };
 }

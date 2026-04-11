@@ -5,6 +5,8 @@ export {
   handleConfigReadFile,
   configWriteFileMetadata,
   handleConfigWriteFile,
+  configValidateFileMetadata,
+  handleConfigValidateFile,
   configListHistoryMetadata,
   handleConfigListHistory,
   configGetVersionMetadata,

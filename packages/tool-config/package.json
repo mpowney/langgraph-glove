@@ -18,6 +18,7 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@langgraph-glove/config": "workspace:*",
     "@langgraph-glove/tool-server": "workspace:*",
     "better-sqlite3": "^12.8.0"
   },

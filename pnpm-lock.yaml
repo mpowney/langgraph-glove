@@ -206,6 +206,9 @@ importers:
 
   packages/tool-config:
     dependencies:
+      '@langgraph-glove/config':
+        specifier: workspace:*
+        version: link:../config
       '@langgraph-glove/tool-server':
         specifier: workspace:*
         version: link:../tool-server

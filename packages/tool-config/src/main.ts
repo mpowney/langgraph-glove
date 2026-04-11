@@ -16,6 +16,8 @@ import {
   handleConfigReadFile,
   configWriteFileMetadata,
   handleConfigWriteFile,
+  configValidateFileMetadata,
+  handleConfigValidateFile,
   configListHistoryMetadata,
   handleConfigListHistory,
   configGetVersionMetadata,
@@ -37,6 +39,9 @@ await launchToolServer({
     );
     server.register(configWriteFileMetadata, (params) =>
       handleConfigWriteFile(params, adminApiUrl, store),
+    );
+    server.register(configValidateFileMetadata, (params) =>
+      handleConfigValidateFile(params, adminApiUrl),
     );
     server.register(configListHistoryMetadata, (params) =>
       handleConfigListHistory(params, adminApiUrl, store),

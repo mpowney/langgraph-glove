@@ -1,5 +1,6 @@
 import type {
   ConfigFileSummary,
+  ConfigValidationIssue,
   ConfigVersion,
   ConfigVersionSummary,
 } from "../types";
@@ -129,4 +130,21 @@ export async function getConfigVersion(
     authToken,
   );
   return JSON.parse(raw) as ConfigVersion;
+}
+
+export async function validateConfigFile(
+  configToolUrl: string,
+  file: string,
+  content: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<ConfigValidationIssue[]> {
+  const raw = await callConfigTool<string>(
+    configToolUrl,
+    "config_validate_file",
+    { file, content, privilegeGrantId, conversationId },
+    authToken,
+  );
+  return JSON.parse(raw) as ConfigValidationIssue[];
 }
