@@ -249,6 +249,42 @@ Set `"enabled": false` on any entry to skip it.
 
 Place JSON files containing secrets here. All keys from all files are merged into a flat namespace.
 
+---
+
+## Backup and Restore
+
+Create a compressed archive of the standard runtime directories:
+
+```bash
+pnpm backup:create
+```
+
+Override any source directory or the output archive path as needed:
+
+```bash
+pnpm backup:create -- --config-dir ./config --data-dir ./data --memories-dir ./memories --secrets-dir ./secrets --output ./tmp/glove-backup.tgz
+```
+
+Restore a previously created archive back into the default directories:
+
+```bash
+pnpm backup:restore -- --archive ./tmp/glove-backup.tgz
+```
+
+Use `--clean` to remove the existing destination directories before restoring:
+
+```bash
+pnpm backup:restore -- --archive ./tmp/glove-backup.tgz --clean
+```
+
+Override restore destinations if you want to repopulate alternate locations:
+
+```bash
+pnpm backup:restore -- --archive ./tmp/glove-backup.tgz --config-dir ./config --data-dir ./data --memories-dir ./memories --secrets-dir ./secrets
+```
+
+Restore overwrites files with matching paths and leaves unrelated existing files in place unless `--clean` is used.
+
 ```json
 // secrets/api-keys.json
 {
