@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useCallback, useEffect, useState, useMemo } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import {
   makeStyles,
   tokens,
@@ -18,18 +18,12 @@ import {
   Checkbox,
   Divider,
 } from "@fluentui/react-components";
-
-// Monaco editor is large — lazy-load it so it doesn't bloat the initial bundle
-const MonacoJsonEditor = lazy(() =>
-  import("./MonacoJsonEditor").then((m) => ({ default: m.MonacoJsonEditor })),
-);
-
 import {
-  DocumentEdit24Regular,
   Send24Regular,
   Dismiss24Regular,
 } from "@fluentui/react-icons";
 import { usePromptGeneration } from "../hooks/usePromptGeneration";
+import { SystemPromptViewer, SystemPromptViewMode, SYSTEM_PROMPT_VIEW_MODE_KEY } from "./SystemPromptViewer";
 
 const useStyles = makeStyles({
   dialogContainer: {
@@ -59,25 +53,6 @@ const useStyles = makeStyles({
     marginTop: tokens.spacingVerticalM,
     flexShrink: 0,
   },
-  editorPane: {
-    flex: 1,
-    display: "flex",
-    flexDirection: "column",
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    borderRadius: tokens.borderRadiusMedium,
-    overflow: "hidden",
-  },
-  editorHeader: {
-    padding: tokens.spacingVerticalS,
-    backgroundColor: tokens.colorNeutralBackground2,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
-    textAlign: "center",
-  },
-  editorContent: {
-    flex: 1,
-    minHeight: 0,
-    overflow: "hidden",
-  },
   promptSection: {
     display: "flex",
     flexDirection: "column",
@@ -104,13 +79,6 @@ const useStyles = makeStyles({
     border: `1px solid ${tokens.colorNeutralStroke1}`,
     borderRadius: tokens.borderRadiusSmall,
     padding: tokens.spacingVerticalS,
-  },
-  loadingState: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    height: "100%",
-    gap: tokens.spacingHorizontalS,
   },
 });
 
@@ -158,6 +126,14 @@ export function SystemPromptDialog({
   const [generatedPrompt, setGeneratedPrompt] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<SystemPromptViewMode>(
+    () => (sessionStorage.getItem(SYSTEM_PROMPT_VIEW_MODE_KEY) as SystemPromptViewMode) ?? "markdown",
+  );
+
+  const handleViewModeChange = useCallback((mode: SystemPromptViewMode) => {
+    setViewMode(mode);
+    sessionStorage.setItem(SYSTEM_PROMPT_VIEW_MODE_KEY, mode);
+  }, []);
 
   // Reset state when dialog opens
   useEffect(() => {
@@ -322,78 +298,21 @@ export function SystemPromptDialog({
 
             {/* Editor Section - Current vs Generated */}
             <div className={styles.editorSection}>
-              {/* Current Prompt */}
-              <div className={styles.editorPane}>
-                <div className={styles.editorHeader}>
-                  <Text weight="semibold">Current System Prompt</Text>
-                </div>
-                <div className={styles.editorContent}>
-                  {currentSystemPrompt ? (
-                    <Suspense fallback={
-                      <div className={styles.loadingState}>
-                        <Spinner size="small" />
-                        <Text>Loading editor...</Text>
-                      </div>
-                    }>
-                      <MonacoJsonEditor
-                        value={JSON.stringify(currentSystemPrompt, null, 2)}
-                        onChange={() => {}} // Read-only
-                        validationIssues={[]}
-                        filename="current-prompt.txt"
-                        wordWrap={true}
-                      />
-                    </Suspense>
-                  ) : (
-                    <div className={styles.loadingState}>
-                      <Text style={{ color: tokens.colorNeutralForeground3 }}>
-                        {selectedGraph ? "Position cursor on a systemPrompt field to see current value" : "No current system prompt detected"}
-                      </Text>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {/* Generated Prompt */}
-              <div className={styles.editorPane}>
-                <div className={styles.editorHeader}>
-                  <Text weight="semibold">Generated System Prompt</Text>
-                </div>
-                <div className={styles.editorContent}>
-                  {generatedPrompt ? (
-                    <Suspense fallback={
-                      <div className={styles.loadingState}>
-                        <Spinner size="small" />
-                        <Text>Loading editor...</Text>
-                      </div>
-                    }>
-                      <MonacoJsonEditor
-                        value={JSON.stringify(generatedPrompt, null, 2)}
-                        onChange={(value) => {
-                          // Extract the string content (remove quotes)
-                          try {
-                            const parsed = JSON.parse(value);
-                            if (typeof parsed === "string") {
-                              setGeneratedPrompt(parsed);
-                            }
-                          } catch {
-                            // If it's not valid JSON, treat as raw string
-                            setGeneratedPrompt(value.replace(/^"|"$/g, ''));
-                          }
-                        }}
-                        validationIssues={[]}
-                        filename="generated-prompt.txt"
-                        wordWrap={true}
-                      />
-                    </Suspense>
-                  ) : (
-                    <div className={styles.loadingState}>
-                      <Text style={{ color: tokens.colorNeutralForeground3 }}>
-                        Generated prompt will appear here after clicking "Generate System Prompt"
-                      </Text>
-                    </div>
-                  )}
-                </div>
-              </div>
+              <SystemPromptViewer
+                label="Current System Prompt"
+                content={currentSystemPrompt}
+                emptyMessage={selectedGraph ? "Position cursor on a systemPrompt field to see current value" : "No current system prompt detected"}
+                viewMode={viewMode}
+                onViewModeChange={handleViewModeChange}
+              />
+              <SystemPromptViewer
+                label="Generated System Prompt"
+                content={generatedPrompt}
+                emptyMessage='Generated prompt will appear here after clicking "Generate System Prompt"'
+                viewMode={viewMode}
+                onViewModeChange={handleViewModeChange}
+                onChange={setGeneratedPrompt}
+              />
             </div>
           </DialogContent>
 
