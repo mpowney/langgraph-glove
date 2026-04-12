@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   makeStyles,
+  mergeClasses,
   tokens,
   Text,
   Button,
@@ -185,12 +186,12 @@ export function PrivilegedAccessButton({
     setNotice("Privilege token updated.");
   };
 
-  const chipClass = [
+  const chipClass = mergeClasses(
     styles.chipBase,
     onBrand
       ? (privilegedAccessActive ? styles.chipOnBrandActive : styles.chipOnBrandInactive)
-      : (privilegedAccessActive ? styles.chipDefaultActive : styles.chipDefaultInactive),
-  ].join(" ");
+      : (privilegedAccessActive ? styles.chipDefaultActive : styles.chipDefaultInactive)
+  );
 
   return (
     <Popover
