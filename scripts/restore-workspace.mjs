@@ -73,6 +73,8 @@ if (!archivePath) {
 const resolvedArchivePath = resolve(repoRoot, archivePath);
 if (!existsSync(resolvedArchivePath)) {
   console.error(`Archive not found: ${resolvedArchivePath}`);
+  console.error("If you used the default backup command, it creates a timestamped archive in the repo root.");
+  console.error("Either pass that exact file to --archive or create a named archive with --output ./tmp/glove-backup.tgz.");
   process.exit(1);
 }
 

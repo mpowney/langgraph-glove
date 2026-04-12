@@ -22,3 +22,5 @@ packages/tool-macos-control/.swiftpm/
 
 # Temporary files
 .tmp*
+
+langgraph-glove-backup-*.tgz

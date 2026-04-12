@@ -259,6 +259,14 @@ Create a compressed archive of the standard runtime directories:
 pnpm backup:create
 ```
 
+That default command writes a timestamped archive in the repo root, for example `./langgraph-glove-backup-20260413-091530.tgz`.
+
+If you want a fixed path that matches the restore examples below, create the archive with an explicit output path:
+
+```bash
+pnpm backup:create -- --output ./tmp/glove-backup.tgz
+```
+
 Override any source directory or the output archive path as needed:
 
 ```bash
