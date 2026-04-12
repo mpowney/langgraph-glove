@@ -1209,7 +1209,11 @@ export function ConfigAdmin({
     }
   }, [selectedFile, parsedConfig, dialogTargetAgentKey]);
 
-  const currentSystemPrompt = useMemo(() => extractSystemPromptAtCursor(), [extractSystemPromptAtCursor]);
+  const [currentSystemPrompt, setCurrentSystemPrompt] = useState("");
+
+  useEffect(() => {
+    setCurrentSystemPrompt(extractSystemPromptAtCursor());
+  }, [extractSystemPromptAtCursor]);
   const availableGraphs = useMemo(() => parseAvailableGraphs(), [parseAvailableGraphs]);
   const availableAgents = useMemo(() => parseAvailableAgents(), [parseAvailableAgents]);
   const availableTools = useMemo(() => parseAvailableTools(), [parseAvailableTools]);
