@@ -45,23 +45,12 @@ function validateConfigJson(
 
   // Parse other config files for cross-reference checks
   let models: Record<string, unknown> = {};
-  let secrets: string[] = [];
 
   if (allConfigs["models.json"]) {
     try {
       models = JSON.parse(allConfigs["models.json"]) as Record<string, unknown>;
     } catch {
       // ignore
-    }
-  }
-
-  // Extract defined secret keys from all configs by scanning for {SECRET:xxx} patterns
-  const secretPattern = /\{SECRET:([^}]+)\}/g;
-  for (const cfg of Object.values(allConfigs)) {
-    let m: RegExpExecArray | null;
-    while ((m = secretPattern.exec(cfg)) !== null) {
-      // We can't validate secrets from here, just collect referenced ones
-      secrets.push(m[1]);
     }
   }
 

@@ -57,7 +57,6 @@
   },
   "config": {
     "transport": "unix-socket",
-    "url": "http://localhost:3017",
     "enabled": true,
     "socketName": "config"
   }
