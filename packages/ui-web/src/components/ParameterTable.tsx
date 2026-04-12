@@ -1,5 +1,5 @@
 import React from "react";
-import { makeStyles, tokens, Text } from "@fluentui/react-components";
+import { makeStyles, mergeClasses, tokens, Text } from "@fluentui/react-components";
 
 const useStyles = makeStyles({
   paramTable: {
@@ -105,8 +105,8 @@ export function ParameterTable({ parameters }: { parameters: Record<string, unkn
                 <span className={styles.paramRequired}> *</span>
               )}
             </td>
-            <td className={`${styles.paramTd} ${styles.paramTypeCell}`}>{row.type}</td>
-            <td className={`${styles.paramTd} ${styles.paramDesc}`}>{row.description || <em>—</em>}</td>
+            <td className={mergeClasses(styles.paramTd, styles.paramTypeCell)}>{row.type}</td>
+            <td className={mergeClasses(styles.paramTd, styles.paramDesc)}>{row.description || <em>—</em>}</td>
           </tr>
         ))}
       </tbody>

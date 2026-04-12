@@ -162,6 +162,8 @@ interface MonacoJsonEditorProps {
   dark?: boolean;
   /** Whether to wrap long lines. Defaults to false. */
   wordWrap?: boolean;
+  /** Callback when editor mounts */
+  onMount?: (editor: monacoLib.editor.IStandaloneCodeEditor) => void;
 }
 
 export function MonacoJsonEditor({
@@ -171,6 +173,7 @@ export function MonacoJsonEditor({
   filename = "config.json",
   dark,
   wordWrap = false,
+  onMount,
 }: MonacoJsonEditorProps) {
   const editorRef = useRef<monacoLib.editor.IStandaloneCodeEditor | null>(null);
 
@@ -182,8 +185,9 @@ export function MonacoJsonEditor({
   const handleMount: OnMount = useCallback(
     (editor) => {
       editorRef.current = editor;
+      onMount?.(editor);
     },
-    [],
+    [onMount],
   );
 
   // Apply custom markers whenever validation issues change

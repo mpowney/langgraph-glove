@@ -452,6 +452,32 @@ export class AdminApi {
             res.status(400).json({ error: "conversationId and prompt are required" });
             return;
           }
+
+          if (this.sendSystemMessage) {
+            try {
+              await this.sendSystemMessage({
+                conversationId,
+                text: JSON.stringify(
+                  {
+                    event: "internal-invoke-request",
+                    timestamp: new Date().toISOString(),
+                    details: {
+                      agentKey: agentKey || "default",
+                      graphKey: graphKey || "default",
+                      prompt,
+                      ...(observability ? { observability } : {}),
+                    },
+                  },
+                  null,
+                  2,
+                ),
+                role: "system-event",
+              });
+            } catch {
+              // Keep invoke flow resilient when the system-message sink is unavailable.
+            }
+          }
+
           try {
             const result = await this.invokeAgent({
               agentKey: agentKey || "default",
