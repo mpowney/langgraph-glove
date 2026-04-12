@@ -703,6 +703,7 @@ export function ConfigAdmin({
   // Live validation — run with debounce on every draft change to keep Monaco
   // markers up-to-date without blocking keystrokes.
   const liveValidationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cursorDebounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (!selectedFile) return;
     if (liveValidationTimerRef.current !== null) {
@@ -1098,16 +1099,22 @@ export function ConfigAdmin({
     if (!editor || selectedFile !== "agents.json") return;
 
     const disposable = editor.onDidChangeCursorPosition(() => {
-      // Debounce cursor position changes
-      const timeoutId = setTimeout(() => {
+      // Debounce cursor position changes using a ref so the timer can be cleared
+      if (cursorDebounceTimerRef.current !== null) {
+        clearTimeout(cursorDebounceTimerRef.current);
+      }
+      cursorDebounceTimerRef.current = setTimeout(() => {
+        cursorDebounceTimerRef.current = null;
         extractSystemPromptAtCursor();
       }, 100);
-
-      return () => clearTimeout(timeoutId);
     });
 
     return () => {
       disposable?.dispose();
+      if (cursorDebounceTimerRef.current !== null) {
+        clearTimeout(cursorDebounceTimerRef.current);
+        cursorDebounceTimerRef.current = null;
+      }
     };
   }, [editorRef, selectedFile, extractSystemPromptAtCursor]);
 
