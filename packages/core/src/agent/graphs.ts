@@ -393,6 +393,8 @@ export interface SubAgentDef {
   /** Tools available to this sub-agent. */
   tools: StructuredToolInterface[];
   systemPrompt?: string;
+  /** Maximum LangGraph recursion limit for this sub-agent invocation. */
+  recursionLimit?: number;
 }
 
 export interface OrchestratorGraphConfig {
@@ -606,7 +608,23 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
 
   // Sub-agent subgraph nodes
   for (const [name, subGraph] of subAgentGraphs) {
-    graph = graph.addNode(name, subGraph);
+    const subAgentDef = subAgents.find((sa) => sa.name === name);
+
+    graph = graph.addNode(
+      name,
+      async (state: typeof MessagesAnnotation.State, runtimeConfig?: unknown) => {
+        const invokeConfig =
+          runtimeConfig && typeof runtimeConfig === "object"
+            ? { ...(runtimeConfig as Record<string, unknown>) }
+            : {};
+
+        if (subAgentDef?.recursionLimit !== undefined) {
+          invokeConfig.recursionLimit = subAgentDef.recursionLimit;
+        }
+
+        return subGraph.invoke(state, invokeConfig);
+      },
+    );
     graph = graph.addEdge(name, "orchestrator");
   }
 

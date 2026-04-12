@@ -430,6 +430,7 @@ export class Gateway extends EventEmitter {
         model: models.get(entry.modelKey ?? "default"),
         tools: scopedTools,
         systemPrompt: this.resolveSystemPrompt(entry.systemPrompt, scopedTools),
+        recursionLimit: entry.recursionLimit,
       };
     });
 
