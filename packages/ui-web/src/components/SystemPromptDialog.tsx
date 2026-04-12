@@ -29,6 +29,7 @@ import {
   Send24Regular,
   Dismiss24Regular,
 } from "@fluentui/react-icons";
+import { usePromptGeneration } from "../hooks/usePromptGeneration";
 
 const useStyles = makeStyles({
   dialogContainer: {
@@ -113,7 +114,6 @@ const useStyles = makeStyles({
   },
 });
 
-import { createUuid } from "../uuid";
 
 interface SystemPromptDialogProps {
   open: boolean;
@@ -130,63 +130,6 @@ interface SystemPromptDialogProps {
   authToken?: string;
 }
 
-async function generateSystemPrompt(
-  request: GenerateRequest,
-  configToolUrl?: string,
-  privilegeGrantId?: string,
-  conversationId?: string,
-  authToken?: string,
-): Promise<string> {
-  // Build the prompt construction message
-  const promptRequest = `Please create a system prompt with the following requirements:
-
-User Request: ${request.userRequest}
-
-Available Agents: ${request.selectedAgents.join(", ") || "none selected"}
-Available Tools: ${request.selectedTools.join(", ") || "none selected"}
-
-Please generate a clear, concise system prompt that accomplishes the user's goals while being appropriate for an AI assistant.`;
-
-  // For now, we'll use a mock implementation
-  // In a real implementation, this would send the message to the specified graph
-  // via the WebSocket connection or a dedicated RPC endpoint
-
-  if (!configToolUrl || !privilegeGrantId || !conversationId) {
-    throw new Error("API configuration required for prompt generation");
-  }
-
-  // This is a placeholder - in the real implementation, you would:
-  // 1. Send a message to the selected graph via WebSocket or RPC
-  // 2. Wait for the response
-  // 3. Extract the generated system prompt from the response
-
-  // Mock API call delay
-  await new Promise(resolve => setTimeout(resolve, 1000));
-
-  // Generate a more realistic mock response
-  const mockPrompt = `You are a specialized AI assistant designed to ${request.userRequest.toLowerCase().replace(/[.!?]+$/, "")}.
-
-${request.selectedAgents.length > 0 ? `You have access to the following specialized agents for delegation:
-${request.selectedAgents.map(agent => `- ${agent}`).join("\n")}
-
-When appropriate, delegate tasks to the relevant specialized agents rather than attempting to handle everything yourself.` : ""}
-
-${request.selectedTools.length > 0 ? `You have access to the following tools:
-${request.selectedTools.map(tool => `- ${tool}`).join("\n")}
-
-Use these tools when they are relevant to the user's requests.` : ""}
-
-Always be helpful, accurate, and concise in your responses. If you're uncertain about something, acknowledge the uncertainty rather than providing potentially incorrect information.`;
-
-  return mockPrompt;
-}
-
-interface GenerateRequest {
-  userRequest: string;
-  selectedGraph: string;
-  selectedAgents: string[];
-  selectedTools: string[];
-}
 
 export function SystemPromptDialog({
   open,
@@ -202,9 +145,14 @@ export function SystemPromptDialog({
   authToken,
 }: SystemPromptDialogProps) {
   const styles = useStyles();
+  const { generatePrompt } = usePromptGeneration(undefined, privilegeGrantId, authToken, configToolUrl);
+
+  const defaultGraph = availableGraphs.includes("system-prompt-engineering")
+    ? "system-prompt-engineering"
+    : (availableGraphs[0] || "");
 
   const [userRequest, setUserRequest] = useState("");
-  const [selectedGraph, setSelectedGraph] = useState(availableGraphs[0] || "");
+  const [selectedGraph, setSelectedGraph] = useState(defaultGraph);
   const [selectedAgents, setSelectedAgents] = useState<Set<string>>(new Set());
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const [generatedPrompt, setGeneratedPrompt] = useState("");
@@ -215,13 +163,13 @@ export function SystemPromptDialog({
   useEffect(() => {
     if (open) {
       setUserRequest("");
-      setSelectedGraph(availableGraphs[0] || "");
+      setSelectedGraph(defaultGraph);
       setSelectedAgents(new Set());
       setSelectedTools(new Set());
       setGeneratedPrompt("");
       setError(null);
     }
-  }, [open, availableGraphs]);
+  }, [open, availableGraphs, defaultGraph]);
 
   const handleAgentToggle = useCallback((agentKey: string) => {
     setSelectedAgents(prev => {
@@ -257,20 +205,12 @@ export function SystemPromptDialog({
     setError(null);
 
     try {
-      const generateRequest: GenerateRequest = {
+      const generated = await generatePrompt({
         userRequest: userRequest.trim(),
         selectedGraph,
         selectedAgents: Array.from(selectedAgents),
         selectedTools: Array.from(selectedTools),
-      };
-
-      const generated = await generateSystemPrompt(
-        generateRequest,
-        configToolUrl,
-        privilegeGrantId,
-        conversationId,
-        authToken
-      );
+      });
 
       setGeneratedPrompt(generated);
     } catch (err) {
