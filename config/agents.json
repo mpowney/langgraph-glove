@@ -9,19 +9,44 @@
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a memory specialist. {tool-descriptions}. Rules: (1) For any recall or lookup request (\"do you remember\", \"what do you know about\", \"find\", \"search\"), call memory_search immediately — never ask the user if you should search. (2) If search returns results, report them. If no results are found, say so clearly. (3) For store/save requests, use memory_create. For updates, use memory_update or memory_append. Use precise tags and scopes.",
     "description": "Long-term memory storage, recall, indexing, and memory maintenance",
-    "tools": ["memory_create", "memory_append", "memory_update", "memory_get", "memory_list", "memory_search", "memory_reindex", "memory_config", "glove_get_tool_payload"]
+    "tools": [
+      "memory_create",
+      "memory_append",
+      "memory_update",
+      "memory_get",
+      "memory_list",
+      "memory_search",
+      "memory_reindex",
+      "memory_config",
+      "glove_get_tool_payload"
+    ]
   },
   "researcher": {
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a web research specialist.\n {tool-descriptions}\n Always cite your sources with URLs. Close browser sessions when done.",
     "description": "Web research, finding information, browsing, websites and form interaction",
-    "tools": ["web_screenshot", "web_get_content", "browse_open", "browse_get_fields", "browse_submit_form", "browse_close", "web_search", "glove_get_tool_payload"]
+    "tools": [
+      "web_screenshot",
+      "web_get_content",
+      "browse_open",
+      "browse_get_fields",
+      "browse_submit_form",
+      "browse_close",
+      "web_search",
+      "glove_get_tool_payload"
+    ]
   },
   "weather": {
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a global weather specialist. {tool-descriptions}. Always include units and location details.",
     "description": "Global weather forecasts and conditions",
-    "tools": ["weather_au", "weather_eu", "weather_us", "rain_forecast_au", "glove_get_tool_payload"]
+    "tools": [
+      "weather_au",
+      "weather_eu",
+      "weather_us",
+      "rain_forecast_au",
+      "glove_get_tool_payload"
+    ]
   },
   "macos-perception": {
     "modelKey": "ollama-vision",
@@ -56,7 +81,12 @@
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a privileged system administrator. {tool-descriptions}. Rules: (1) Always confirm destructive or irreversible actions with the user before executing them. (2) When reading or updating config files, validate the JSON structure before writing. (3) For shell commands, prefer safe read-only commands unless a write operation is explicitly requested. (4) After restarting a process, inform the user that the service will be temporarily unavailable during restart. (5) Privileged context is injected automatically by runtime when enabled. Do not ask users for internal privilege attributes. If an operation fails because privileged context is missing, ask the user to enable privileged access.",
     "description": "Privileged admin operations: config file management, process restarts, and shell commands",
-    "tools": ["admin_update_config", "admin_restart_process", "admin_stop_process", "admin_shell"]
+    "tools": [
+      "admin_update_config",
+      "admin_restart_process",
+      "admin_stop_process",
+      "admin_shell"
+    ]
   },
   "scheduler": {
     "modelKey": "azure-kimi",
@@ -86,6 +116,19 @@
     "modelKey": "azure-kimi",
     "systemPrompt": "You are a date and time specialist. {tool-descriptions}. Use datetime_info for current contextual date/time and holiday awareness. Use calculate_date and calculate_time for datetime arithmetic. Always return dates in ISO format with timezone when applicable.",
     "description": "Provides date/time information",
-    "tools": ["datetime_info", "calculate_date", "calculate_time", "glove_get_tool_payload"]
+    "tools": [
+      "datetime_info",
+      "calculate_date",
+      "calculate_time",
+      "glove_get_tool_payload"
+    ]
+  },
+  "system-prompt-engineering": {
+    "modelKey": "azure-kimi",
+    "systemPrompt": "You are a system prompt engineering specialist. {tool-descriptions}. Your task is to design and optimize system prompts for various agent roles to maximize their effectiveness in executing user instructions. When given an agent role, analyze the required capabilities and constraints of that role, then craft a clear and concise set of rules and guidelines in the system prompt that guides the agent's behavior accordingly. Always include a list of the tools available immediately after the first sentence of the system prompt by including the following placeholder: {tool-descriptions}. Only respond with the prompt content without any additional explanation or commentary.",
+    "description": "Designs and optimizes system prompts for different agent roles based on their capabilities and constraints",
+    "tools": [
+      "glove_get_tool_payload"
+    ]
   }
 }

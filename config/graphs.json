@@ -24,5 +24,10 @@
       "datetime",
       "scheduler"
     ]
+  },
+  "system-prompt-engineering": {
+    "modelKey": "azure-kimi",
+    "orchestratorAgentKey": "system-prompt-engineering",
+    "subAgentKeys": []
   }
 }
