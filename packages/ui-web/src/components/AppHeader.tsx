@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import {
   makeStyles,
+  mergeClasses,
   tokens,
   Text,
   Switch,
@@ -359,7 +360,7 @@ export function AppHeader({
           authError={authError}
           passkeyEnabled={passkeyEnabled}
         />
-        <span className={`${styles.statusDot} ${dotClass}`} aria-hidden />
+        <span className={mergeClasses(styles.statusDot, dotClass)} aria-hidden />
         <Text size={100} className={styles.statusLabel}>
           {STATUS_LABELS[status]}
         </Text>

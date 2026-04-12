@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 import {
   makeStyles,
+  mergeClasses,
   tokens,
   Text,
   Button,
@@ -148,7 +149,7 @@ function MessageView({ message }: MessageViewProps) {
           : styles.messageSystem;
 
   return (
-    <div className={`${styles.messageItem} ${roleClass}`}>
+    <div className={mergeClasses(styles.messageItem, roleClass)}>
       <Text className={styles.messageRole}>{ROLE_LABELS[message.role]}</Text>
       {message.tool_calls?.length ? (
         <div>

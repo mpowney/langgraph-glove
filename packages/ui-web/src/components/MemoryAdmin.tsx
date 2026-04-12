@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
   makeStyles,
+  mergeClasses,
   tokens,
   Text,
   Button,
@@ -381,7 +382,7 @@ export function MemoryAdmin({
                   <React.Fragment key={memory.id}>
                     {index > 0 && <Divider />}
                     <div
-                      className={`${styles.listItem} ${selectedMemory?.id === memory.id ? styles.listItemSelected : ""}`}
+                      className={mergeClasses(styles.listItem, selectedMemory?.id === memory.id && styles.listItemSelected)}
                       role="button"
                       tabIndex={0}
                       onClick={() => void handleSelectMemory(memory)}
@@ -553,7 +554,7 @@ export function MemoryAdmin({
               This will permanently delete
               {deleteTarget ? ` "${deleteTarget.title}"` : " this memory"}
               and remove its index entries.
-              {deleteError && <Text className={`${styles.errorText} ${styles.deleteMessage}`}>{deleteError}</Text>}
+              {deleteError && <Text className={mergeClasses(styles.errorText, styles.deleteMessage)}>{deleteError}</Text>}
             </DialogContent>
             <DialogActions>
               <Button
