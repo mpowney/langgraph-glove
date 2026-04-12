@@ -676,6 +676,7 @@ export function ConfigAdmin({
   const [editorRef, setEditorRef] = useState<any>(null);
   const [cursorOnSystemPrompt, setCursorOnSystemPrompt] = useState(false);
   const [dialogSystemPrompt, setDialogSystemPrompt] = useState("");
+  const [dialogTargetAgentKey, setDialogTargetAgentKey] = useState<string | null>(null);
 
   const hasPrivilege = Boolean(privilegeGrantId) && Boolean(conversationId);
 
@@ -695,6 +696,8 @@ export function ConfigAdmin({
     setSaveNotice(null);
     // Reset cursor position state when switching files
     setCursorOnSystemPrompt(false);
+    setDialogSystemPrompt("");
+    setDialogTargetAgentKey(null);
   }, [fileContent]);
 
   // Live validation — run with debounce on every draft change to keep Monaco
@@ -1074,6 +1077,21 @@ export function ConfigAdmin({
     return "";
   }, [selectedFile, parsedConfig, editorRef]);
 
+  const getAgentAtCurrentCursor = useCallback(() => {
+    if (selectedFile !== "agents.json" || !parsedConfig || !editorRef?.current) {
+      return null;
+    }
+
+    const editor = editorRef.current;
+    const position = editor.getPosition();
+    const model = editor.getModel();
+    if (!position || !model) {
+      return null;
+    }
+
+    return findAgentAtCursorPosition(model, position, parsedConfig);
+  }, [selectedFile, parsedConfig, editorRef, findAgentAtCursorPosition]);
+
   // Monitor cursor position changes to update system prompt detection
   useEffect(() => {
     const editor = editorRef?.current;
@@ -1149,58 +1167,47 @@ export function ConfigAdmin({
   }, [allConfigs]);
 
   const handleOpenSystemPromptDialog = useCallback(() => {
-    // Capture the current system prompt at the moment the dialog is opened
-    const prompt = extractSystemPromptAtCursor();
+    const agentAtCursor = getAgentAtCurrentCursor();
+    const agentKey = agentAtCursor?.agentKey ?? null;
+    const agentConfig = agentKey ? parsedConfig?.[agentKey] : null;
+    const prompt =
+      agentConfig && typeof agentConfig === "object" && "systemPrompt" in agentConfig
+        ? String(agentConfig.systemPrompt || "")
+        : "";
+
+    setDialogTargetAgentKey(agentKey);
     setDialogSystemPrompt(prompt);
     setSystemPromptDialogOpen(true);
-  }, [extractSystemPromptAtCursor]);
+  }, [getAgentAtCurrentCursor, parsedConfig]);
 
   const handleCloseSystemPromptDialog = useCallback(() => {
     setSystemPromptDialogOpen(false);
     setDialogSystemPrompt("");
+    setDialogTargetAgentKey(null);
   }, []);
 
   const handleApplySystemPrompt = useCallback((newPrompt: string) => {
-    if (!selectedFile || !parsedConfig || !editorRef) {
+    if (!selectedFile || !parsedConfig || !dialogTargetAgentKey) {
       return;
     }
 
-    // For agents.json, update the systemPrompt in the selected agent
     if (selectedFile === "agents.json") {
       try {
-        const editor = editorRef.current;
-        if (editor) {
-          const position = editor.getPosition();
-          const model = editor.getModel();
-          if (position && model) {
-            // Find the agent being edited (similar to extraction logic)
-            const contextLines = [];
-            for (let i = Math.max(1, position.lineNumber - 10); i <= Math.min(model.getLineCount(), position.lineNumber + 10); i++) {
-              contextLines.push(model.getLineContent(i));
-            }
-
-            // Find the agent key by looking for quoted strings that match agent keys
-            for (const agentKey of Object.keys(parsedConfig)) {
-              if (contextLines.some(line => line.includes(`"${agentKey}"`))) {
-                const agentConfig = parsedConfig[agentKey];
-                if (typeof agentConfig === "object" && agentConfig) {
-                  const updatedConfig = { ...parsedConfig };
-                  updatedConfig[agentKey] = { ...agentConfig, systemPrompt: newPrompt };
-                  const newContent = JSON.stringify(updatedConfig, null, 2);
-                  setDraftContent(newContent);
-                  setIsDirty(true);
-                  setSaveNotice(null);
-                  break;
-                }
-              }
-            }
-          }
+        const agentConfig = parsedConfig[dialogTargetAgentKey];
+        if (typeof agentConfig === "object" && agentConfig) {
+          const updatedConfig = { ...parsedConfig };
+          updatedConfig[dialogTargetAgentKey] = { ...agentConfig, systemPrompt: newPrompt };
+          const newContent = JSON.stringify(updatedConfig, null, 2);
+          setDraftContent(newContent);
+          setIsDirty(true);
+          setSaveNotice(null);
+          setDialogSystemPrompt(newPrompt);
         }
       } catch (err) {
         console.warn("Failed to apply system prompt:", err);
       }
     }
-  }, [selectedFile, parsedConfig, editorRef]);
+  }, [selectedFile, parsedConfig, dialogTargetAgentKey]);
 
   const currentSystemPrompt = useMemo(() => extractSystemPromptAtCursor(), [extractSystemPromptAtCursor]);
   const availableGraphs = useMemo(() => parseAvailableGraphs(), [parseAvailableGraphs]);
