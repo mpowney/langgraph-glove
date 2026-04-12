@@ -381,82 +381,80 @@ export function SystemPromptDialog({
             )}
 
             {/* Editor Section - Current vs Generated */}
-            {(currentSystemPrompt || generatedPrompt) && (
-              <div className={styles.editorSection}>
-                {/* Current Prompt */}
-                <div className={styles.editorPane}>
-                  <div className={styles.editorHeader}>
-                    <Text weight="semibold">Current System Prompt</Text>
-                  </div>
-                  <div className={styles.editorContent}>
-                    {currentSystemPrompt ? (
-                      <Suspense fallback={
-                        <div className={styles.loadingState}>
-                          <Spinner size="small" />
-                          <Text>Loading editor...</Text>
-                        </div>
-                      }>
-                        <MonacoJsonEditor
-                          value={`"${currentSystemPrompt}"`}
-                          onChange={() => {}} // Read-only
-                          validationIssues={[]}
-                          filename="current-prompt.txt"
-                          wordWrap={true}
-                        />
-                      </Suspense>
-                    ) : (
-                      <div className={styles.loadingState}>
-                        <Text style={{ color: tokens.colorNeutralForeground3 }}>
-                          No current system prompt
-                        </Text>
-                      </div>
-                    )}
-                  </div>
+            <div className={styles.editorSection}>
+              {/* Current Prompt */}
+              <div className={styles.editorPane}>
+                <div className={styles.editorHeader}>
+                  <Text weight="semibold">Current System Prompt</Text>
                 </div>
-
-                {/* Generated Prompt */}
-                <div className={styles.editorPane}>
-                  <div className={styles.editorHeader}>
-                    <Text weight="semibold">Generated System Prompt</Text>
-                  </div>
-                  <div className={styles.editorContent}>
-                    {generatedPrompt ? (
-                      <Suspense fallback={
-                        <div className={styles.loadingState}>
-                          <Spinner size="small" />
-                          <Text>Loading editor...</Text>
-                        </div>
-                      }>
-                        <MonacoJsonEditor
-                          value={`"${generatedPrompt}"`}
-                          onChange={(value) => {
-                            // Extract the string content (remove quotes)
-                            try {
-                              const parsed = JSON.parse(value);
-                              if (typeof parsed === "string") {
-                                setGeneratedPrompt(parsed);
-                              }
-                            } catch {
-                              // If it's not valid JSON, treat as raw string
-                              setGeneratedPrompt(value.replace(/^"|"$/g, ''));
-                            }
-                          }}
-                          validationIssues={[]}
-                          filename="generated-prompt.txt"
-                          wordWrap={true}
-                        />
-                      </Suspense>
-                    ) : (
+                <div className={styles.editorContent}>
+                  {currentSystemPrompt ? (
+                    <Suspense fallback={
                       <div className={styles.loadingState}>
-                        <Text style={{ color: tokens.colorNeutralForeground3 }}>
-                          Generated prompt will appear here
-                        </Text>
+                        <Spinner size="small" />
+                        <Text>Loading editor...</Text>
                       </div>
-                    )}
-                  </div>
+                    }>
+                      <MonacoJsonEditor
+                        value={JSON.stringify(currentSystemPrompt, null, 2)}
+                        onChange={() => {}} // Read-only
+                        validationIssues={[]}
+                        filename="current-prompt.txt"
+                        wordWrap={true}
+                      />
+                    </Suspense>
+                  ) : (
+                    <div className={styles.loadingState}>
+                      <Text style={{ color: tokens.colorNeutralForeground3 }}>
+                        {selectedGraph ? "Position cursor on a systemPrompt field to see current value" : "No current system prompt detected"}
+                      </Text>
+                    </div>
+                  )}
                 </div>
               </div>
-            )}
+
+              {/* Generated Prompt */}
+              <div className={styles.editorPane}>
+                <div className={styles.editorHeader}>
+                  <Text weight="semibold">Generated System Prompt</Text>
+                </div>
+                <div className={styles.editorContent}>
+                  {generatedPrompt ? (
+                    <Suspense fallback={
+                      <div className={styles.loadingState}>
+                        <Spinner size="small" />
+                        <Text>Loading editor...</Text>
+                      </div>
+                    }>
+                      <MonacoJsonEditor
+                        value={JSON.stringify(generatedPrompt, null, 2)}
+                        onChange={(value) => {
+                          // Extract the string content (remove quotes)
+                          try {
+                            const parsed = JSON.parse(value);
+                            if (typeof parsed === "string") {
+                              setGeneratedPrompt(parsed);
+                            }
+                          } catch {
+                            // If it's not valid JSON, treat as raw string
+                            setGeneratedPrompt(value.replace(/^"|"$/g, ''));
+                          }
+                        }}
+                        validationIssues={[]}
+                        filename="generated-prompt.txt"
+                        wordWrap={true}
+                      />
+                    </Suspense>
+                  ) : (
+                    <div className={styles.loadingState}>
+                      <Text style={{ color: tokens.colorNeutralForeground3 }}>
+                        Generated prompt will appear here after clicking "Generate System Prompt"
+                      </Text>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           </DialogContent>
 
           <DialogActions>

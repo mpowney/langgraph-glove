@@ -675,6 +675,7 @@ export function ConfigAdmin({
   const [systemPromptDialogOpen, setSystemPromptDialogOpen] = useState(false);
   const [editorRef, setEditorRef] = useState<any>(null);
   const [cursorOnSystemPrompt, setCursorOnSystemPrompt] = useState(false);
+  const [dialogSystemPrompt, setDialogSystemPrompt] = useState("");
 
   const hasPrivilege = Boolean(privilegeGrantId) && Boolean(conversationId);
 
@@ -1148,11 +1149,15 @@ export function ConfigAdmin({
   }, [allConfigs]);
 
   const handleOpenSystemPromptDialog = useCallback(() => {
+    // Capture the current system prompt at the moment the dialog is opened
+    const prompt = extractSystemPromptAtCursor();
+    setDialogSystemPrompt(prompt);
     setSystemPromptDialogOpen(true);
-  }, []);
+  }, [extractSystemPromptAtCursor]);
 
   const handleCloseSystemPromptDialog = useCallback(() => {
     setSystemPromptDialogOpen(false);
+    setDialogSystemPrompt("");
   }, []);
 
   const handleApplySystemPrompt = useCallback((newPrompt: string) => {
@@ -1691,7 +1696,7 @@ export function ConfigAdmin({
       <SystemPromptDialog
         open={systemPromptDialogOpen}
         onClose={handleCloseSystemPromptDialog}
-        currentSystemPrompt={currentSystemPrompt}
+        currentSystemPrompt={dialogSystemPrompt}
         onApplyPrompt={handleApplySystemPrompt}
         availableGraphs={availableGraphs}
         availableAgents={availableAgents}
