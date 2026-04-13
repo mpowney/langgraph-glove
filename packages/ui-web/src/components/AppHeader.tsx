@@ -4,7 +4,6 @@ import {
   mergeClasses,
   tokens,
   Text,
-  Switch,
   Button,
   Tooltip,
   Popover,
@@ -15,13 +14,9 @@ import {
   Spinner,
 } from "@fluentui/react-components";
 import {
-  ArrowReset24Regular,
-  Brain24Regular,
-  Chat24Regular,
-  DocumentEdit24Regular,
   LockClosed24Regular,
   LockClosed24Filled,
-  Wrench24Regular,
+  Settings24Regular,
 } from "@fluentui/react-icons";
 import type { AppInfo, ConnectionStatus } from "../types";
 import { PrivilegedAccessButton } from "./PrivilegedAccessButton";
@@ -77,10 +72,6 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForegroundOnBrand,
     opacity: 0.9,
   },
-  switchLabel: {
-    color: tokens.colorNeutralForegroundOnBrand,
-    opacity: 0.9,
-  },
   tokenActive: {
     color: tokens.colorPaletteGreenForeground1,
   },
@@ -102,18 +93,7 @@ const STATUS_LABELS: Record<ConnectionStatus, string> = {
 interface AppHeaderProps {
   appInfo: AppInfo | null;
   status: ConnectionStatus;
-  showAll: boolean;
-  onToggleShowAll: (value: boolean) => void;
-  showAccordionAndSubAgentMessages: boolean;
-  onToggleShowAccordionAndSubAgentMessages: (value: boolean) => void;
-  showSystemMessages: boolean;
-  onToggleShowSystemMessages: (value: boolean) => void;
-  onStartNewConversation: () => void;
-  memoryAdminEnabled: boolean;
-  onOpenMemoryAdmin: () => void;
-  onOpenBrowser: () => void;
-  onOpenToolsPanel: () => void;
-  onOpenConfigAdmin: () => void;
+  onOpenControlPanel: () => void;
   /** Currently active personal token (empty string = none). */
   personalToken: string;
   onSetPersonalToken: (token: string) => void;
@@ -132,18 +112,7 @@ interface AppHeaderProps {
 export function AppHeader({
   appInfo,
   status,
-  showAll,
-  onToggleShowAll,
-  showAccordionAndSubAgentMessages,
-  onToggleShowAccordionAndSubAgentMessages,
-  showSystemMessages,
-  onToggleShowSystemMessages,
-  onStartNewConversation,
-  memoryAdminEnabled,
-  onOpenMemoryAdmin,
-  onOpenBrowser,
-  onOpenToolsPanel,
-  onOpenConfigAdmin,
+  onOpenControlPanel,
   personalToken,
   onSetPersonalToken,
   passkeyEnabled = false,
@@ -219,69 +188,13 @@ export function AppHeader({
         )}
       </div>
       <div className={styles.statusRow} role="status" aria-label={`WebSocket: ${STATUS_LABELS[status]}`}>
-        <Switch
-          checked={showAll}
-          onChange={(_, data) => onToggleShowAll(data.checked)}
-          label={<Text size={100} className={styles.switchLabel}>All conversations</Text>}
-        />
-        <Switch
-          checked={showAccordionAndSubAgentMessages}
-          onChange={(_, data) => onToggleShowAccordionAndSubAgentMessages(data.checked)}
-          label={<Text size={100} className={styles.switchLabel}>Agent processing details</Text>}
-        />
-        <Switch
-          checked={showSystemMessages}
-          onChange={(_, data) => onToggleShowSystemMessages(data.checked)}
-          label={<Text size={100} className={styles.switchLabel}>System messages</Text>}
-        />
-        <Button
-          appearance="secondary"
-          icon={<ArrowReset24Regular />}
-          onClick={onStartNewConversation}
-          size="small"
-        >
-          Start new conversation
-        </Button>
-        <Tooltip content="Browse conversation history" relationship="label">
+        <Tooltip content="Control panel" relationship="label">
           <Button
             appearance="subtle"
-            icon={<Chat24Regular />}
-            onClick={onOpenBrowser}
+            icon={<Settings24Regular />}
+            onClick={onOpenControlPanel}
             style={{ color: tokens.colorNeutralForegroundOnBrand }}
-            aria-label="Browse conversation history"
-          />
-        </Tooltip>
-        <Tooltip content="Tools &amp; agents reference" relationship="label">
-          <Button
-            appearance="subtle"
-            icon={<Wrench24Regular />}
-            onClick={onOpenToolsPanel}
-            style={{ color: tokens.colorNeutralForegroundOnBrand }}
-            aria-label="Tools and agents reference"
-          />
-        </Tooltip>
-        <Tooltip content="Config editor" relationship="label">
-          <Button
-            appearance="subtle"
-            icon={<DocumentEdit24Regular />}
-            onClick={onOpenConfigAdmin}
-            style={{ color: tokens.colorNeutralForegroundOnBrand }}
-            aria-label="Config editor"
-          />
-        </Tooltip>
-        <Tooltip
-          content={memoryAdminEnabled
-            ? "Open memory admin"
-            : "Memory tool unavailable"}
-          relationship="label"
-        >
-          <Button
-            appearance="subtle"
-            icon={<Brain24Regular />}
-            onClick={onOpenMemoryAdmin}
-            disabled={!memoryAdminEnabled}
-            style={{ color: tokens.colorNeutralForegroundOnBrand }}
-            aria-label="Open memory admin"
+            aria-label="Open control panel"
           />
         </Tooltip>
         <Popover open={popoverOpen} onOpenChange={(_, data) => { if (!data.open) setPopoverOpen(false); }}>
