@@ -224,6 +224,7 @@ export class MemoryService {
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("foreign_keys = ON");
     this.initSchema();
+    this.migrateStoragePathsToRelative();
 
     if (this.shouldGenerateEmbeddings()) {
       this.embeddingRegistry.get(this.settings.embeddingModelKey);
@@ -480,11 +481,12 @@ export class MemoryService {
 
   deleteMemory(input: DeleteMemoryInput): DeleteMemoryResult {
     const row = this.resolveMemoryRow(input);
+    const resolvedStoragePath = this.resolveStoragePath(row.storage_path);
 
     this.db.prepare("DELETE FROM memories WHERE id = ?").run(row.id);
 
     try {
-      fs.rmSync(row.storage_path, { force: true });
+      fs.rmSync(resolvedStoragePath, { force: true });
     } catch {
       // Ignore filesystem cleanup errors — DB deletion is authoritative.
     }
@@ -492,7 +494,7 @@ export class MemoryService {
     return {
       deleted: true,
       memoryId: row.id,
-      storagePath: row.storage_path,
+      storagePath: resolvedStoragePath,
     };
   }
 
@@ -586,10 +588,66 @@ export class MemoryService {
     return path.resolve(this.configDir, "..", targetPath);
   }
 
+  private resolveStoragePath(storagePath: string): string {
+    if (path.isAbsolute(storagePath)) return storagePath;
+    return path.resolve(this.storageDir, storagePath);
+  }
+
+  private toStoredStoragePath(storagePath: string): string {
+    const resolvedPath = this.resolveStoragePath(storagePath);
+    const relativePath = path.relative(this.storageDir, resolvedPath);
+
+    if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
+      return relativePath;
+    }
+
+    return resolvedPath;
+  }
+
+  private buildStoragePathCandidates(storagePath: string): string[] {
+    const candidates = new Set<string>();
+
+    if (storagePath.trim()) {
+      candidates.add(storagePath);
+    }
+
+    if (path.isAbsolute(storagePath)) {
+      candidates.add(path.normalize(storagePath));
+      candidates.add(this.toStoredStoragePath(storagePath));
+      return Array.from(candidates);
+    }
+
+    candidates.add(path.resolve(storagePath));
+    candidates.add(path.resolve(this.storageDir, storagePath));
+    candidates.add(this.toStoredStoragePath(storagePath));
+
+    return Array.from(candidates);
+  }
+
+  private migrateStoragePathsToRelative(): void {
+    const rows = this.db
+      .prepare<[], { id: string; storage_path: string }>(
+        "SELECT id, storage_path FROM memories",
+      )
+      .all();
+
+    const update = this.db.prepare(
+      "UPDATE memories SET storage_path = ? WHERE id = ?",
+    );
+
+    for (const row of rows) {
+      const relativePath = this.toStoredStoragePath(row.storage_path);
+      if (relativePath !== row.storage_path) {
+        update.run(relativePath, row.id);
+      }
+    }
+  }
+
   private resolveMemoryDocument(reference: MemoryReference): MemoryDocument {
     const row = this.resolveMemoryRow(reference);
-    const raw = fs.readFileSync(row.storage_path, "utf8");
-    const parsed = parseMemoryDocument(raw, row.storage_path);
+    const resolvedStoragePath = this.resolveStoragePath(row.storage_path);
+    const raw = fs.readFileSync(resolvedStoragePath, "utf8");
+    const parsed = parseMemoryDocument(raw, resolvedStoragePath);
 
     const document: MemoryDocument = {
       ...parsed,
@@ -617,11 +675,13 @@ export class MemoryService {
       throw new Error("memory reference requires one of memoryId, slug, or storagePath");
     }
 
-    const normalizedStoragePath = reference.storagePath
-      ? path.isAbsolute(reference.storagePath)
-        ? reference.storagePath
-        : path.resolve(reference.storagePath)
-      : undefined;
+    const storagePathCandidates = reference.storagePath
+      ? this.buildStoragePathCandidates(reference.storagePath)
+      : [];
+
+    const storagePathSql = storagePathCandidates.length
+      ? `OR storage_path IN (${storagePathCandidates.map(() => "?").join(", ")})`
+      : "";
 
     const row = this.db
       .prepare(
@@ -630,7 +690,7 @@ export class MemoryService {
           FROM memories
           WHERE (? IS NOT NULL AND id = ?)
              OR (? IS NOT NULL AND slug = ?)
-             OR (? IS NOT NULL AND storage_path = ?)
+             ${storagePathSql}
           LIMIT 1
         `,
       )
@@ -639,8 +699,7 @@ export class MemoryService {
         reference.memoryId ?? null,
         reference.slug ?? null,
         reference.slug ?? null,
-        normalizedStoragePath ?? null,
-        normalizedStoragePath ?? null,
+        ...storagePathCandidates,
       ) as MemoryRow | undefined;
 
     if (!row) {
@@ -716,7 +775,7 @@ export class MemoryService {
         JSON.stringify(document.tags),
         document.status,
         document.retentionTier,
-        document.storagePath,
+        this.toStoredStoragePath(document.storagePath),
         document.createdAt,
         document.updatedAt,
         document.revision,
@@ -844,7 +903,7 @@ export class MemoryService {
       tags: parseTags(row.tags_json),
       status: row.status,
       retentionTier: row.retention_tier,
-      storagePath: row.storage_path,
+      storagePath: this.resolveStoragePath(row.storage_path),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       revision: row.revision,
@@ -862,7 +921,7 @@ export class MemoryService {
       tags: parseTags(row.tags_json),
       status: row.status,
       retentionTier: row.retention_tier,
-      storagePath: row.storage_path,
+      storagePath: this.resolveStoragePath(row.storage_path),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       revision: row.revision,

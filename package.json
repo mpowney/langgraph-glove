@@ -11,6 +11,7 @@
     "memory:smoke": "bash scripts/memory-smoke.sh",
     "memory:inspect": "node scripts/inspect-memories.cjs",
     "memory:inspect:personal": "node scripts/inspect-memories.cjs --personal",
+    "memory:fix-paths": "node scripts/fix-memory-storage-paths.cjs",
     "tools:dev:tool": "bash scripts/tools-bg.sh --mode dev",
     "tools:bg": "bash scripts/tools-bg.sh --mode bg",
     "tools:bg:tool": "bash scripts/tools-bg.sh --mode bg",
