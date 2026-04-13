@@ -231,6 +231,19 @@ export class MemoryService {
     }
   }
 
+  validateEmbeddingsModel(): void {
+    if (this.shouldGenerateEmbeddings()) {
+      try {
+        this.embeddingRegistry.get(this.settings.embeddingModelKey);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(
+          `Embeddings model "${this.settings.embeddingModelKey}" is not available: ${message}`,
+        );
+      }
+    }
+  }
+
   getConfig(): Record<string, unknown> {
     return {
       enabled: this.settings.enabled,
