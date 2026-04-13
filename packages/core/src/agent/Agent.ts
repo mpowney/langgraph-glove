@@ -358,6 +358,8 @@ export class GloveAgent {
   private readonly conversationContext = new Map<string, ConversationTokenEntry>();
   /** Track conversations that have been stopped by "!stop" command. */
   private readonly stoppedConversations = new Set<string>();
+  /** Track conversations with an active run (stream or invoke in progress). */
+  private readonly activeConversations = new Set<string>();
 
   /**
    * Create a GloveAgent from a pre-compiled LangGraph state graph.
@@ -408,17 +410,28 @@ export class GloveAgent {
         });
       });
 
-      // Register command handler for special commands like \"!stop\"
+      // Register command handler for special commands like "!stop"
       channel.setCommandHandler(async (command, conversationId) => {
         if (command.trim().toLowerCase() === "!stop") {
-          this.stopConversation(conversationId);
-          await channel
-            .sendMessage({
-              conversationId,
-              role: "agent",
-              text: "Processing stopped.",
-            })
-            .catch((e: unknown) => logger.error(`Failed to send stop confirmation on channel "${channel.name}"`, e));
+          const wasActive = this.activeConversations.has(conversationId);
+          if (wasActive) {
+            this.stopConversation(conversationId);
+            await channel
+              .sendMessage({
+                conversationId,
+                role: "agent",
+                text: "Processing stopped.",
+              })
+              .catch((e: unknown) => logger.error(`Failed to send stop confirmation on channel "${channel.name}"`, e));
+          } else {
+            await channel
+              .sendMessage({
+                conversationId,
+                role: "agent",
+                text: "No active processing to stop.",
+              })
+              .catch((e: unknown) => logger.error(`Failed to send stop response on channel "${channel.name}"`, e));
+          }
         }
       });
 
@@ -429,7 +442,8 @@ export class GloveAgent {
 
   /**
    * Stop processing for a specific conversation (triggered by "!stop" command).
-   * This will break out of the streaming loop and return partial results.
+   * Only has effect if the conversation has an active run.
+   * For streaming runs, this will break out of the streaming loop.
    */
   stopConversation(conversationId: string): void {
     this.stoppedConversations.add(conversationId);
@@ -982,6 +996,7 @@ export class GloveAgent {
         }
       }
 
+      this.activeConversations.add(message.conversationId);
       try {
         await sourceChannel.sendStream(message.conversationId, teedStream());
 
@@ -1021,22 +1036,31 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: fallbackResponse, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast fallback response to channel "${ch.name}"`, e));
         }
+      } finally {
+        this.activeConversations.delete(message.conversationId);
+        this.stoppedConversations.delete(message.conversationId);
       }
     } else {
-      const response = await this.invoke(
-        message.text,
-        message.conversationId,
-        callbacks,
-        personalToken,
-        privilegeGrantId,
-        runtimeContext,
-      );
-      await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
+      this.activeConversations.add(message.conversationId);
+      try {
+        const response = await this.invoke(
+          message.text,
+          message.conversationId,
+          callbacks,
+          personalToken,
+          privilegeGrantId,
+          runtimeContext,
+        );
+        await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
 
-      for (const ch of mirrorTargets) {
-        await ch
-          .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
-          .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
+        for (const ch of mirrorTargets) {
+          await ch
+            .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
+            .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
+        }
+      } finally {
+        this.activeConversations.delete(message.conversationId);
+        this.stoppedConversations.delete(message.conversationId);
       }
     }
   }
