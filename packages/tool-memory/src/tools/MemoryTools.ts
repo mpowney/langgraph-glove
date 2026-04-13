@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import type { ToolHandler, ToolMetadata } from "@langgraph-glove/tool-server";
 import { MemoryService } from "../MemoryService";
 
@@ -14,16 +16,36 @@ function redactParams(params: Record<string, unknown>): Record<string, unknown> 
   return redacted;
 }
 
+function getLogFilePath(): string {
+  return process.env["LOG_FILE"] ?? path.join(process.cwd(), "langgraph-glove.log");
+}
+
+function appendErrorToLogFile(name: string, message: string, params: Record<string, unknown>, error: unknown): void {
+  const logFilePath = getLogFilePath();
+  const timestamp = new Date().toISOString().replace("T", " ").slice(0, 23);
+  const stack = error instanceof Error && error.stack ? `\n${error.stack}` : "";
+  const line = `${timestamp} ERROR [tool-memory] ${name} failed message=${JSON.stringify(message)} params=${JSON.stringify(params)}${stack}\n`;
+
+  try {
+    fs.mkdirSync(path.dirname(logFilePath), { recursive: true });
+    fs.appendFileSync(logFilePath, line, "utf8");
+  } catch (writeError) {
+    process.stderr.write(`[tool-memory] failed to write error log file: ${String(writeError)}\n`);
+  }
+}
+
 function withLoggedToolError(name: string, handler: ToolHandler): ToolHandler {
   return async (params: Record<string, unknown>) => {
     try {
       return await handler(params);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      const redactedParams = redactParams(params);
       console.error(`[tool-memory] ${name} failed`, {
         message,
-        params: redactParams(params),
+        params: redactedParams,
       });
+      appendErrorToLogFile(name, message, redactedParams, error);
       throw error;
     }
   };
