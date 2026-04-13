@@ -188,15 +188,6 @@ export function AppHeader({
         )}
       </div>
       <div className={styles.statusRow} role="status" aria-label={`WebSocket: ${STATUS_LABELS[status]}`}>
-        <Tooltip content="Control panel" relationship="label">
-          <Button
-            appearance="subtle"
-            icon={<Settings24Regular />}
-            onClick={onOpenControlPanel}
-            style={{ color: tokens.colorNeutralForegroundOnBrand }}
-            aria-label="Open control panel"
-          />
-        </Tooltip>
         <Popover open={popoverOpen} onOpenChange={(_, data) => { if (!data.open) setPopoverOpen(false); }}>
           <PopoverTrigger disableButtonEnhancement>
             <Tooltip
@@ -277,6 +268,15 @@ export function AppHeader({
         <Text size={100} className={styles.statusLabel}>
           {STATUS_LABELS[status]}
         </Text>
+        <Tooltip content="Control panel" relationship="label">
+          <Button
+            appearance="subtle"
+            icon={<Settings24Regular />}
+            onClick={onOpenControlPanel}
+            style={{ color: tokens.colorNeutralForegroundOnBrand }}
+            aria-label="Open control panel"
+          />
+        </Tooltip>
       </div>
     </header>
   );
