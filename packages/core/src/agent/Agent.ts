@@ -410,7 +410,7 @@ export class GloveAgent {
 
       // Register command handler for special commands like \"!stop\"
       channel.setCommandHandler(async (command, conversationId) => {
-        if (command.toLowerCase() === "!stop") {
+        if (command.trim().toLowerCase() === "!stop") {
           this.stopConversation(conversationId);
           await channel
             .sendMessage({
