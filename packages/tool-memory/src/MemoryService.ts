@@ -262,7 +262,7 @@ export class MemoryService {
     const now = new Date().toISOString();
     const id = randomUUID();
     const slug = uniqueSlug(slugify(title), id);
-    const storagePath = path.join(this.storageDir, `${slug}.md`);
+    const storagePath = `${slug}.md`;
 
     const document: MemoryDocument = {
       id,
@@ -482,6 +482,7 @@ export class MemoryService {
   deleteMemory(input: DeleteMemoryInput): DeleteMemoryResult {
     const row = this.resolveMemoryRow(input);
     const resolvedStoragePath = this.resolveStoragePath(row.storage_path);
+    const relativeStoragePath = this.toStoredStoragePath(row.storage_path);
 
     this.db.prepare("DELETE FROM memories WHERE id = ?").run(row.id);
 
@@ -494,7 +495,7 @@ export class MemoryService {
     return {
       deleted: true,
       memoryId: row.id,
-      storagePath: resolvedStoragePath,
+      storagePath: relativeStoragePath,
     };
   }
 
@@ -597,11 +598,11 @@ export class MemoryService {
     const resolvedPath = this.resolveStoragePath(storagePath);
     const relativePath = path.relative(this.storageDir, resolvedPath);
 
-    if (relativePath && !relativePath.startsWith("..") && !path.isAbsolute(relativePath)) {
-      return relativePath;
+    if (!relativePath) {
+      return path.basename(resolvedPath);
     }
 
-    return resolvedPath;
+    return relativePath;
   }
 
   private buildStoragePathCandidates(storagePath: string): string[] {
@@ -646,11 +647,13 @@ export class MemoryService {
   private resolveMemoryDocument(reference: MemoryReference): MemoryDocument {
     const row = this.resolveMemoryRow(reference);
     const resolvedStoragePath = this.resolveStoragePath(row.storage_path);
+    const relativeStoragePath = this.toStoredStoragePath(row.storage_path);
     const raw = fs.readFileSync(resolvedStoragePath, "utf8");
     const parsed = parseMemoryDocument(raw, resolvedStoragePath);
 
     const document: MemoryDocument = {
       ...parsed,
+      storagePath: relativeStoragePath,
       personal: row.is_personal === 1,
     };
 
@@ -710,7 +713,8 @@ export class MemoryService {
   }
 
   private writeMemoryDocument(document: MemoryDocument, personalToken?: string): void {
-    fs.mkdirSync(path.dirname(document.storagePath), { recursive: true });
+    const resolvedStoragePath = this.resolveStoragePath(document.storagePath);
+    fs.mkdirSync(path.dirname(resolvedStoragePath), { recursive: true });
 
     const diskDocument: MemoryDocument = {
       ...document,
@@ -726,7 +730,7 @@ export class MemoryService {
         : document.content,
     };
 
-    fs.writeFileSync(document.storagePath, serializeMemoryDocument(diskDocument), "utf8");
+    fs.writeFileSync(resolvedStoragePath, serializeMemoryDocument(diskDocument), "utf8");
   }
 
   private upsertMemoryRow(document: MemoryDocument): void {
@@ -903,7 +907,7 @@ export class MemoryService {
       tags: parseTags(row.tags_json),
       status: row.status,
       retentionTier: row.retention_tier,
-      storagePath: this.resolveStoragePath(row.storage_path),
+      storagePath: this.toStoredStoragePath(row.storage_path),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       revision: row.revision,
@@ -921,7 +925,7 @@ export class MemoryService {
       tags: parseTags(row.tags_json),
       status: row.status,
       retentionTier: row.retention_tier,
-      storagePath: this.resolveStoragePath(row.storage_path),
+      storagePath: this.toStoredStoragePath(row.storage_path),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       revision: row.revision,

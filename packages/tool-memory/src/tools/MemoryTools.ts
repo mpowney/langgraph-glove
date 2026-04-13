@@ -61,7 +61,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           properties: {
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
-            storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            storagePath: { type: "string", description: "Path to the markdown file relative to the configured memories directory." },
             content: { type: "string", description: "Markdown content to append." },
             personalToken: {
               type: "string",
@@ -89,7 +89,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           properties: {
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
-            storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            storagePath: { type: "string", description: "Path to the markdown file relative to the configured memories directory." },
             title: { type: "string", description: "Replacement title." },
             content: { type: "string", description: "Replacement markdown content." },
             scope: { type: "string", description: "Replacement logical scope." },
@@ -165,7 +165,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           properties: {
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
-            storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            storagePath: { type: "string", description: "Path to the markdown file relative to the configured memories directory." },
             personalToken: {
               type: "string",
               description: "Personal token required when retrieving personal memory content.",
@@ -210,7 +210,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           properties: {
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
-            storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            storagePath: { type: "string", description: "Path to the markdown file relative to the configured memories directory." },
             personalToken: {
               type: "string",
               description: "Personal token used when reindexing personal memory content.",
@@ -235,7 +235,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           properties: {
             memoryId: { type: "string", description: "Stable memory id." },
             slug: { type: "string", description: "Slug derived from the title." },
-            storagePath: { type: "string", description: "Absolute path to the markdown file." },
+            storagePath: { type: "string", description: "Path to the markdown file relative to the configured memories directory." },
           },
         },
       },

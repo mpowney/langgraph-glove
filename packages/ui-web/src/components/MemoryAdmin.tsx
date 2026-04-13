@@ -447,7 +447,7 @@ export function MemoryAdmin({
                   <div className={styles.readOnlyBlock}>
                     <Text className={styles.readOnlyLine}>id: {selectedMemory.id}</Text>
                     <Text className={styles.readOnlyLine}>slug: {selectedMemory.slug}</Text>
-                    <Text className={styles.readOnlyLine}>storagePath: {selectedMemory.storagePath}</Text>
+                    <Text className={styles.readOnlyLine}>storagePath (relative): {selectedMemory.storagePath}</Text>
                     <Text className={styles.readOnlyLine}>createdAt: {selectedMemory.createdAt}</Text>
                     <Text className={styles.readOnlyLine}>updatedAt: {selectedMemory.updatedAt}</Text>
                     <Text className={styles.readOnlyLine}>revision: {selectedMemory.revision}</Text>
