@@ -22,6 +22,7 @@ import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { ConfigAdmin } from "./components/ConfigAdmin";
 import { AuthGate } from "./components/AuthGate";
+import { ControlPanel } from "./components/ControlPanel";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
 import { createUuid } from "./uuid";
@@ -107,6 +108,7 @@ function App() {
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [configAdminOpen, setConfigAdminOpen] = useState(false);
+  const [controlPanelOpen, setControlPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [pendingConversationSwitchId, setPendingConversationSwitchId] = useState<string | null>(null);
 
@@ -305,18 +307,7 @@ function App() {
         <AppHeader
           appInfo={appInfo}
           status={status}
-          showAll={showAll}
-          onToggleShowAll={setShowAllPersisted}
-          showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
-          onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
-          showSystemMessages={showSystemMessages}
-          onToggleShowSystemMessages={setShowSystemMessagesPersisted}
-          onStartNewConversation={handleStartNewConversation}
-          memoryAdminEnabled={memoryAvailable}
-          onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
-          onOpenBrowser={() => setBrowserOpen(true)}
-          onOpenToolsPanel={() => setToolsPanelOpen(true)}
-          onOpenConfigAdmin={() => setConfigAdminOpen(true)}
+          onOpenControlPanel={() => setControlPanelOpen(true)}
           personalToken={personalToken}
           onSetPersonalToken={setPersonalToken}
           passkeyEnabled={auth.passkeyRegistered}
@@ -375,6 +366,22 @@ function App() {
           onRegisterPrivilegeToken={registerPrivilegeToken}
           authError={auth.error}
           passkeyEnabled={auth.passkeyRegistered}
+        />
+        <ControlPanel
+          open={controlPanelOpen}
+          onClose={() => setControlPanelOpen(false)}
+          showAll={showAll}
+          onToggleShowAll={setShowAllPersisted}
+          showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
+          onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
+          showSystemMessages={showSystemMessages}
+          onToggleShowSystemMessages={setShowSystemMessagesPersisted}
+          onStartNewConversation={handleStartNewConversation}
+          onOpenBrowser={() => setBrowserOpen(true)}
+          onOpenToolsPanel={() => setToolsPanelOpen(true)}
+          onOpenConfigAdmin={() => setConfigAdminOpen(true)}
+          onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
+          memoryAdminEnabled={memoryAvailable}
         />
       </div>
       <Dialog
