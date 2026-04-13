@@ -6,6 +6,29 @@ export interface MemoryToolDefinition {
   handler: ToolHandler;
 }
 
+function redactParams(params: Record<string, unknown>): Record<string, unknown> {
+  const redacted = { ...params };
+  if ("personalToken" in redacted) {
+    redacted.personalToken = "[REDACTED]";
+  }
+  return redacted;
+}
+
+function withLoggedToolError(name: string, handler: ToolHandler): ToolHandler {
+  return async (params: Record<string, unknown>) => {
+    try {
+      return await handler(params);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`[tool-memory] ${name} failed`, {
+        message,
+        params: redactParams(params),
+      });
+      throw error;
+    }
+  };
+}
+
 export function createMemoryTools(memoryService: MemoryService): MemoryToolDefinition[] {
   return [
     {
@@ -41,7 +64,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           required: ["title", "content"],
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.createMemory({
+      handler: withLoggedToolError("memory_create", async (params: Record<string, unknown>) => memoryService.createMemory({
         title: params["title"] as string,
         content: params["content"] as string,
         scope: params["scope"] as string | undefined,
@@ -49,7 +72,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         retentionTier: params["retentionTier"] as "hot" | "warm" | "cold" | undefined,
         personal: params["personal"] as boolean | undefined,
         personalToken: params["personalToken"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -71,13 +94,13 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           required: ["content"],
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.appendMemory({
+      handler: withLoggedToolError("memory_append", async (params: Record<string, unknown>) => memoryService.appendMemory({
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
         content: params["content"] as string,
         personalToken: params["personalToken"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -115,7 +138,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           },
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.updateMemory({
+      handler: withLoggedToolError("memory_update", async (params: Record<string, unknown>) => memoryService.updateMemory({
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
@@ -127,7 +150,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
         status: params["status"] as string | undefined,
         personal: params["personal"] as boolean | undefined,
         personalToken: params["personalToken"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -148,12 +171,12 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           required: ["query"],
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.searchMemories({
+      handler: withLoggedToolError("memory_search", async (params: Record<string, unknown>) => memoryService.searchMemories({
         query: params["query"] as string,
         scope: params["scope"] as string | undefined,
         limit: params["limit"] as number | undefined,
         personalToken: params["personalToken"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -173,12 +196,12 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           },
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.getMemory({
+      handler: withLoggedToolError("memory_get", async (params: Record<string, unknown>) => memoryService.getMemory({
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
         personalToken: params["personalToken"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -194,11 +217,11 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           },
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.listMemories({
+      handler: withLoggedToolError("memory_list", async (params: Record<string, unknown>) => memoryService.listMemories({
         scope: params["scope"] as string | undefined,
         tag: params["tag"] as string | undefined,
         limit: params["limit"] as number | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -218,12 +241,12 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           },
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.reindexMemory({
+      handler: withLoggedToolError("memory_reindex", async (params: Record<string, unknown>) => memoryService.reindexMemory({
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
         personalToken: params["personalToken"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -239,11 +262,11 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           },
         },
       },
-      handler: async (params: Record<string, unknown>) => memoryService.deleteMemory({
+      handler: withLoggedToolError("memory_delete", async (params: Record<string, unknown>) => memoryService.deleteMemory({
         memoryId: params["memoryId"] as string | undefined,
         slug: params["slug"] as string | undefined,
         storagePath: params["storagePath"] as string | undefined,
-      }),
+      })),
     },
     {
       metadata: {
@@ -255,7 +278,7 @@ export function createMemoryTools(memoryService: MemoryService): MemoryToolDefin
           properties: {},
         },
       },
-      handler: async () => memoryService.getConfig(),
+      handler: withLoggedToolError("memory_config", async () => memoryService.getConfig()),
     },
   ];
 }
