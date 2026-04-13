@@ -175,7 +175,7 @@ export function ControlPanel({
               <CompoundButton
                 appearance="subtle"
                 icon={<Chat24Regular />}
-                secondaryContent="Browse and switch conversation history"
+                secondaryContent="Browse conversation history"
                 onClick={() => {
                   onClose();
                   onOpenBrowser();
