@@ -24,3 +24,4 @@ packages/tool-macos-control/.swiftpm/
 .tmp*
 
 langgraph-glove-backup-*.tgz
+package-lock.json

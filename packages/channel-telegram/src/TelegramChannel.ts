@@ -34,7 +34,6 @@ export class TelegramChannel extends Channel {
   readonly supportsStreaming = false;
 
   private bot: Bot;
-  private handler?: MessageHandler;
   private readonly allowedUserIds: Set<number> | null;
 
   constructor(private readonly telegramConfig: TelegramChannelConfig) {
@@ -50,8 +49,6 @@ export class TelegramChannel extends Channel {
 
   async start(): Promise<void> {
     this.bot.on("message:text", async (ctx: Context) => {
-      if (!this.handler) return;
-
       const from = ctx.from;
       const chat = ctx.chat;
       const text = ctx.message?.text;
@@ -74,7 +71,7 @@ export class TelegramChannel extends Channel {
       logger.debug(`Message from ${message.sender} in chat ${chat.id}`);
 
       try {
-        await this.handler(message);
+        await this.processIncomingMessage(message);
       } catch (err) {
         logger.error("Error handling Telegram message", err);
         await ctx.reply("Sorry, an error occurred processing your message.").catch(() => {});
@@ -93,7 +90,7 @@ export class TelegramChannel extends Channel {
   }
 
   onMessage(handler: MessageHandler): void {
-    this.handler = handler;
+    this.setMessageHandler(handler);
   }
 
   async sendMessage(message: OutgoingMessage): Promise<void> {

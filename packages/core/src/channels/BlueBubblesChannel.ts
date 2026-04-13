@@ -107,7 +107,6 @@ export class BlueBubblesChannel extends Channel {
   readonly name = "bluebubbles";
   readonly supportsStreaming = false;
 
-  private handler?: MessageHandler;
   private app: Express;
   private webhookServer?: http.Server;
   private readonly serverUrl: string;
@@ -182,7 +181,7 @@ export class BlueBubblesChannel extends Channel {
   }
 
   onMessage(handler: MessageHandler): void {
-    this.handler = handler;
+    this.setMessageHandler(handler);
   }
 
   /**
@@ -247,7 +246,7 @@ export class BlueBubblesChannel extends Channel {
     };
 
     try {
-      await this.handler?.(message);
+      await this.processIncomingMessage(message);
     } catch (err) {
       console.error("[BlueBubblesChannel] Error handling message:", err);
       await this.sendMessage({

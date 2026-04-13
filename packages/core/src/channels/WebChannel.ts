@@ -163,7 +163,6 @@ export class WebChannel extends Channel {
   readonly name = "web";
   readonly supportsStreaming = true;
 
-  private handler?: MessageHandler;
   private app: Express;
   private httpServer?: http.Server;
   private wss?: WebSocketServer;
@@ -296,7 +295,7 @@ export class WebChannel extends Channel {
   }
 
   onMessage(handler: MessageHandler): void {
-    this.handler = handler;
+    this.setMessageHandler(handler);
   }
 
   /** Sends a complete message to all WebSocket clients that share the conversationId. */
@@ -405,7 +404,6 @@ export class WebChannel extends Channel {
       };
 
       if (parsed.type === "context") {
-        if (!this.handler) return;
 
         const contextMessage: IncomingMessage = {
           id: uuidv4(),
@@ -419,12 +417,11 @@ export class WebChannel extends Channel {
           },
         };
 
-        await this.handler(contextMessage);
+        await this.processIncomingMessage(contextMessage);
         return;
       }
 
-      if (!parsed.text || !this.handler) return;
-
+      if (!parsed.text) return;
 
       const message: IncomingMessage = {
         id: uuidv4(),
@@ -439,7 +436,7 @@ export class WebChannel extends Channel {
       (ws as WebSocket & { conversationId?: string }).conversationId = parsed.conversationId;
 
       try {
-        await this.handler(message);
+        await this.processIncomingMessage(message);
       } catch (err) {
         const errorMsg: ServerMessage = {
           type: "error",
