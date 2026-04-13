@@ -2,6 +2,14 @@ import { EventEmitter } from "node:events";
 import type { ChannelEntry } from "@langgraph-glove/config";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
+/**
+ * Check if the given text is a "!stop" command (case-insensitive, whitespace-trimmed).
+ * Used by all channels to detect stop requests.
+ */
+export function isStopCommand(text: string): boolean {
+  return text.toLowerCase().trim() === "!stop";
+}
+
 /** Returns a channel entry by key from channels.json data. */
 export function getChannelEntryByKey(
   channels: Record<string, ChannelEntry>,
@@ -68,6 +76,9 @@ export interface OutgoingMessage {
   toolEventMetadata?: ToolEventMetadata;
 }
 
+/** Callback invoked by a channel when a command (e.g., "!stop") is detected. */
+export type CommandHandler = (command: string, conversationId: string) => Promise<void>;
+
 /** Callback invoked by the channel for every incoming message. */
 export type MessageHandler = (message: IncomingMessage) => Promise<void>;
 
@@ -119,6 +130,12 @@ export abstract class Channel extends EventEmitter {
   /** When `true`, this channel receives runtime system events. */
   readonly receiveSystem: boolean;
 
+  /** Optional handler for commands like \"!stop\". Set by the agent. */
+  protected commandHandler?: CommandHandler;
+
+  /** The actual message handler for processing incoming messages. */
+  private handler?: MessageHandler;
+
   protected constructor(config: ChannelConfig = {}) {
     super();
     this.receiveAgentProcessing = config.receiveAgentProcessing ?? false;
@@ -145,6 +162,39 @@ export abstract class Channel extends EventEmitter {
    * Called once by `GloveAgent.start()` before `start()` is invoked.
    */
   abstract onMessage(handler: MessageHandler): void;
+
+  /**
+   * Set the command handler (optional).
+   * Called by the agent to register a handler for special commands like \"!stop\".
+   */
+  setCommandHandler(handler: CommandHandler): void {
+    this.commandHandler = handler;
+  }
+
+  /**
+   * Protected helper method for subclasses to process incoming messages.
+   * Automatically checks for "!stop" command and routes accordingly.
+   * Subclasses should call this instead of directly accessing this.handler.
+   */
+  protected async processIncomingMessage(message: IncomingMessage): Promise<void> {
+    // Check for "!stop" command (case-insensitive, whitespace-trimmed)
+    if (isStopCommand(message.text)) {
+      if (this.commandHandler) {
+        await this.commandHandler(message.text, message.conversationId);
+      }
+      return;
+    }
+
+    // Otherwise, pass to the normal message handler
+    if (this.handler) {
+      await this.handler(message);
+    }
+  }
+
+  /** Set the message handler. Called by GloveAgent.start(). */
+  protected setMessageHandler(handler: MessageHandler): void {
+    this.handler = handler;
+  }
 
   /**
    * Deliver a complete response message to the user.

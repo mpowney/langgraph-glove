@@ -356,6 +356,8 @@ export class GloveAgent {
   private readonly channels: Channel[] = [];
   /** Server-side per-conversation token context, keyed by conversationId. */
   private readonly conversationContext = new Map<string, ConversationTokenEntry>();
+  /** Track conversations that have been stopped by "!stop" command. */
+  private readonly stoppedConversations = new Set<string>();
 
   /**
    * Create a GloveAgent from a pre-compiled LangGraph state graph.
@@ -406,9 +408,31 @@ export class GloveAgent {
         });
       });
 
+      // Register command handler for special commands like \"!stop\"
+      channel.setCommandHandler(async (command, conversationId) => {
+        if (command.toLowerCase() === "!stop") {
+          this.stopConversation(conversationId);
+          await channel
+            .sendMessage({
+              conversationId,
+              role: "agent",
+              text: "Processing stopped.",
+            })
+            .catch((e: unknown) => logger.error(`Failed to send stop confirmation on channel "${channel.name}"`, e));
+        }
+      });
+
       await channel.start();
       logger.info(`Channel started: ${channel.name}`);
     }
+  }
+
+  /**
+   * Stop processing for a specific conversation (triggered by "!stop" command).
+   * This will break out of the streaming loop and return partial results.
+   */
+  stopConversation(conversationId: string): void {
+    this.stoppedConversations.add(conversationId);
   }
 
   /** Stop all channels and release resources. */
@@ -564,6 +588,11 @@ export class GloveAgent {
     for await (const [chunk, metadata] of streamResult as AsyncIterable<
       [unknown, { langgraph_node?: string }]
     >) {
+      // Check if this conversation has been stopped via "!stop" command
+      if (this.stoppedConversations.has(conversationId)) {
+        this.stoppedConversations.delete(conversationId);
+        break;
+      }
       if (chunk instanceof AIMessageChunk) {
         appendToolArgsFromAdditionalKwargs(chunk);
 

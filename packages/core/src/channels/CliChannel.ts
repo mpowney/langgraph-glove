@@ -38,7 +38,6 @@ export class CliChannel extends Channel {
   readonly supportsStreaming = true;
 
   private rl?: readline.Interface;
-  private handler?: MessageHandler;
   private readonly conversationId = uuidv4();
   /** Prevent overlapping responses when the user types quickly. */
   private processing = false;
@@ -68,7 +67,7 @@ export class CliChannel extends Channel {
         process.exit(0);
       }
 
-      if (!text || !this.handler || this.processing) {
+      if (!text || this.processing) {
         if (!this.processing) process.stdout.write("You: ");
         return;
       }
@@ -85,7 +84,7 @@ export class CliChannel extends Channel {
       };
 
       try {
-        await this.handler(message);
+        await this.processIncomingMessage(message);
       } finally {
         this.processing = false;
         this.rl?.resume();
@@ -105,7 +104,7 @@ export class CliChannel extends Channel {
   }
 
   onMessage(handler: MessageHandler): void {
-    this.handler = handler;
+    this.setMessageHandler(handler);
   }
 
   async sendMessage(message: OutgoingMessage): Promise<void> {
