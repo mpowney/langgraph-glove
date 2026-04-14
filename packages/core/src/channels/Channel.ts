@@ -74,6 +74,12 @@ export interface OutgoingMessage {
    * key that invoked the tool so the UI can render inline parameter instructions.
    */
   toolEventMetadata?: ToolEventMetadata;
+  /**
+   * Optional tool name extracted from the message for easy UI access.
+   * Populated for `"tool-call"` and `"tool-result"` roles.
+   * Never impacts langgraph processing—purely for UI consumption.
+   */
+  toolName?: string;
 }
 
 /** Callback invoked by a channel when a command (e.g., "!stop") is detected. */

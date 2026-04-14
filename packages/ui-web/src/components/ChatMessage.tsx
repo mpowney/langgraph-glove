@@ -448,6 +448,12 @@ function isEmptyPayload(value: unknown): boolean {
   return false;
 }
 
+function isSpecificToolName(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 && normalized !== "tool";
+}
+
 function tryFormatJsonString(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return value;
@@ -588,18 +594,17 @@ export function ChatMessage({
         
 
   if (entry.role === "tool-call") {
-    let toolName = "tool";
+    let parsedToolName: string | undefined;
     let toolArgs = entry.content;
     try {
       const parsed = JSON.parse(entry.content) as unknown;
       if (isObject(parsed)) {
         const fn = isObject(parsed.function) ? parsed.function : undefined;
         if (typeof parsed.name === "string") {
-          toolName = parsed.name;
+          parsedToolName = parsed.name;
         } else if (fn && typeof fn.name === "string") {
-          toolName = fn.name;
+          parsedToolName = fn.name;
         }
-
         const candidates: unknown[] = [
           parsed.args,
           parsed.arguments,
@@ -622,6 +627,19 @@ export function ChatMessage({
     } catch {
       // leave raw content as-is
     }
+    const toolName = [
+      entry.toolName,
+      entry.toolEventMetadata?.tool?.name,
+      parsedToolName,
+    ].find((candidate) => isSpecificToolName(candidate)) ?? "tool";
+    const toolNameDebugSource = isSpecificToolName(entry.toolName)
+      ? "entry.toolName"
+      : (isSpecificToolName(entry.toolEventMetadata?.tool?.name)
+        ? "toolEventMetadata.tool.name"
+        : (isSpecificToolName(parsedToolName)
+          ? "payload.name"
+          : "fallback:tool"));
+    const toolNameDebugLine = `[debug tool-call] source=${toolNameDebugSource} entry=${entry.toolName ?? "<empty>"} meta=${entry.toolEventMetadata?.tool?.name ?? "<empty>"} payload=${parsedToolName ?? "<empty>"}`;
     return (
       <div className={styles.promptWrapper}>
         <div>
@@ -635,6 +653,7 @@ export function ChatMessage({
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
           >
+            <Text block className={styles.toolMetaDesc}>{toolNameDebugLine}</Text>
             {toolArgs}
             {entry.toolEventMetadata && (
               <ToolMetaSection meta={entry.toolEventMetadata} />
@@ -789,15 +808,28 @@ export function ChatMessage({
   }
 
   if (entry.role === "tool-result") {
-    let toolName: string | undefined;
+    let parsedToolName: string | undefined;
     let toolContent = entry.content;
     try {
       const parsed = JSON.parse(entry.content) as { name?: string; content?: string };
-      toolName = parsed.name;
+      parsedToolName = parsed.name;
       toolContent = parsed.content ?? toolContent;
     } catch {
       // leave raw content as-is
     }
+    const toolName = [
+      entry.toolName,
+      entry.toolEventMetadata?.tool?.name,
+      parsedToolName,
+    ].find((candidate) => isSpecificToolName(candidate));
+    const toolNameDebugSource = isSpecificToolName(entry.toolName)
+      ? "entry.toolName"
+      : (isSpecificToolName(entry.toolEventMetadata?.tool?.name)
+        ? "toolEventMetadata.tool.name"
+        : (isSpecificToolName(parsedToolName)
+          ? "payload.name"
+          : "none"));
+    const toolNameDebugLine = `[debug tool-result] source=${toolNameDebugSource} entry=${entry.toolName ?? "<empty>"} meta=${entry.toolEventMetadata?.tool?.name ?? "<empty>"} payload=${parsedToolName ?? "<empty>"}`;
     return (
       <div className={styles.promptWrapper}>
         <div>
@@ -811,6 +843,7 @@ export function ChatMessage({
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
           >
+            <Text block className={styles.toolMetaDesc}>{toolNameDebugLine}</Text>
             {toolContent}
             {entry.toolEventMetadata && (
               <ToolMetaSection meta={entry.toolEventMetadata} />

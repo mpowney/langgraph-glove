@@ -251,6 +251,7 @@ export function useWebSocket(
             receivedAt,
             checkpoint: msg.checkpoint,
             ...(msg.toolEventMetadata ? { toolEventMetadata: msg.toolEventMetadata } : {}),
+            ...(msg.toolName ? { toolName: msg.toolName } : {}),
           },
         ]);
       } else if (msg.type === "error") {

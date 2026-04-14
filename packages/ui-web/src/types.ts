@@ -55,6 +55,8 @@ export type ServerMessage =
       conversationId: string;
       checkpoint?: CheckpointMetadata;
       toolEventMetadata?: ToolEventMetadata;
+      /** Optional tool name extracted from the message for UI access. */
+      toolName?: string;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
@@ -118,6 +120,8 @@ export interface ChatEntry {
   checkpoint?: CheckpointMetadata;
   /** Tool parameter/schema metadata attached to tool-call and tool-result entries. */
   toolEventMetadata?: ToolEventMetadata;
+  /** Optional tool name extracted from the message for easy UI access. */
+  toolName?: string;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";

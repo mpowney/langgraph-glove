@@ -719,6 +719,11 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
     const transcript = formatMessagesForCompression(compressibleMessages);
     if (!transcript.trim()) return {};
 
+    const compressionInvokeConfig: RunnableConfig = {
+      ...(runtimeConfig as RunnableConfig | undefined),
+      runName: compression.toolName,
+    };
+
     const compressionResult = await compression.tool.invoke(
       {
         mode: compression.mode,
@@ -726,7 +731,7 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
         transcript,
         maxDigestChars: compression.maxDigestChars,
       },
-      runtimeConfig as RunnableConfig | undefined,
+      compressionInvokeConfig,
     );
     const digest = parseCompressionToolResult(compressionResult);
     if (!digest) return {};

@@ -40,7 +40,7 @@ import { WebChannel } from "../channels/WebChannel";
 import type { ToolDefinition, AgentCapabilityEntry } from "../rpc/RpcProtocol";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
-import { resolveToolName } from "../agent/toolNameUtils.js";
+import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
 
 const logger = new Logger("Gateway");
 
@@ -533,14 +533,24 @@ export class Gateway extends EventEmitter {
       role: "prompt" | "tool-call" | "tool-result" | "model-call" | "model-response" | "graph-definition" | "system-event" | "agent-transfer",
       text: string,
       toolEventMetadata?: ToolEventMetadata,
+      toolName?: string,
     ): void => {
       if (!observabilityEnabled) return;
+      const resolvedToolName = (() => {
+        if (toolName && !isGenericToolName(toolName)) return toolName;
+        const metaToolName = toolEventMetadata?.tool?.name;
+        if (typeof metaToolName === "string" && !isGenericToolName(metaToolName)) {
+          return metaToolName;
+        }
+        return toolName;
+      })();
       for (const channel of targets) {
         channel
           .sendMessage({
             conversationId: observabilityConversationId,
             text,
             role,
+            ...(resolvedToolName ? { toolName: resolvedToolName } : {}),
             ...(toolEventMetadata ? { toolEventMetadata } : {}),
           })
           .catch((err: unknown) =>
@@ -603,7 +613,7 @@ export class Gateway extends EventEmitter {
             runId,
             _parentRunId,
             _tags,
-            _metadata,
+            metadata,
             runName,
             toolCallId,
           ): void => {
@@ -611,6 +621,7 @@ export class Gateway extends EventEmitter {
               typeof runName === "string" ? runName : undefined,
               tool,
               typeof toolCallId === "string" ? toolCallId : undefined,
+              metadata,
             );
             toolRunNameByRunId.set(String(runId), toolName);
 
@@ -644,6 +655,7 @@ export class Gateway extends EventEmitter {
                   type: "tool_call",
                 }),
                 meta,
+                toolName,
               );
             }
           },
@@ -656,7 +668,7 @@ export class Gateway extends EventEmitter {
               ? { tool: toolDef }
               : undefined;
             const content = typeof output === "string" ? output : safeStringify(output);
-            sendObservability("tool-result", JSON.stringify({ name: toolName, content }), meta);
+            sendObservability("tool-result", JSON.stringify({ name: toolName, content }), meta, toolName);
           },
           handleToolError: (_error, runId): void => {
             toolRunNameByRunId.delete(String(runId));

@@ -71,6 +71,45 @@ function extractNameFromSerializedTool(tool: unknown): string | undefined {
   return undefined;
 }
 
+function extractNameFromCallbackMetadata(metadata: unknown): string | undefined {
+  const m = getNestedObject(metadata);
+  if (!m) return undefined;
+
+  const directCandidates: unknown[] = [
+    m["name"],
+    m["toolName"],
+    m["tool_name"],
+    m["ls_tool_name"],
+    m["lc_name"],
+    m["runName"],
+  ];
+  for (const candidate of directCandidates) {
+    if (isUsableToolName(candidate)) return candidate;
+  }
+
+  const nestedCandidates = [
+    m["tool"],
+    m["serialized"],
+    m["function"],
+    m["metadata"],
+  ];
+  for (const candidate of nestedCandidates) {
+    const nested = getNestedObject(candidate);
+    if (!nested) continue;
+
+    if (isUsableToolName(nested["name"])) return nested["name"];
+    if (isUsableToolName(nested["toolName"])) return nested["toolName"];
+    if (isUsableToolName(nested["tool_name"])) return nested["tool_name"];
+
+    const nestedFunction = getNestedObject(nested["function"]);
+    if (nestedFunction && isUsableToolName(nestedFunction["name"])) {
+      return nestedFunction["name"];
+    }
+  }
+
+  return undefined;
+}
+
 /**
  * Attempt to extract a tool name from an LLM tool-call ID.
  * Example: `"functions.web_search:5"` → `"web_search"`.
@@ -92,8 +131,9 @@ export function toolNameFromToolCallId(toolCallId?: string): string | undefined 
  * Priority:
  * 1. `runName` (LangChain per-run name, set from the tool's `.name` property)
  * 2. Tool name extracted from `toolCallId` (e.g. `"functions.web_search:5"`)
- * 3. `tool.name` when it is not a generic class name
- * 4. `tool.kwargs.name` as a last-resort fallback
+ * 3. Tool name extracted from callback metadata (`ls_tool_name`, `tool_name`, etc.)
+ * 4. `tool.name` when it is not a generic class name
+ * 5. `tool.kwargs.name` as a last-resort fallback
  *
  * Falls back to `"tool"` when nothing useful can be determined.
  */
@@ -101,6 +141,7 @@ export function resolveToolName(
   runName: string | undefined,
   tool: unknown,
   toolCallId: string | undefined,
+  metadata?: unknown,
 ): string {
   if (isUsableToolName(runName)) {
     return runName;
@@ -108,6 +149,9 @@ export function resolveToolName(
 
   const fromCallId = toolNameFromToolCallId(toolCallId);
   if (fromCallId) return fromCallId;
+
+  const fromMetadata = extractNameFromCallbackMetadata(metadata);
+  if (fromMetadata) return fromMetadata;
 
   const fromSerializedTool = extractNameFromSerializedTool(tool);
   if (fromSerializedTool) return fromSerializedTool;

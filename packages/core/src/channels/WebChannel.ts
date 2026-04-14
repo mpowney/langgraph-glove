@@ -99,6 +99,8 @@ type ServerMessage =
       checkpoint?: CheckpointMetadata;
       /** Optional structured metadata carrying tool parameter schema and agent context. */
       toolEventMetadata?: ToolEventMetadata;
+      /** Optional tool name extracted from the message for UI access. */
+      toolName?: string;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
@@ -338,6 +340,7 @@ export class WebChannel extends Channel {
         conversationId: message.conversationId,
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
         ...(message.toolEventMetadata ? { toolEventMetadata: message.toolEventMetadata } : {}),
+        ...(message.toolName ? { toolName: message.toolName } : {}),
       };
       this.broadcast(message.conversationId, payload);
       return;
