@@ -22,7 +22,7 @@ import {
 } from "@fluentui/react-components";
 import { Dismiss24Regular, ArrowClockwise24Regular } from "@fluentui/react-icons";
 import type { ToolDefinition, AgentCapabilityEntry, AgentCapabilityRegistry } from "../types";
-import { ParameterTable } from "./ParameterTable";
+import { ParameterTable } from "./chat/accordions/ParameterTable";
 import { createUuid } from "../uuid";
 
 // ---------------------------------------------------------------------------

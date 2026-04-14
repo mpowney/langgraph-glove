@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Button, makeStyles, tokens } from "@fluentui/react-components";
 import { ChatMessage } from "./ChatMessage";
-import type { ChatEntry } from "../types";
+import type { ChatEntry } from "../../types";
 
 const AUTO_SCROLL_LINE_THRESHOLD = 6;
 const DEFAULT_LINE_HEIGHT_PX = 24;

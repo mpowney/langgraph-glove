@@ -10,7 +10,7 @@ import {
   DialogContent,
   DialogActions,
 } from "@fluentui/react-components";
-import { MarkdownContent } from "./MarkdownContent";
+import { MarkdownContent } from "./chat/content/MarkdownContent";
 
 const useStyles = makeStyles({
   dialogSurface: {

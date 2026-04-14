@@ -1,6 +1,6 @@
 import React from "react";
 import { makeStyles, tokens, Text, Button } from "@fluentui/react-components";
-import { MarkdownContent } from "./MarkdownContent";
+import { MarkdownContent } from "./chat/content/MarkdownContent";
 
 const useStyles = makeStyles({
   pane: {
