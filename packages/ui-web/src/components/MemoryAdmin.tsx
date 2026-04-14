@@ -33,6 +33,7 @@ import {
 import { Dismiss24Regular, ArrowClockwise24Regular, MoreHorizontal24Regular, Delete24Regular } from "@fluentui/react-icons";
 import type { MemoryDocument, MemorySummary } from "../types";
 import { useMemoryAdmin } from "../hooks/useMemoryAdmin";
+import { MemoryMarkdownDialog } from "./MemoryMarkdownDialog";
 
 const useStyles = makeStyles({
   layout: {
@@ -140,6 +141,11 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalS,
     marginTop: tokens.spacingVerticalS,
   },
+  actionButtons: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
+  },
   errorText: {
     color: tokens.colorPaletteRedForeground1,
   },
@@ -228,6 +234,7 @@ export function MemoryAdmin({
   const [query, setQuery] = useState("");
   const [form, setForm] = useState<EditFormState | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MemorySummary | null>(null);
+  const [markdownDialogOpen, setMarkdownDialogOpen] = useState(false);
 
   const hasToken = personalToken.trim().length > 0;
 
@@ -246,6 +253,12 @@ export function MemoryAdmin({
   useEffect(() => {
     if (selectedMemory) {
       setForm(toFormState(selectedMemory));
+    }
+  }, [selectedMemory]);
+
+  useEffect(() => {
+    if (!selectedMemory) {
+      setMarkdownDialogOpen(false);
     }
   }, [selectedMemory]);
 
@@ -524,13 +537,21 @@ export function MemoryAdmin({
 
                   <div className={styles.actions}>
                     <Text className={styles.errorText}>{saveState === "error" ? saveError : ""}</Text>
-                    <Button
-                      appearance="primary"
-                      disabled={saveState === "loading"}
-                      onClick={() => void handleSave()}
-                    >
-                      {saveState === "loading" ? "Saving…" : "Save memory"}
-                    </Button>
+                    <div className={styles.actionButtons}>
+                      <Button
+                        appearance="secondary"
+                        onClick={() => setMarkdownDialogOpen(true)}
+                      >
+                        Open formatted preview
+                      </Button>
+                      <Button
+                        appearance="primary"
+                        disabled={saveState === "loading"}
+                        onClick={() => void handleSave()}
+                      >
+                        {saveState === "loading" ? "Saving…" : "Save memory"}
+                      </Button>
+                    </div>
                   </div>
                 </div>
               )}
@@ -575,6 +596,13 @@ export function MemoryAdmin({
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      <MemoryMarkdownDialog
+        open={markdownDialogOpen && !!selectedMemory && !!form}
+        onClose={() => setMarkdownDialogOpen(false)}
+        title={selectedMemory ? `Memory Preview: ${selectedMemory.title}` : "Memory Preview"}
+        content={form?.content ?? ""}
+      />
     </OverlayDrawer>
   );
 }

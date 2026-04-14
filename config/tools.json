@@ -59,5 +59,11 @@
     "transport": "unix-socket",
     "enabled": true,
     "socketName": "config"
+  },
+  "context-compression": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3017",
+    "socketName": "context-compression",
+    "enabled": true
   }
 }

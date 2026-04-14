@@ -1,6 +1,10 @@
 {
   "default": {
     "orchestratorAgentKey": "default",
+    "subgraphs": {
+      "memory": "memory-default",
+      "compression": {}
+    },
     "subAgentKeys": [
       "memory",
       "researcher",
@@ -14,6 +18,10 @@
   },
   "schedule-system": {
     "orchestratorAgentKey": "schedule-system",
+    "subgraphs": {
+      "memory": "memory-default",
+      "compression": {}
+    },
     "subAgentKeys": [
       "memory",
       "researcher",

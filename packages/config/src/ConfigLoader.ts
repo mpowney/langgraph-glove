@@ -8,16 +8,20 @@ import {
   AgentsConfigSchema,
   MemoriesConfigSchema,
   ToolsConfigSchema,
+  ToolManagerConfigSchema,
   GatewayConfigSchema,
   GraphsConfigSchema,
+  SubgraphsConfigSchema,
   DEFAULT_GRAPH_ENTRY,
   type ModelsConfig,
   type ChannelsConfig,
   type AgentsConfig,
   type MemoriesConfig,
   type ToolsConfig,
+  type ToolManagerConfig,
   type GatewayConfig,
   type GraphsConfig,
+  type SubgraphsConfig,
 } from "./schemas.js";
 
 /**
@@ -29,8 +33,10 @@ export interface GloveConfig {
   agents: AgentsConfig;
   memories: MemoriesConfig;
   tools: ToolsConfig;
+  toolManager: ToolManagerConfig;
   gateway: GatewayConfig;
   graphs: GraphsConfig;
+  subgraphs: SubgraphsConfig;
 }
 
 /**
@@ -84,12 +90,55 @@ export class ConfigLoader {
       default: {},
     };
     const tools = this.loadFileOptional("tools.json", ToolsConfigSchema) ?? {};
+    const toolManager = this.loadFileOptional("tool-manager.json", ToolManagerConfigSchema) ?? {};
     const gateway = this.loadFileOptional("gateway.json", GatewayConfigSchema) ?? {};
     const graphs = this.loadFileOptional("graphs.json", GraphsConfigSchema) ?? {
       default: DEFAULT_GRAPH_ENTRY,
     };
+    const subgraphs = this.loadFileOptional("subgraphs.json", SubgraphsConfigSchema) ?? {};
 
-    return { models, channels, agents, memories, tools, gateway, graphs };
+    this.validateSubgraphReferences(agents, graphs, subgraphs);
+
+    return { models, channels, agents, memories, tools, toolManager, gateway, graphs, subgraphs };
+  }
+
+  private validateSubgraphReferences(
+    agents: AgentsConfig,
+    graphs: GraphsConfig,
+    subgraphs: SubgraphsConfig,
+  ): void {
+    const available = new Set(Object.keys(subgraphs));
+
+    for (const [agentKey, agentEntry] of Object.entries(agents)) {
+      const compressionSubgraphKey = agentEntry.compressionSubgraph;
+      if (!compressionSubgraphKey) continue;
+
+      if (!available.has(compressionSubgraphKey)) {
+        throw new Error(
+          `Agent "${agentKey}" references unknown compression subgraph key "${compressionSubgraphKey}". `
+            + `Available keys: ${[...available].join(", ")}`,
+        );
+      }
+    }
+
+    for (const [graphKey, graphEntry] of Object.entries(graphs)) {
+      const memorySubgraphKey = graphEntry.subgraphs?.memory;
+      if (memorySubgraphKey && !available.has(memorySubgraphKey)) {
+        throw new Error(
+          `Graph "${graphKey}" references unknown memory subgraph key "${memorySubgraphKey}". `
+            + `Available keys: ${[...available].join(", ")}`,
+        );
+      }
+
+      for (const compressionSubgraphKey of Object.values(graphEntry.subgraphs?.compression ?? {})) {
+        if (!available.has(compressionSubgraphKey)) {
+          throw new Error(
+            `Graph "${graphKey}" references unknown compression subgraph key "${compressionSubgraphKey}". `
+              + `Available keys: ${[...available].join(", ")}`,
+          );
+        }
+      }
+    }
   }
 
   /**

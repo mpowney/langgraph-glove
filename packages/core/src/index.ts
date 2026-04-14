@@ -31,6 +31,8 @@ export type { IncomingMessage, OutgoingMessage, MessageHandler, ChannelConfig } 
 export { CliChannel } from "./channels/CliChannel";
 export { WebChannel } from "./channels/WebChannel";
 export type { WebChannelConfig } from "./channels/WebChannel";
+export { ObservabilityChannel } from "./channels/ObservabilityChannel";
+export type { ObservabilityChannelConfig } from "./channels/ObservabilityChannel";
 
 // Admin API
 export { AdminApi } from "./api/AdminApi";

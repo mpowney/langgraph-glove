@@ -100,6 +100,8 @@ export const AgentEntrySchema = z.object({
   tools: z.array(z.string()).optional(),
   /** Maximum ReAct loop steps before aborting. */
   recursionLimit: z.number().int().positive().optional(),
+  /** Optional subgraph key that defines this agent's default context compression behavior. */
+  compressionSubgraph: z.string().optional(),
 });
 export type AgentEntry = z.infer<typeof AgentEntrySchema>;
 
@@ -208,6 +210,57 @@ export const ToolsConfigSchema = z.record(z.string(), ToolServerEntrySchema);
 export type ToolsConfig = z.infer<typeof ToolsConfigSchema>;
 
 // ---------------------------------------------------------------------------
+// Subgraph profile config schema
+// ---------------------------------------------------------------------------
+
+export const SubgraphCompressionModeSchema = z.enum(["research-digest"]);
+export type SubgraphCompressionMode = z.infer<typeof SubgraphCompressionModeSchema>;
+
+export const SubgraphCompressionSchema = z.object({
+  /** Remote tool name that performs the compression. */
+  tool: z.string(),
+  /** Compression strategy to apply. */
+  mode: SubgraphCompressionModeSchema.optional(),
+  /** Number of recent visible messages to keep verbatim after compression. */
+  preserveRecentMessages: z.number().int().nonnegative().optional(),
+  /** Compress once the visible message count reaches this threshold. */
+  messageCountThreshold: z.number().int().positive().optional(),
+  /** Compress once the visible character budget reaches this threshold. */
+  charThreshold: z.number().int().positive().optional(),
+  /** Maximum digest size requested from the compression tool. */
+  maxDigestChars: z.number().int().positive().optional(),
+});
+export type SubgraphCompression = z.infer<typeof SubgraphCompressionSchema>;
+
+/**
+ * Reusable subgraph profile that can be referenced by a graph entry.
+ *
+ * Profiles are intentionally close to AgentEntry so they can override
+ * model/prompt/tool behavior for role-specific subgraph usage.
+ */
+export const SubgraphProfileSchema = z.object({
+  /** Base agent key used when this subgraph profile is resolved. */
+  agentKey: z.string().optional(),
+  /** Optional model override for this subgraph profile. */
+  modelKey: z.string().optional(),
+  /** Optional system prompt override for this subgraph profile. */
+  systemPrompt: z.string().optional(),
+  /** Optional description override for this subgraph profile. */
+  description: z.string().optional(),
+  /** Optional tool allow-list override for this subgraph profile. */
+  tools: z.array(z.string()).optional(),
+  /** Optional recursion limit override for this subgraph profile. */
+  recursionLimit: z.number().int().positive().optional(),
+  /** Optional context compression behavior attached to this subgraph profile. */
+  compression: SubgraphCompressionSchema.optional(),
+});
+export type SubgraphProfile = z.infer<typeof SubgraphProfileSchema>;
+
+export const SubgraphsConfigSchema = z
+  .record(z.string(), SubgraphProfileSchema);
+export type SubgraphsConfig = z.infer<typeof SubgraphsConfigSchema>;
+
+// ---------------------------------------------------------------------------
 // Graph config schema
 // ---------------------------------------------------------------------------
 
@@ -230,6 +283,16 @@ export const GraphEntrySchema = z.object({
    * ReAct loop.
    */
   subAgentKeys: z.array(z.string()).optional(),
+  /**
+   * Optional role-to-subgraph profile mapping.
+   *
+   * Memory and agent-specific compression profiles point at keys in
+   * subgraphs.json.
+   */
+  subgraphs: z.object({
+    memory: z.string().optional(),
+    compression: z.record(z.string(), z.string()).optional(),
+  }).optional(),
 });
 export type GraphEntry = z.infer<typeof GraphEntrySchema>;
 
@@ -251,6 +314,30 @@ export type GraphsConfig = z.infer<typeof GraphsConfigSchema>;
  * ReAct loop with no explicit sub-agents.
  */
 export const DEFAULT_GRAPH_ENTRY: GraphEntry = { orchestratorAgentKey: "default" };
+
+// ---------------------------------------------------------------------------
+// Tool manager config schema
+// ---------------------------------------------------------------------------
+
+export const ToolManagerConfigSchema = z.object({
+  /** Shared command template for starting tools. Must include {tool}. */
+  commandTemplate: z.string().min(1).optional(),
+  /** Graceful shutdown timeout before force kill. */
+  shutdownTimeoutMs: z.number().int().positive().optional(),
+  /** Additional wait after SIGKILL before concluding stop. */
+  forceKillTimeoutMs: z.number().int().positive().optional(),
+  /** In-memory per-tool log buffer size shown in TUI. */
+  maxLogLines: z.number().int().positive().optional(),
+}).superRefine((value, ctx) => {
+  if (value.commandTemplate && !value.commandTemplate.includes("{tool}")) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["commandTemplate"],
+      message: 'toolManager.commandTemplate must include the "{tool}" token',
+    });
+  }
+});
+export type ToolManagerConfig = z.infer<typeof ToolManagerConfigSchema>;
 
 // ---------------------------------------------------------------------------
 // Gateway config schema

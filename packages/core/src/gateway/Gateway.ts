@@ -15,11 +15,17 @@ import {
   type GloveConfig,
   type AgentEntry,
   type GraphEntry,
+  type SubgraphProfile,
   type ToolServerEntry,
   type ModelHealthResult,
 } from "@langgraph-glove/config";
 import { GloveAgent } from "../agent/Agent";
-import { buildSingleAgentGraph, buildOrchestratorGraph, type SubAgentDef } from "../agent/graphs";
+import {
+  buildSingleAgentGraph,
+  buildOrchestratorGraph,
+  type CompressionRuntimeConfig,
+  type SubAgentDef,
+} from "../agent/graphs";
 import { Logger } from "../logging/Logger";
 import { LogService } from "../logging/LogService";
 import { HttpRpcClient } from "../rpc/HttpRpcClient";
@@ -80,6 +86,7 @@ export class Gateway extends EventEmitter {
   private adminApi: AdminApi | null = null;
   private authService: AuthService | null = null;
   private shutdownHandlers: (() => void)[] = [];
+  private shutdownSignal: NodeJS.Signals | null = null;
 
   /** Discovered tool definitions, populated after `discoverTools()`. */
   private toolRegistry: ToolDefinition[] = [];
@@ -204,6 +211,7 @@ export class Gateway extends EventEmitter {
         host: apiHost,
         dbPath: this.config.gateway.dbPath,
         authService: this.authService,
+        config: this.config,
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
         toolRegistry: this.toolRegistry,
         agentCapabilities: this.agentCapabilities,
@@ -392,6 +400,9 @@ export class Gateway extends EventEmitter {
     graphKey: string = "default",
   ) {
     const agents = this.config!.agents as Record<string, AgentEntry>;
+    const subgraphs = (this.config as GloveConfig & {
+      subgraphs?: Record<string, SubgraphProfile>;
+    }).subgraphs ?? {};
     const resolvedGraphEntry = this.config!.graphs[graphKey];
     if (!resolvedGraphEntry) {
       logger.warn(
@@ -403,27 +414,61 @@ export class Gateway extends EventEmitter {
     const checkpointer = this.checkpointer!;
 
     const orchestratorKey = graphEntry.orchestratorAgentKey;
-    const subAgentKeys = graphEntry.subAgentKeys ?? [];
+    const subAgentKeys = [...(graphEntry.subAgentKeys ?? [])];
+    const memorySubgraphKey = (graphEntry as GraphEntry & {
+      subgraphs?: { memory?: string };
+    }).subgraphs?.memory;
+    const memorySubgraphProfile = memorySubgraphKey
+      ? this.resolveSubgraphProfile(subgraphs, memorySubgraphKey)
+      : undefined;
+
+    if (memorySubgraphProfile && !subAgentKeys.includes("memory")) {
+      subAgentKeys.push("memory");
+    }
+
     const orchestratorEntry = resolveConfigEntry(agents, orchestratorKey);
 
     if (subAgentKeys.length === 0) {
       // Single-agent mode — standard ReAct loop
       const model = models.get(orchestratorEntry.modelKey ?? "default");
       const scopedTools = this.scopeTools(allTools, orchestratorEntry.tools);
+      const compression = this.resolveCompressionRuntimeConfig({
+        allTools,
+        agentEntry: orchestratorEntry,
+        agentKey: orchestratorKey,
+        graphEntry,
+        subgraphs,
+      });
       logger.info(`Graph "${graphKey}": single-agent mode (${scopedTools.length} tools)`);
+      if (compression) {
+        logger.info(
+          `Graph "${graphKey}": agent "${orchestratorKey}" compression tool "${compression.toolName}" resolved`,
+        );
+      }
 
       return buildSingleAgentGraph({
         model,
         tools: scopedTools,
         systemPrompt: this.resolveSystemPrompt(orchestratorEntry.systemPrompt, scopedTools),
+        compression,
         checkpointer,
       });
     }
 
     // Multi-agent orchestrator mode
     const subAgents: SubAgentDef[] = subAgentKeys.map((key) => {
-      const entry = resolveConfigEntry(agents, key);
+      const entry =
+        key === "memory" && memorySubgraphProfile
+          ? this.resolveAgentEntryFromSubgraphProfile(agents, memorySubgraphProfile)
+          : resolveConfigEntry(agents, key);
       const scopedTools = this.scopeTools(allTools, entry.tools);
+      const compression = this.resolveCompressionRuntimeConfig({
+        allTools,
+        agentEntry: entry,
+        agentKey: key,
+        graphEntry,
+        subgraphs,
+      });
       return {
         name: key,
         description: entry.description ?? key,
@@ -431,6 +476,7 @@ export class Gateway extends EventEmitter {
         tools: scopedTools,
         systemPrompt: this.resolveSystemPrompt(entry.systemPrompt, scopedTools),
         recursionLimit: entry.recursionLimit,
+        compression,
       };
     });
 
@@ -440,6 +486,17 @@ export class Gateway extends EventEmitter {
     logger.info(
       `Graph "${graphKey}": multi-agent orchestrator mode with ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
     );
+    if (memorySubgraphKey) {
+      logger.info(
+        `Graph "${graphKey}": memory subgraph profile "${memorySubgraphKey}" resolved`,
+      );
+    }
+    for (const subAgent of subAgents) {
+      if (!subAgent.compression) continue;
+      logger.info(
+        `Graph "${graphKey}": agent "${subAgent.name}" compression tool "${subAgent.compression.toolName}" resolved`,
+      );
+    }
 
     return buildOrchestratorGraph({
       orchestrator: {
@@ -501,7 +558,16 @@ export class Gateway extends EventEmitter {
             graphName: graphKey,
             graph: {
               graphKey,
-              mode: graphKey === "default" ? "single-agent" : "multi-agent",
+              mode: (() => {
+                const entry = this.config?.graphs[graphKey] ?? DEFAULT_GRAPH_ENTRY;
+                return (entry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent";
+              })(),
+              memorySubgraphKey: (
+                this.config?.graphs[graphKey] as GraphEntry & { subgraphs?: { memory?: string } } | undefined
+              )?.subgraphs?.memory,
+              compressionSubgraphKeys: (
+                this.config?.graphs[graphKey] as GraphEntry & { subgraphs?: { compression?: Record<string, string> } } | undefined
+              )?.subgraphs?.compression,
             },
             sourceChannel: params.observability?.sourceChannel ?? "scheduled",
             schedule: {
@@ -650,6 +716,79 @@ export class Gateway extends EventEmitter {
     return typeof last.content === "string" ? last.content : JSON.stringify(last.content);
   }
 
+  private resolveAgentEntryFromSubgraphProfile(
+    agents: Record<string, AgentEntry>,
+    profile: SubgraphProfile,
+  ): AgentEntry {
+    const baseEntry = resolveConfigEntry(agents, profile.agentKey ?? "memory");
+
+    return {
+      ...baseEntry,
+      ...(profile.modelKey ? { modelKey: profile.modelKey } : {}),
+      ...(profile.systemPrompt ? { systemPrompt: profile.systemPrompt } : {}),
+      ...(profile.description ? { description: profile.description } : {}),
+      ...(profile.tools ? { tools: profile.tools } : {}),
+      ...(profile.recursionLimit !== undefined ? { recursionLimit: profile.recursionLimit } : {}),
+    };
+  }
+
+  private resolveSubgraphProfile(
+    subgraphs: Record<string, SubgraphProfile>,
+    subgraphKey: string,
+  ): SubgraphProfile {
+    const profile = subgraphs[subgraphKey];
+    if (!profile) {
+      throw new Error(
+        `Subgraph key "${subgraphKey}" not found. Available: ${Object.keys(subgraphs).join(", ")}`,
+      );
+    }
+
+    const base = subgraphs["default"];
+    if (!base || subgraphKey === "default") return profile;
+
+    return {
+      ...base,
+      ...profile,
+    };
+  }
+
+  private resolveCompressionRuntimeConfig(params: {
+    allTools: StructuredToolInterface[];
+    agentEntry: AgentEntry;
+    agentKey: string;
+    graphEntry: GraphEntry;
+    subgraphs: Record<string, SubgraphProfile>;
+  }): CompressionRuntimeConfig | undefined {
+    const graphCompressionSubgraphKey = params.graphEntry.subgraphs?.compression?.[params.agentKey];
+    const subgraphKey = graphCompressionSubgraphKey ?? params.agentEntry.compressionSubgraph;
+    if (!subgraphKey) return undefined;
+
+    const profile = this.resolveSubgraphProfile(params.subgraphs, subgraphKey);
+    const compression = profile.compression;
+    if (!compression) {
+      throw new Error(
+        `Compression subgraph "${subgraphKey}" for agent "${params.agentKey}" does not define a compression block`,
+      );
+    }
+
+    const tool = params.allTools.find((candidate) => candidate.name === compression.tool);
+    if (!tool) {
+      throw new Error(
+        `Compression subgraph "${subgraphKey}" for agent "${params.agentKey}" references unknown tool "${compression.tool}"`,
+      );
+    }
+
+    return {
+      tool,
+      toolName: compression.tool,
+      mode: compression.mode ?? "research-digest",
+      preserveRecentMessages: compression.preserveRecentMessages ?? 6,
+      messageCountThreshold: compression.messageCountThreshold ?? 12,
+      charThreshold: compression.charThreshold ?? 16000,
+      maxDigestChars: compression.maxDigestChars ?? 4000,
+    };
+  }
+
   /**
    * Resolve the `{tool-descriptions}` placeholder in a system prompt.
    *
@@ -794,15 +933,33 @@ export class Gateway extends EventEmitter {
   }
 
   private installSignalHandlers(): void {
-    const shutdown = () => {
-      this.stop().catch((err) => {
-        logger.error("Error during shutdown", err);
+    const shutdown = (signal: NodeJS.Signals) => {
+      if (this.shutdownSignal) {
+        logger.warn(`Received ${signal} while shutdown from ${this.shutdownSignal} is still in progress; forcing exit`);
         process.exit(1);
-      });
+      }
+
+      this.shutdownSignal = signal;
+      const forceExitTimer = setTimeout(() => {
+        logger.error(`Timed out while shutting down after ${signal}; forcing exit`);
+        process.exit(1);
+      }, 10_000);
+      forceExitTimer.unref();
+
+      this.stop()
+        .then(() => {
+          clearTimeout(forceExitTimer);
+          process.exit(0);
+        })
+        .catch((err) => {
+          clearTimeout(forceExitTimer);
+          logger.error("Error during shutdown", err);
+          process.exit(1);
+        });
     };
 
-    const onSIGINT = () => { logger.info("Received SIGINT"); shutdown(); };
-    const onSIGTERM = () => { logger.info("Received SIGTERM"); shutdown(); };
+    const onSIGINT = () => { logger.info("Received SIGINT"); shutdown("SIGINT"); };
+    const onSIGTERM = () => { logger.info("Received SIGTERM"); shutdown("SIGTERM"); };
 
     process.on("SIGINT", onSIGINT);
     process.on("SIGTERM", onSIGTERM);

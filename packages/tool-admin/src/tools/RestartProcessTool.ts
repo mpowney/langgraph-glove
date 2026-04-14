@@ -36,7 +36,7 @@ function logError(message: string, err?: unknown): void {
 
 /** Resolve the root directory of the project at runtime. */
 function resolveRootDir(): string {
-  // The PID file written by tools-bg.sh lives at <root>/logs/tool-processes.pids.
+  // The PID file written by the tool-manager lives at <root>/logs/tool-processes.pids.
   // Walk up from GLOVE_CONFIG_DIR (or cwd) to find the project root.
   const configDir = path.resolve(process.env["GLOVE_CONFIG_DIR"] ?? "config");
   return path.dirname(configDir);
@@ -231,7 +231,7 @@ async function controlCoreProcess(
   return `Stopped core (killed PID${pids.length > 1 ? "s" : ""}: ${pids.join(", ")}).`;
 }
 
-/** Locate a tool-server process via the PID file written by tools-bg.sh. */
+/** Locate a tool-server process via the PID file written by the tool-manager. */
 async function controlToolProcess(
   context: ProcessControlContext,
   toolKey: string,
