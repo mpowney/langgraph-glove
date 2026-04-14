@@ -27,6 +27,141 @@ function isWithinAutoScrollThreshold(container: HTMLElement): boolean {
   return distanceFromBottom <= thresholdPx;
 }
 
+function isProcessingDetailEntry(entry: ChatEntry): boolean {
+  const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
+  if (isSubAgentMessage) {
+    return true;
+  }
+
+  return (
+    entry.role === "prompt"
+    || entry.role === "tool-call"
+    || entry.role === "tool-result"
+    || entry.role === "agent-transfer"
+    || entry.role === "model-call"
+    || entry.role === "graph-definition"
+    || entry.role === "model-response"
+    || entry.role === "system-event"
+    || entry.role === "error"
+  );
+}
+
+function truncateSummary(text: string, limit = 120): string {
+  if (text.length <= limit) {
+    return text;
+  }
+  return `${text.slice(0, limit - 1)}...`;
+}
+
+function formatProcessingStatus(entry: ChatEntry): string {
+  if (entry.role === "prompt") {
+    return "Building prompt context";
+  }
+
+  if (entry.role === "tool-call") {
+    const fallback = entry.toolName?.trim();
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const payload = parsed as Record<string, unknown>;
+        const fn = payload.function && typeof payload.function === "object"
+          ? payload.function as Record<string, unknown>
+          : undefined;
+        const parsedName = typeof payload.name === "string"
+          ? payload.name
+          : (fn && typeof fn.name === "string" ? fn.name : undefined);
+        const toolName = parsedName?.trim() || fallback;
+        return toolName ? `Calling tool: ${toolName}` : "Calling tool";
+      }
+    } catch {
+      // fall back to toolName/raw content
+    }
+    return fallback ? `Calling tool: ${fallback}` : "Calling tool";
+  }
+
+  if (entry.role === "tool-result") {
+    const fallback = entry.toolName?.trim();
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const payload = parsed as Record<string, unknown>;
+        const parsedName = typeof payload.name === "string" ? payload.name : undefined;
+        const toolName = parsedName?.trim() || fallback;
+        return toolName ? `Tool completed: ${toolName}` : "Tool completed";
+      }
+    } catch {
+      // fall back to toolName/raw content
+    }
+    return fallback ? `Tool completed: ${fallback}` : "Tool completed";
+  }
+
+  if (entry.role === "agent-transfer") {
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const payload = parsed as Record<string, unknown>;
+        if (typeof payload.agent === "string" && payload.agent.trim()) {
+          return `Transferring to ${payload.agent.trim()}`;
+        }
+      }
+    } catch {
+      // fall through
+    }
+    return "Transferring to sub-agent";
+  }
+
+  if (entry.role === "model-call") {
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const payload = parsed as Record<string, unknown>;
+        if (typeof payload.model === "string" && payload.model.trim()) {
+          return `Calling model: ${payload.model.trim()}`;
+        }
+      }
+    } catch {
+      // fall through
+    }
+    return "Calling model";
+  }
+
+  if (entry.role === "model-response") {
+    return "Model responded";
+  }
+
+  if (entry.role === "graph-definition") {
+    return "Preparing graph definition";
+  }
+
+  if (entry.role === "system-event") {
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (parsed && typeof parsed === "object") {
+        const payload = parsed as Record<string, unknown>;
+        if (typeof payload.event === "string" && payload.event.trim()) {
+          return `System event: ${payload.event.trim()}`;
+        }
+      }
+    } catch {
+      // fall through
+    }
+    return truncateSummary(`System event: ${entry.content.trim()}`);
+  }
+
+  if (entry.role === "error") {
+    return truncateSummary(`Error: ${entry.content.trim()}`);
+  }
+
+  if (entry.role === "agent" && entry.streamSource === "sub-agent") {
+    const subAgentName = entry.streamAgentKey?.trim();
+    return subAgentName
+      ? `Processing with ${subAgentName}`
+      : "Processing with sub-agent";
+  }
+
+  return "Processing";
+}
+
 const useStyles = makeStyles({
   container: {
     flex: "1 1 auto",
@@ -60,6 +195,48 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground3,
     fontStyle: "italic",
   },
+  processingStatusWrapper: {
+    display: "flex",
+    justifyContent: "flex-end",
+    marginTop: `-${tokens.spacingVerticalXS}`,
+  },
+  processingStatusBubble: {
+    maxWidth: "72%",
+    padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
+    borderRadius: tokens.borderRadiusLarge,
+    backgroundColor: tokens.colorNeutralBackground3,
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase200,
+    lineHeight: tokens.lineHeightBase200,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    fontStyle: "italic",
+  },
+  processingStatusEllipsis: {
+    display: "inline-flex",
+    marginLeft: tokens.spacingHorizontalXXS,
+  },
+  processingStatusDot: {
+    display: "inline-block",
+    width: "0.33em",
+    textAlign: "center",
+    animationName: {
+      "0%, 70%, 100%": { transform: "translateY(0)", opacity: 0.55 },
+      "35%": { transform: "translateY(-0.22em)", opacity: 1 },
+    },
+    animationDuration: "0.9s",
+    animationIterationCount: "infinite",
+    animationTimingFunction: "ease-in-out",
+  },
+  processingStatusDot1: {
+    animationDelay: "0s",
+  },
+  processingStatusDot2: {
+    animationDelay: "0.12s",
+  },
+  processingStatusDot3: {
+    animationDelay: "0.24s",
+  },
 });
 
 interface ChatAreaProps {
@@ -67,6 +244,7 @@ interface ChatAreaProps {
   myConversationId: string;
   showAll: boolean;
   showAccordionAndSubAgentMessages: boolean;
+  showInlineProcessingMessages: boolean;
   showSystemMessages: boolean;
   onRequestSwitchConversation?: (conversationId: string) => void;
   modelContextWindowTokens?: number;
@@ -83,6 +261,7 @@ export function ChatArea({
   myConversationId,
   showAll,
   showAccordionAndSubAgentMessages,
+  showInlineProcessingMessages,
   showSystemMessages,
   onRequestSwitchConversation,
   modelContextWindowTokens,
@@ -120,26 +299,61 @@ export function ChatArea({
     }
     return map;
   }, [messages]);
-  const filteredMessages = messages.filter((entry) => {
-    if (!showSystemMessages && entry.role === "system-event") {
-      return false;
+  const messagesRespectingSystemPreference = useMemo(
+    () => messages.filter((entry) => showSystemMessages || entry.role !== "system-event"),
+    [messages, showSystemMessages],
+  );
+
+  const filteredMessages = useMemo(() => {
+    if (!showAccordionAndSubAgentMessages) {
+      return messagesRespectingSystemPreference.filter((entry) => !isProcessingDetailEntry(entry));
     }
-    if (showAccordionAndSubAgentMessages) {
-      return true;
+    if (showInlineProcessingMessages) {
+      return messagesRespectingSystemPreference;
     }
-    const isSubAgentMessage = entry.role === "agent" && entry.streamSource === "sub-agent";
-    const isAccordionMessage =
-      entry.role === "prompt"
-      || entry.role === "tool-call"
-      || entry.role === "tool-result"
-      || entry.role === "agent-transfer"
-      || entry.role === "model-call"
-      || entry.role === "graph-definition"
-      || entry.role === "model-response"
-      || entry.role === "system-event"
-      || entry.role === "error";
-    return !isSubAgentMessage && !isAccordionMessage;
-  });
+    return messagesRespectingSystemPreference.filter((entry) => !isProcessingDetailEntry(entry));
+  }, [
+    messagesRespectingSystemPreference,
+    showAccordionAndSubAgentMessages,
+    showInlineProcessingMessages,
+  ]);
+
+  const inlineProcessingStatus = useMemo(() => {
+    if (!showAccordionAndSubAgentMessages || showInlineProcessingMessages) {
+      return null;
+    }
+
+    const lastUserIndex = messagesRespectingSystemPreference.findLastIndex((entry) => entry.role === "user");
+    if (lastUserIndex < 0) {
+      return null;
+    }
+
+    const anchorUserMessage = messagesRespectingSystemPreference[lastUserIndex];
+    const afterUserMessages = messagesRespectingSystemPreference.slice(lastUserIndex + 1);
+    const hasMainAgentReply = afterUserMessages.some(
+      (entry) => entry.role === "agent" && entry.streamSource !== "sub-agent",
+    );
+    if (hasMainAgentReply) {
+      return null;
+    }
+
+    const latestProcessingEntry = [...afterUserMessages]
+      .reverse()
+      .find((entry) => isProcessingDetailEntry(entry));
+    if (!latestProcessingEntry) {
+      return null;
+    }
+
+    return {
+      anchorMessageId: anchorUserMessage.id,
+      text: formatProcessingStatus(latestProcessingEntry),
+      statusMessageId: latestProcessingEntry.id,
+    };
+  }, [
+    messagesRespectingSystemPreference,
+    showAccordionAndSubAgentMessages,
+    showInlineProcessingMessages,
+  ]);
 
   useEffect(() => {
     if (shouldAutoScrollRef.current) {
@@ -191,20 +405,38 @@ export function ChatArea({
         {filteredMessages.map((entry) => {
           const isForeignConversation = showAll && entry.conversationId !== myConversationId;
           return (
-          <ChatMessage
-            key={entry.id}
-            entry={entry}
-            collapseSubAgentStream={mainAgentStreaming}
-            modelContextWindowTokens={modelContextWindowTokens}
-            sessionLabel={
-              isForeignConversation
-                ? formatSessionLabel(entry.conversationId)
-                : undefined
-            }
-            sessionConversationId={isForeignConversation ? entry.conversationId : undefined}
-            chatGuid={isForeignConversation ? chatGuidByConversationId.get(entry.conversationId) : undefined}
-            onRequestSwitchConversation={onRequestSwitchConversation}
-          />
+            <React.Fragment key={entry.id}>
+              <ChatMessage
+                entry={entry}
+                collapseSubAgentStream={mainAgentStreaming}
+                modelContextWindowTokens={modelContextWindowTokens}
+                sessionLabel={
+                  isForeignConversation
+                    ? formatSessionLabel(entry.conversationId)
+                    : undefined
+                }
+                sessionConversationId={isForeignConversation ? entry.conversationId : undefined}
+                chatGuid={isForeignConversation ? chatGuidByConversationId.get(entry.conversationId) : undefined}
+                onRequestSwitchConversation={onRequestSwitchConversation}
+              />
+              {inlineProcessingStatus
+                && entry.id === inlineProcessingStatus.anchorMessageId && (
+                  <div
+                    className={styles.processingStatusWrapper}
+                    key={inlineProcessingStatus.statusMessageId}
+                    aria-live="polite"
+                  >
+                    <div className={styles.processingStatusBubble}>
+                      <span>{inlineProcessingStatus.text}</span>
+                      <span className={styles.processingStatusEllipsis} aria-hidden="true">
+                        <span className={`${styles.processingStatusDot} ${styles.processingStatusDot1}`}>.</span>
+                        <span className={`${styles.processingStatusDot} ${styles.processingStatusDot2}`}>.</span>
+                        <span className={`${styles.processingStatusDot} ${styles.processingStatusDot3}`}>.</span>
+                      </span>
+                    </div>
+                  </div>
+                )}
+            </React.Fragment>
           );
         })}
         <div ref={bottomRef} />

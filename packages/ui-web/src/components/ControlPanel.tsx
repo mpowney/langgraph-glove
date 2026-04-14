@@ -66,6 +66,8 @@ interface ControlPanelProps {
   onToggleShowAll: (value: boolean) => void;
   showAccordionAndSubAgentMessages: boolean;
   onToggleShowAccordionAndSubAgentMessages: (value: boolean) => void;
+  showInlineProcessingMessages: boolean;
+  onToggleShowInlineProcessingMessages: (value: boolean) => void;
   showSystemMessages: boolean;
   onToggleShowSystemMessages: (value: boolean) => void;
   onStartNewConversation: () => void;
@@ -83,6 +85,8 @@ export function ControlPanel({
   onToggleShowAll,
   showAccordionAndSubAgentMessages,
   onToggleShowAccordionAndSubAgentMessages,
+  showInlineProcessingMessages,
+  onToggleShowInlineProcessingMessages,
   showSystemMessages,
   onToggleShowSystemMessages,
   onStartNewConversation,
@@ -135,6 +139,12 @@ export function ControlPanel({
                 checked={showAccordionAndSubAgentMessages}
                 onChange={(_, data) => onToggleShowAccordionAndSubAgentMessages(data.checked)}
                 label="Agent processing details"
+              />
+              <Switch
+                checked={showInlineProcessingMessages}
+                onChange={(_, data) => onToggleShowInlineProcessingMessages(data.checked)}
+                disabled={!showAccordionAndSubAgentMessages}
+                label="Show inline processing messages"
               />
               <Switch
                 checked={showSystemMessages}
