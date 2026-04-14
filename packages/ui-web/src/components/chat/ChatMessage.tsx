@@ -35,7 +35,9 @@ const useStyles = makeStyles({
 
   // ── Bubble shapes ─────────────────────────────────────────────────────────
   userBubble: {
-    maxWidth: "72%",
+    display: "inline-block",
+    width: "fit-content",
+    maxWidth: "80vw",
     padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
     borderRadius: tokens.borderRadiusXLarge,
     borderBottomRightRadius: tokens.borderRadiusSmall,
