@@ -357,7 +357,8 @@ export function ChatArea({
 
   useEffect(() => {
     if (shouldAutoScrollRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+      // Use instant follow for live updates to avoid smooth-scroll races while streaming.
+      bottomRef.current?.scrollIntoView({ behavior: "auto" });
     }
   }, [messages]);
 
@@ -381,7 +382,7 @@ export function ChatArea({
     return () => {
       container.removeEventListener("scroll", handleScroll);
     };
-  }, []);
+  }, [filteredMessages.length]);
 
   const handleScrollToBottom = () => {
     shouldAutoScrollRef.current = true;
