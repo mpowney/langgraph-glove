@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
 import { ConversationMetadataService } from "./ConversationMetadataService.js";
+import { registerSecretsRoutes } from "./SecretsRoutes.js";
 import type {
   ToolServerEntry,
   GloveConfig,
@@ -216,6 +217,23 @@ export interface AdminApiConfig {
     role?: "agent" | "error";
     channelName?: string;
   }) => Promise<void>;
+  /**
+   * Path to the secrets directory.
+   *
+   * When provided together with `authService`, the server exposes privileged
+   * secrets management endpoints:
+   *
+   *   GET  /api/secrets/files    — list secret JSON files
+   *   GET  /api/secrets          — list all secret names (not values)
+   *   GET  /api/secrets/:name    — retrieve a specific secret value
+   *   POST /api/secrets          — add or update a secret
+   *
+   * All endpoints require an authenticated session **and** an active privilege
+   * grant so that secrets remain inaccessible to agents.
+   *
+   * Defaults to the `GLOVE_SECRETS_DIR` environment variable when not supplied.
+   */
+  secretsDir?: string;
 }
 
 /**
@@ -240,6 +258,7 @@ export class AdminApi {
   private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
   private readonly sendSystemMessage?: AdminApiConfig["sendSystemMessage"];
   private readonly sendChannelMessage?: AdminApiConfig["sendChannelMessage"];
+  private readonly secretsDir?: string;
   private readonly app: Express;
   private httpServer?: http.Server;
   private readonly unixSocketRpcClients = new Map<string, UnixSocketRpcClient>();
@@ -259,6 +278,7 @@ export class AdminApi {
     this.invokeAgent = config.invokeAgent;
     this.sendSystemMessage = config.sendSystemMessage;
     this.sendChannelMessage = config.sendChannelMessage;
+    this.secretsDir = config.secretsDir;
 
     this.app = express();
     this.registerRoutes();
@@ -298,7 +318,7 @@ export class AdminApi {
     this.app.use((_req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", this.allowedOrigins);
       res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Privilege-Grant-Id, X-Conversation-Id");
       if (_req.method === "OPTIONS") {
         res.sendStatus(204);
         return;
@@ -746,6 +766,20 @@ export class AdminApi {
             res.status(401).json({ error: err instanceof Error ? err.message : String(err) });
           }
         })();
+      });
+    }
+
+    // -----------------------------------------------------------------------
+    // Secrets management endpoints
+    //
+    // All endpoints require an authenticated session AND an active privilege
+    // grant.  Secrets are managed exclusively through these first-class Admin
+    // API endpoints so they can never be accessed by agents via tool paths.
+    // -----------------------------------------------------------------------
+    if (this.authService && (this.secretsDir !== undefined || process.env["GLOVE_SECRETS_DIR"])) {
+      registerSecretsRoutes(this.app, {
+        secretsDir: this.secretsDir,
+        authService: this.authService,
       });
     }
 

@@ -181,6 +181,8 @@ interface ConfigAdminProps {
   open: boolean;
   onClose: () => void;
   configToolUrl: string;
+  /** Base URL of the Admin API (e.g. "" in dev, or the configured API URL in production). */
+  adminApiUrl: string;
   privilegeGrantId: string;
   conversationId: string;
   authToken?: string;
@@ -245,6 +247,7 @@ export function ConfigAdmin({
   open,
   onClose,
   configToolUrl,
+  adminApiUrl,
   privilegeGrantId,
   conversationId,
   authToken,
@@ -301,7 +304,7 @@ export function ConfigAdmin({
     loadSecrets,
     revealSecret,
     saveSecret,
-  } = useSecrets(configToolUrl, privilegeGrantId, conversationId, authToken);
+  } = useSecrets(adminApiUrl, privilegeGrantId, conversationId, authToken);
 
   const [editorTab, setEditorTab] = useState<EditorTab>("raw");
   const [wordWrap, setWordWrap] = useState(false);

@@ -366,6 +366,7 @@ function App() {
           open={configAdminOpen}
           onClose={() => setConfigAdminOpen(false)}
           configToolUrl={configToolUrl}
+          adminApiUrl={adminApiBaseUrl}
           privilegeGrantId={privilegedGrantId}
           conversationId={conversationId}
           authToken={auth.token ?? undefined}

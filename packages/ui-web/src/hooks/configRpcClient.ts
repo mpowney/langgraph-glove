@@ -133,53 +133,74 @@ export async function getConfigVersion(
 }
 
 export async function listSecretFiles(
-  configToolUrl: string,
+  adminApiUrl: string,
   privilegeGrantId: string,
   conversationId: string,
   authToken?: string,
 ): Promise<Array<{ name: string }>> {
-  const raw = await callConfigTool<string>(
-    configToolUrl,
-    "secrets_list_files",
-    { privilegeGrantId, conversationId },
-    authToken,
-  );
-  return JSON.parse(raw) as Array<{ name: string }>;
+  const url = `${adminApiUrl}/api/secrets/files`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as Array<{ name: string }>;
 }
 
 export async function listSecrets(
-  configToolUrl: string,
+  adminApiUrl: string,
   privilegeGrantId: string,
   conversationId: string,
   authToken?: string,
 ): Promise<Array<{ name: string; file: string }>> {
-  const raw = await callConfigTool<string>(
-    configToolUrl,
-    "secrets_list",
-    { privilegeGrantId, conversationId },
-    authToken,
-  );
-  return JSON.parse(raw) as Array<{ name: string; file: string }>;
+  const url = `${adminApiUrl}/api/secrets`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as Array<{ name: string; file: string }>;
 }
 
 export async function getSecret(
-  configToolUrl: string,
+  adminApiUrl: string,
   name: string,
   privilegeGrantId: string,
   conversationId: string,
   authToken?: string,
 ): Promise<{ name: string; value: string; file: string }> {
-  const raw = await callConfigTool<string>(
-    configToolUrl,
-    "secrets_get",
-    { name, privilegeGrantId, conversationId },
-    authToken,
-  );
-  return JSON.parse(raw) as { name: string; value: string; file: string };
+  const url = `${adminApiUrl}/api/secrets/${encodeURIComponent(name)}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as { name: string; value: string; file: string };
 }
 
 export async function upsertSecret(
-  configToolUrl: string,
+  adminApiUrl: string,
   file: string,
   name: string,
   value: string,
@@ -187,12 +208,19 @@ export async function upsertSecret(
   conversationId: string,
   authToken?: string,
 ): Promise<void> {
-  await callConfigTool<string>(
-    configToolUrl,
-    "secrets_upsert",
-    { file, name, value, privilegeGrantId, conversationId },
-    authToken,
-  );
+  const url = `${adminApiUrl}/api/secrets`;
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ grantId: privilegeGrantId, conversationId, file, name, value }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
 }
 
 export async function validateConfigFile(

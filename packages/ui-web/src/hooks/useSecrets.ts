@@ -18,7 +18,7 @@ export interface SecretEntry {
 }
 
 export function useSecrets(
-  configToolUrl: string,
+  adminApiUrl: string,
   privilegeGrantId: string,
   conversationId: string,
   authToken?: string,
@@ -40,7 +40,7 @@ export function useSecrets(
     setSecretFilesError(null);
     try {
       const data = await listSecretFiles(
-        configToolUrl,
+        adminApiUrl,
         privilegeGrantId,
         conversationId,
         authToken,
@@ -51,7 +51,7 @@ export function useSecrets(
       setSecretFilesError(toErrorMessage(err));
       setSecretFilesState("error");
     }
-  }, [configToolUrl, privilegeGrantId, conversationId, authToken]);
+  }, [adminApiUrl, privilegeGrantId, conversationId, authToken]);
 
   const loadSecrets = useCallback(async () => {
     if (!privilegeGrantId || !conversationId) return;
@@ -59,7 +59,7 @@ export function useSecrets(
     setSecretsError(null);
     try {
       const data = await listSecrets(
-        configToolUrl,
+        adminApiUrl,
         privilegeGrantId,
         conversationId,
         authToken,
@@ -70,14 +70,14 @@ export function useSecrets(
       setSecretsError(toErrorMessage(err));
       setSecretsState("error");
     }
-  }, [configToolUrl, privilegeGrantId, conversationId, authToken]);
+  }, [adminApiUrl, privilegeGrantId, conversationId, authToken]);
 
   const revealSecret = useCallback(
     async (name: string): Promise<string | null> => {
       if (!privilegeGrantId || !conversationId) return null;
       try {
         const result = await getSecret(
-          configToolUrl,
+          adminApiUrl,
           name,
           privilegeGrantId,
           conversationId,
@@ -88,7 +88,7 @@ export function useSecrets(
         return null;
       }
     },
-    [configToolUrl, privilegeGrantId, conversationId, authToken],
+    [adminApiUrl, privilegeGrantId, conversationId, authToken],
   );
 
   const saveSecret = useCallback(
@@ -98,7 +98,7 @@ export function useSecrets(
       setUpsertError(null);
       try {
         await upsertSecret(
-          configToolUrl,
+          adminApiUrl,
           file,
           name,
           value,
@@ -116,7 +116,7 @@ export function useSecrets(
         return false;
       }
     },
-    [configToolUrl, privilegeGrantId, conversationId, authToken, loadSecrets],
+    [adminApiUrl, privilegeGrantId, conversationId, authToken, loadSecrets],
   );
 
   return {
