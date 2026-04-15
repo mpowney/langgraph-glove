@@ -1,4 +1,49 @@
 {
   "executionGraphKey": "schedule-system",
-  "tasks": []
+  "tasks": [
+    {
+      "name": "Refresh: Geelong v Western Bulldogs pre-match (Round 6)",
+      "type": "user",
+      "scheduleType": "cron",
+      "cron": "20 19 16 4 *",
+      "prompt": "Run the pre-match refresh for Geelong v Western Bulldogs (Round 6). Actions:\n1) Fetch official team sheets and injury updates for Geelong and Western Bulldogs from AFL.com.au match centre, GeelongCats.com.au, WesternBulldogs.com.au, Fox Sports, ABC, ESPN. Include timestamps and links.\n2) Confirm any confirmed outs, concussion/injury management list players, and any suspensions/MRO outcomes affecting selection.\n3) Update memory entry id 0cdb4e4c-6985-4208-8c0c-69d5f9820d29 with final team lists, injury/suspension changes, revised prediction/margin (if needed), and sources.\n4) If web fetches fail or privileged access is required, record the failure in the memory entry and notify the user.\n5) Return a refreshed summary and updated prediction to the user.\n\nNote: scheduled run time: 2026-04-16 19:20 Australia/Melbourne (AEST).",
+      "agentKey": "default",
+      "enabled": true,
+      "personalToken": null,
+      "conversationId": "schedule-afa03c5a-0246-4366-94c6-8dee57249e73",
+      "sourceContext": {
+        "channel": "web",
+        "conversationId": "22495f08-69e3-4c3e-9f97-a2f5bd11181a",
+        "metadata": {},
+        "capturedAt": "2026-04-12T12:06:28.138Z"
+      },
+      "delivery": {
+        "sendAgentReplyToSource": true,
+        "startConversation": false
+      },
+      "id": "afa03c5a-0246-4366-94c6-8dee57249e73"
+    },
+    {
+      "name": "Refresh: Swans v GWS pre-match report",
+      "type": "user",
+      "scheduleType": "cron",
+      "cron": "50 7 18 4 *",
+      "prompt": "Refresh stored pre-match report memory id 5d9e724b-0dd4-4ab6-ade3-9462511cd9e0. Actions:\n1) Fetch official AFL and club match pages and injury lists for Sydney and GWS, plus ABC/ESPN/Sydney Swans/GWS match coverage. Confirm final teams.\n2) Confirm concussion clearances/status for Stephen Coniglio and Aaron Cadman, and injury status for Isaac Heeney; note any other availability changes.\n3) Fetch bookmaker odds/market lines and compute implied margin; if blocked, use alternative odds aggregators or mainstream quotes.\n4) Update memory entry id 5d9e724b-0dd4-4ab6-ade3-9462511cd9e0 with final score (if played), final injuries, confirmed availability, updated prediction/margin, sources and timestamp.\n5) Send a concise summary message to user with final result/injuries/pick/margin and links to sources.\n\nRetry/fallback policy: If primary bookmaker sites blocked/time out, attempt alternatives. Use AFL/ABC/ESPN as fallback for official info.\n\nMemory id to update: 5d9e724b-0dd4-4ab6-ade3-9462511cd9e0",
+      "agentKey": "researcher",
+      "enabled": true,
+      "personalToken": null,
+      "conversationId": "schedule-0f58ad8b-422a-494d-8b20-89bc6b83c1e6",
+      "sourceContext": {
+        "channel": "web",
+        "conversationId": "d7e8c7e4-e33d-45eb-96e3-27091de67855",
+        "metadata": {},
+        "capturedAt": "2026-04-12T12:51:10.109Z"
+      },
+      "delivery": {
+        "sendAgentReplyToSource": true,
+        "startConversation": false
+      },
+      "id": "0f58ad8b-422a-494d-8b20-89bc6b83c1e6"
+    }
+  ]
 }

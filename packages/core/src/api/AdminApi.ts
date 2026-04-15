@@ -3,7 +3,14 @@ import express, { type Express } from "express";
 import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
-import type { ToolServerEntry } from "@langgraph-glove/config";
+import { ConversationMetadataService } from "./ConversationMetadataService.js";
+import type {
+  ToolServerEntry,
+  GloveConfig,
+  AgentEntry,
+  GraphEntry,
+  SubgraphProfile,
+} from "@langgraph-glove/config";
 import type { AuthService, AuthenticatedUser } from "../auth/AuthService";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import type {
@@ -46,6 +53,7 @@ interface ConversationRow {
   thread_id: string;
   checkpoint_count: number;
   latest_checkpoint_id: string;
+  title: string | null;
 }
 
 /** A single decoded message in a conversation. */
@@ -62,6 +70,45 @@ export interface ConversationSummary {
   threadId: string;
   messageCount: number;
   latestCheckpointId: string;
+  title?: string;
+}
+
+export type TopologyNodeType = "graph" | "agent" | "subgraph" | "model" | "tool";
+
+export interface TopologyNode {
+  id: string;
+  type: TopologyNodeType;
+  key: string;
+  label: string;
+  meta?: Record<string, unknown>;
+}
+
+export interface TopologyEdge {
+  id: string;
+  source: string;
+  target: string;
+  relation:
+    | "graph-orchestrator"
+    | "graph-sub-agent"
+    | "graph-memory-subgraph"
+    | "graph-compression-subgraph"
+    | "subgraph-agent"
+    | "agent-model"
+    | "agent-tool";
+  meta?: Record<string, unknown>;
+}
+
+export interface TopologyPayload {
+  generatedAt: string;
+  nodes: TopologyNode[];
+  edges: TopologyEdge[];
+  counts: {
+    graphs: number;
+    agents: number;
+    subgraphs: number;
+    models: number;
+    tools: number;
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +177,8 @@ export interface AdminApiConfig {
   toolRegistry?: ToolDefinition[];
   /** Agent capability entries served by `GET /api/agents/capabilities`. */
   agentCapabilities?: AgentCapabilityEntry[];
+  /** Loaded runtime config used to build topology payloads. */
+  config?: GloveConfig;
   /**
    * Optional callback that lets internal tool servers (e.g. tool-schedule)
    * trigger an agent invocation via `POST /api/internal/invoke`.
@@ -187,6 +236,7 @@ export class AdminApi {
   private readonly toolsConfig: Record<string, ToolServerEntry>;
   private readonly toolRegistry: ToolDefinition[];
   private readonly agentCapabilities: AgentCapabilityEntry[];
+  private readonly config?: GloveConfig;
   private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
   private readonly sendSystemMessage?: AdminApiConfig["sendSystemMessage"];
   private readonly sendChannelMessage?: AdminApiConfig["sendChannelMessage"];
@@ -205,6 +255,7 @@ export class AdminApi {
     this.toolsConfig = config.toolsConfig ?? {};
     this.toolRegistry = config.toolRegistry ?? [];
     this.agentCapabilities = config.agentCapabilities ?? [];
+    this.config = config.config;
     this.invokeAgent = config.invokeAgent;
     this.sendSystemMessage = config.sendSystemMessage;
     this.sendChannelMessage = config.sendChannelMessage;
@@ -826,6 +877,21 @@ export class AdminApi {
       res.json(payload);
     });
 
+    this.app.get("/api/topology", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!this.config) {
+        res.status(503).json({ error: "Topology config is not available" });
+        return;
+      }
+
+      const payload = buildTopologyPayload({
+        config: this.config,
+        toolRegistry: this.toolRegistry,
+        agentCapabilities: this.agentCapabilities,
+      });
+      res.json(payload);
+    });
+
     this.app.all("/api/tools/:toolPath", (req, res) => {
       void proxyToolRequest(req, res);
     });
@@ -836,6 +902,8 @@ export class AdminApi {
 
     if (this.dbPath) {
       const dbPath = this.dbPath;
+      const conversationMetadataService = new ConversationMetadataService(dbPath);
+      conversationMetadataService.ensureSchema();
 
       // List all conversation threads
       this.app.get("/api/conversations", (req, res) => {
@@ -844,13 +912,22 @@ export class AdminApi {
           const db = new Database(dbPath, { readonly: true, fileMustExist: true });
           const rows = db.prepare<[], ConversationRow>(`
             SELECT
-              thread_id,
-              COUNT(*) AS checkpoint_count,
-              MAX(checkpoint_id) AS latest_checkpoint_id
-            FROM checkpoints
-            WHERE checkpoint_ns = ''
-            GROUP BY thread_id
-            ORDER BY MAX(checkpoint_id) DESC
+              grouped.thread_id,
+              grouped.checkpoint_count,
+              grouped.latest_checkpoint_id,
+              meta.title
+            FROM (
+              SELECT
+                thread_id,
+                COUNT(*) AS checkpoint_count,
+                MAX(checkpoint_id) AS latest_checkpoint_id
+              FROM checkpoints
+              WHERE checkpoint_ns = ''
+              GROUP BY thread_id
+            ) AS grouped
+            LEFT JOIN conversation_metadata AS meta
+              ON meta.thread_id = grouped.thread_id
+            ORDER BY grouped.latest_checkpoint_id DESC
           `).all();
           db.close();
 
@@ -858,6 +935,7 @@ export class AdminApi {
             threadId: r.thread_id,
             messageCount: r.checkpoint_count,
             latestCheckpointId: r.latest_checkpoint_id,
+            ...(typeof r.title === "string" && r.title.trim().length > 0 ? { title: r.title } : {}),
           }));
           res.json(summaries);
         } catch (err) {
@@ -975,6 +1053,295 @@ function requireAuthUser(
     return null;
   }
   return user;
+}
+
+function buildTopologyPayload(params: {
+  config: GloveConfig;
+  toolRegistry: ToolDefinition[];
+  agentCapabilities: AgentCapabilityEntry[];
+}): TopologyPayload {
+  const { config, toolRegistry, agentCapabilities } = params;
+  const nodes: TopologyNode[] = [];
+  const edges: TopologyEdge[] = [];
+
+  const nodeById = new Map<string, TopologyNode>();
+  const edgeById = new Set<string>();
+
+  const hasText = (value: string | null | undefined): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+
+  const addNode = (node: TopologyNode): void => {
+    const existing = nodeById.get(node.id);
+    if (existing) {
+      const mergedNode: TopologyNode = {
+        ...existing,
+        ...node,
+        key: hasText(node.key) ? node.key : existing.key,
+        label: hasText(node.label) ? node.label : existing.label,
+        meta: {
+          ...(existing.meta ?? {}),
+          ...(node.meta ?? {}),
+        },
+      };
+
+      nodeById.set(node.id, mergedNode);
+      const existingIndex = nodes.findIndex((entry) => entry.id === node.id);
+      if (existingIndex !== -1) {
+        nodes[existingIndex] = mergedNode;
+      }
+      return;
+    }
+
+    nodeById.set(node.id, node);
+    nodes.push(node);
+  };
+
+  const addEdge = (edge: TopologyEdge): void => {
+    if (edgeById.has(edge.id)) return;
+    edgeById.add(edge.id);
+    edges.push(edge);
+  };
+
+  const graphNodeId = (key: string) => `graph:${key}`;
+  const agentNodeId = (key: string) => `agent:${key}`;
+  const subgraphNodeId = (key: string) => `subgraph:${key}`;
+  const modelNodeId = (key: string) => `model:${key}`;
+  const toolNodeId = (key: string) => `tool:${key}`;
+
+  const knownToolNames = new Set<string>(toolRegistry.map((tool) => tool.name));
+  const fallbackToolNames = new Set<string>();
+
+  for (const [graphKey, graphEntry] of Object.entries(config.graphs as Record<string, GraphEntry>)) {
+    addNode({
+      id: graphNodeId(graphKey),
+      type: "graph",
+      key: graphKey,
+      label: graphKey,
+      meta: {
+        orchestratorAgentKey: graphEntry.orchestratorAgentKey,
+        subAgentCount: graphEntry.subAgentKeys?.length ?? 0,
+      },
+    });
+
+    const orchestratorId = agentNodeId(graphEntry.orchestratorAgentKey);
+    addNode({
+      id: orchestratorId,
+      type: "agent",
+      key: graphEntry.orchestratorAgentKey,
+      label: graphEntry.orchestratorAgentKey,
+      meta: { role: "orchestrator" },
+    });
+    addEdge({
+      id: `${graphNodeId(graphKey)}->${orchestratorId}:graph-orchestrator`,
+      source: graphNodeId(graphKey),
+      target: orchestratorId,
+      relation: "graph-orchestrator",
+    });
+
+    for (const subAgentKey of graphEntry.subAgentKeys ?? []) {
+      const subAgentId = agentNodeId(subAgentKey);
+      addNode({
+        id: subAgentId,
+        type: "agent",
+        key: subAgentKey,
+        label: subAgentKey,
+        meta: { role: "sub-agent" },
+      });
+      addEdge({
+        id: `${graphNodeId(graphKey)}->${subAgentId}:graph-sub-agent`,
+        source: graphNodeId(graphKey),
+        target: subAgentId,
+        relation: "graph-sub-agent",
+      });
+    }
+
+    const memorySubgraph = graphEntry.subgraphs?.memory;
+    if (memorySubgraph) {
+      const subgraphId = subgraphNodeId(memorySubgraph);
+      addNode({
+        id: subgraphId,
+        type: "subgraph",
+        key: memorySubgraph,
+        label: memorySubgraph,
+        meta: { role: "memory" },
+      });
+      addEdge({
+        id: `${graphNodeId(graphKey)}->${subgraphId}:graph-memory-subgraph`,
+        source: graphNodeId(graphKey),
+        target: subgraphId,
+        relation: "graph-memory-subgraph",
+      });
+    }
+
+    for (const [compressionRole, compressionSubgraph] of Object.entries(graphEntry.subgraphs?.compression ?? {})) {
+      const subgraphId = subgraphNodeId(compressionSubgraph);
+      addNode({
+        id: subgraphId,
+        type: "subgraph",
+        key: compressionSubgraph,
+        label: compressionSubgraph,
+        meta: { role: "compression" },
+      });
+      addEdge({
+        id: `${graphNodeId(graphKey)}->${subgraphId}:${compressionRole}:graph-compression-subgraph`,
+        source: graphNodeId(graphKey),
+        target: subgraphId,
+        relation: "graph-compression-subgraph",
+        meta: { compressionRole },
+      });
+    }
+  }
+
+  for (const [subgraphKey, profile] of Object.entries(config.subgraphs as Record<string, SubgraphProfile>)) {
+    const subgraphId = subgraphNodeId(subgraphKey);
+    addNode({
+      id: subgraphId,
+      type: "subgraph",
+      key: subgraphKey,
+      label: subgraphKey,
+      meta: {
+        hasCompression: Boolean(profile.compression),
+      },
+    });
+
+    if (profile.agentKey) {
+      const linkedAgentId = agentNodeId(profile.agentKey);
+      addNode({
+        id: linkedAgentId,
+        type: "agent",
+        key: profile.agentKey,
+        label: profile.agentKey,
+      });
+      addEdge({
+        id: `${subgraphId}->${linkedAgentId}:subgraph-agent`,
+        source: subgraphId,
+        target: linkedAgentId,
+        relation: "subgraph-agent",
+      });
+    }
+  }
+
+  for (const [agentKey, agentEntry] of Object.entries(config.agents as Record<string, AgentEntry>)) {
+    const agentId = agentNodeId(agentKey);
+    const modelKey = agentEntry.modelKey ?? "default";
+    addNode({
+      id: agentId,
+      type: "agent",
+      key: agentKey,
+      label: agentKey,
+      meta: {
+        description: agentEntry.description ?? "",
+      },
+    });
+
+    addNode({
+      id: modelNodeId(modelKey),
+      type: "model",
+      key: modelKey,
+      label: modelKey,
+    });
+    addEdge({
+      id: `${agentId}->${modelNodeId(modelKey)}:agent-model`,
+      source: agentId,
+      target: modelNodeId(modelKey),
+      relation: "agent-model",
+    });
+  }
+
+  for (const modelKey of Object.keys(config.models)) {
+    addNode({
+      id: modelNodeId(modelKey),
+      type: "model",
+      key: modelKey,
+      label: modelKey,
+    });
+  }
+
+  for (const tool of toolRegistry) {
+    addNode({
+      id: toolNodeId(tool.name),
+      type: "tool",
+      key: tool.name,
+      label: tool.name,
+      meta: {
+        description: tool.description,
+        requiresPrivilegedAccess: Boolean(tool.requiresPrivilegedAccess),
+      },
+    });
+  }
+
+  for (const capability of agentCapabilities) {
+    const agentId = agentNodeId(capability.key);
+    addNode({
+      id: agentId,
+      type: "agent",
+      key: capability.key,
+      label: capability.key,
+      meta: {
+        description: capability.description,
+      },
+    });
+
+    const modelId = modelNodeId(capability.modelKey);
+    addNode({
+      id: modelId,
+      type: "model",
+      key: capability.modelKey,
+      label: capability.modelKey,
+    });
+    addEdge({
+      id: `${agentId}->${modelId}:agent-model`,
+      source: agentId,
+      target: modelId,
+      relation: "agent-model",
+    });
+
+    const capabilityTools = capability.tools ?? [...knownToolNames];
+    for (const toolName of capabilityTools) {
+      if (!knownToolNames.has(toolName)) {
+        fallbackToolNames.add(toolName);
+      }
+
+      const toolId = toolNodeId(toolName);
+      addNode({
+        id: toolId,
+        type: "tool",
+        key: toolName,
+        label: toolName,
+      });
+      addEdge({
+        id: `${agentId}->${toolId}:agent-tool`,
+        source: agentId,
+        target: toolId,
+        relation: "agent-tool",
+        meta: {
+          unrestrictedToolAccess: capability.tools === null,
+        },
+      });
+    }
+  }
+
+  for (const toolName of fallbackToolNames) {
+    addNode({
+      id: toolNodeId(toolName),
+      type: "tool",
+      key: toolName,
+      label: toolName,
+    });
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    nodes,
+    edges,
+    counts: {
+      graphs: nodes.filter((node) => node.type === "graph").length,
+      agents: nodes.filter((node) => node.type === "agent").length,
+      subgraphs: nodes.filter((node) => node.type === "subgraph").length,
+      models: nodes.filter((node) => node.type === "model").length,
+      tools: nodes.filter((node) => node.type === "tool").length,
+    },
+  };
 }
 
 /** Extract the RP ID (hostname only) from a full origin URL. */

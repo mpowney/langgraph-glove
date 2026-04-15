@@ -8,6 +8,7 @@ import {
 import type { StructuredToolInterface } from "@langchain/core/tools";
 import { tool } from "@langchain/core/tools";
 import type { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import type { RunnableConfig } from "@langchain/core/runnables";
 import { randomUUID } from "node:crypto";
 import {
   StateGraph,
@@ -22,6 +23,29 @@ import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { z } from "zod";
 import { storeToolPayload } from "./toolPayloadCache";
 
+const COMPRESSION_STATE_PREFIX = "[glove-compression-state]";
+const DEFAULT_COMPRESSION_MODE = "research-digest";
+
+interface CompressionStatePayload {
+  toolName: string;
+  mode: string;
+  digest: string;
+  sourceMessageCount: number;
+  compressedMessageCount: number;
+  compressedChars: number;
+  updatedAt: string;
+}
+
+export interface CompressionRuntimeConfig {
+  tool: StructuredToolInterface;
+  toolName: string;
+  mode: string;
+  preserveRecentMessages: number;
+  messageCountThreshold: number;
+  charThreshold: number;
+  maxDigestChars: number;
+}
+
 // ---------------------------------------------------------------------------
 // Single-agent ReAct graph
 // ---------------------------------------------------------------------------
@@ -30,6 +54,7 @@ export interface SingleAgentGraphConfig {
   model: BaseChatModel;
   tools: StructuredToolInterface[];
   systemPrompt?: string;
+  compression?: CompressionRuntimeConfig;
   /** Pass a checkpointer for standalone use. Omit when the graph will be used as a subgraph. */
   checkpointer?: BaseCheckpointSaver;
 }
@@ -80,11 +105,25 @@ function summarizeOversizedToolMessage(message: ToolMessage): ToolMessage {
   const typed = message as ToolMessage & {
     tool_call_id?: string;
     name?: string;
+    additional_kwargs?: unknown;
   };
+
+  const linkedToolCallId = typeof typed.tool_call_id === "string"
+    ? typed.tool_call_id
+    : (() => {
+        const raw = typed.additional_kwargs;
+        if (!raw || typeof raw !== "object") return undefined;
+        const rawId = (raw as { tool_call_id?: unknown }).tool_call_id;
+        return typeof rawId === "string" ? rawId : undefined;
+      })();
+
+  if (!linkedToolCallId) {
+    return message;
+  }
 
   return new ToolMessage({
     content: summary,
-    tool_call_id: typed.tool_call_id,
+    tool_call_id: linkedToolCallId,
     name: typed.name,
   });
 }
@@ -96,6 +135,86 @@ function summarizeMessagesForModel(messages: BaseMessage[]): BaseMessage[] {
     }
     return message;
   });
+}
+
+function isCompressionStateMessage(message: BaseMessage): boolean {
+  return message instanceof SystemMessage
+    && typeof message.content === "string"
+    && message.content.startsWith(COMPRESSION_STATE_PREFIX);
+}
+
+function parseCompressionStateMessage(message: BaseMessage): CompressionStatePayload | null {
+  if (!isCompressionStateMessage(message)) return null;
+  const [, rawJson = ""] = String(message.content).split("\n", 2);
+  if (!rawJson.trim()) return null;
+
+  try {
+    const parsed = JSON.parse(rawJson) as Partial<CompressionStatePayload>;
+    if (
+      typeof parsed.toolName !== "string"
+      || typeof parsed.digest !== "string"
+      || typeof parsed.sourceMessageCount !== "number"
+    ) {
+      return null;
+    }
+    return {
+      toolName: parsed.toolName,
+      mode: typeof parsed.mode === "string" ? parsed.mode : DEFAULT_COMPRESSION_MODE,
+      digest: parsed.digest,
+      sourceMessageCount: parsed.sourceMessageCount,
+      compressedMessageCount:
+        typeof parsed.compressedMessageCount === "number" ? parsed.compressedMessageCount : 0,
+      compressedChars: typeof parsed.compressedChars === "number" ? parsed.compressedChars : 0,
+      updatedAt: typeof parsed.updatedAt === "string" ? parsed.updatedAt : new Date().toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function createCompressionStateMessage(state: CompressionStatePayload): SystemMessage {
+  return new SystemMessage(
+    `${COMPRESSION_STATE_PREFIX}\n${JSON.stringify(state)}`,
+  );
+}
+
+function getLatestCompressionState(messages: BaseMessage[]): CompressionStatePayload | null {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const parsed = parseCompressionStateMessage(messages[i]);
+    if (parsed) return parsed;
+  }
+  return null;
+}
+
+function stripCompressionStateMessages(messages: BaseMessage[]): BaseMessage[] {
+  return messages.filter((message) => !isCompressionStateMessage(message));
+}
+
+function getVisibleConversationMessages(messages: BaseMessage[]): {
+  compressionState: CompressionStatePayload | null;
+  visibleMessages: BaseMessage[];
+} {
+  const compressionState = getLatestCompressionState(messages);
+  const conversationMessages = stripCompressionStateMessages(messages);
+  if (!compressionState) {
+    return { compressionState, visibleMessages: conversationMessages };
+  }
+
+  const startIndex = Math.max(0, Math.min(compressionState.sourceMessageCount, conversationMessages.length));
+  return {
+    compressionState,
+    visibleMessages: conversationMessages.slice(startIndex),
+  };
+}
+
+function buildCompressionDigestMessage(digest: string): SystemMessage {
+  return new SystemMessage(
+    [
+      "Compressed prior context for continuity.",
+      "Use this digest as authoritative for older conversation history that is no longer included verbatim.",
+      digest,
+    ].join("\n\n"),
+  );
 }
 
 function stripCodeFence(text: string): string {
@@ -234,6 +353,222 @@ function messageText(content: unknown): string {
   }
 }
 
+function messageRoleLabel(message: BaseMessage): string {
+  if (message instanceof HumanMessage) return "human";
+  if (message instanceof AIMessage) return "assistant";
+  if (message instanceof ToolMessage) {
+    const typed = message as ToolMessage & { name?: string };
+    return typed.name ? `tool:${typed.name}` : "tool";
+  }
+  if (message instanceof SystemMessage) return "system";
+  return message.getType();
+}
+
+function formatMessagesForCompression(messages: BaseMessage[]): string {
+  return messages
+    .map((message) => {
+      const parts = [`[${messageRoleLabel(message)}]`];
+
+      if (message instanceof AIMessage && message.tool_calls?.length) {
+        const toolNames = message.tool_calls.map((toolCall) => toolCall.name).join(", ");
+        parts.push(`tool_calls: ${toolNames}`);
+      }
+
+      const text = messageText(message.content).trim();
+      if (text) parts.push(text);
+      return parts.join("\n");
+    })
+    .join("\n\n");
+}
+
+function visibleMessageCharCount(messages: BaseMessage[]): number {
+  return messages.reduce((total, message) => total + messageText(message.content).length, 0);
+}
+
+function parseCompressionToolResult(result: unknown): string {
+  if (typeof result !== "string") {
+    if (result && typeof result === "object" && typeof (result as { digest?: unknown }).digest === "string") {
+      return ((result as { digest?: string }).digest ?? "").trim();
+    }
+    return "";
+  }
+
+  const trimmed = result.trim();
+  if (!trimmed) return "";
+
+  try {
+    const parsed = JSON.parse(trimmed) as { digest?: unknown };
+    return typeof parsed.digest === "string" ? parsed.digest.trim() : "";
+  } catch {
+    return trimmed;
+  }
+}
+
+function isAiLikeMessage(message: BaseMessage): boolean {
+  return message instanceof AIMessage || message.getType() === "ai";
+}
+
+function isToolLikeMessage(message: BaseMessage): boolean {
+  return message instanceof ToolMessage || message.getType() === "tool";
+}
+
+function extractToolCallIdsFromAiMessage(message: BaseMessage): string[] {
+  const ids: string[] = [];
+  const typedMessage = message as AIMessage & { tool_calls?: unknown; additional_kwargs?: unknown };
+
+  if (Array.isArray(typedMessage.tool_calls)) {
+    for (const toolCall of typedMessage.tool_calls as Array<{ id?: unknown }>) {
+      if (typeof toolCall?.id === "string" && toolCall.id.trim().length > 0) {
+        ids.push(toolCall.id);
+      }
+    }
+  }
+
+  const rawAdditional = typedMessage.additional_kwargs;
+  if (rawAdditional && typeof rawAdditional === "object") {
+    const typedAdditional = rawAdditional as { tool_calls?: unknown };
+    if (Array.isArray(typedAdditional.tool_calls)) {
+      for (const rawCall of typedAdditional.tool_calls) {
+        if (!rawCall || typeof rawCall !== "object") continue;
+        const id = (rawCall as { id?: unknown }).id;
+        if (typeof id === "string" && id.trim().length > 0) {
+          ids.push(id);
+        }
+      }
+    }
+  }
+
+  return Array.from(new Set(ids));
+}
+
+function extractToolCallIdFromToolMessage(message: BaseMessage): string | undefined {
+  const typed = message as ToolMessage & { tool_call_id?: string; additional_kwargs?: unknown };
+  if (typeof typed.tool_call_id === "string" && typed.tool_call_id.trim().length > 0) {
+    return typed.tool_call_id;
+  }
+
+  const rawAdditional = typed.additional_kwargs;
+  if (rawAdditional && typeof rawAdditional === "object") {
+    const rawId = (rawAdditional as { tool_call_id?: unknown }).tool_call_id;
+    if (typeof rawId === "string" && rawId.trim().length > 0) {
+      return rawId;
+    }
+  }
+
+  return undefined;
+}
+
+function sanitizeToolMessageSequence(messages: BaseMessage[]): BaseMessage[] {
+  const pendingToolCallIds: string[] = [];
+  const sanitized: BaseMessage[] = [];
+
+  const flushPendingWithPlaceholders = (): void => {
+    while (pendingToolCallIds.length > 0) {
+      const toolCallId = pendingToolCallIds.shift();
+      if (!toolCallId) continue;
+      sanitized.push(
+        new ToolMessage({
+          content:
+            "[tool response synthesized to repair message history after context compression; original tool output unavailable]",
+          tool_call_id: toolCallId,
+        }),
+      );
+    }
+  };
+
+  for (const message of messages) {
+    if (isAiLikeMessage(message)) {
+      if (pendingToolCallIds.length > 0) {
+        flushPendingWithPlaceholders();
+      }
+
+      const toolCallIds = extractToolCallIdsFromAiMessage(message);
+      if (toolCallIds.length > 0) {
+        for (const toolCallId of toolCallIds) {
+          pendingToolCallIds.push(toolCallId);
+        }
+      }
+      sanitized.push(message);
+      continue;
+    }
+
+    if (isToolLikeMessage(message)) {
+      const typed = message as BaseMessage & { content: unknown; name?: unknown };
+      const toolCallId = extractToolCallIdFromToolMessage(message as ToolMessage);
+
+      if (pendingToolCallIds.length === 0) {
+        // Orphaned tool message with no pending assistant tool_calls.
+        continue;
+      }
+
+      if (toolCallId && pendingToolCallIds.includes(toolCallId)) {
+        const index = pendingToolCallIds.indexOf(toolCallId);
+        pendingToolCallIds.splice(index, 1);
+        const toolName = typeof (typed as { name?: unknown }).name === "string"
+          ? String((typed as { name?: unknown }).name)
+          : undefined;
+        sanitized.push(
+          new ToolMessage({
+            content: typed.content,
+            tool_call_id: toolCallId,
+            ...(toolName ? { name: toolName } : {}),
+          }),
+        );
+        continue;
+      }
+
+      const repairedToolCallId = pendingToolCallIds.shift();
+      if (!repairedToolCallId) continue;
+
+      const toolName = typeof typed.name === "string"
+        ? String(typed.name)
+        : undefined;
+
+      sanitized.push(
+        new ToolMessage({
+          content: typed.content,
+          tool_call_id: repairedToolCallId,
+          ...(toolName ? { name: toolName } : {}),
+        }),
+      );
+      continue;
+    }
+
+    if (pendingToolCallIds.length > 0) {
+      flushPendingWithPlaceholders();
+    }
+
+    sanitized.push(message);
+  }
+
+  if (pendingToolCallIds.length > 0) {
+    flushPendingWithPlaceholders();
+  }
+
+  return sanitized;
+}
+
+function buildMessagesForModel(params: {
+  messages: BaseMessage[];
+  systemPrompt?: string;
+  compression?: CompressionRuntimeConfig;
+}): BaseMessage[] {
+  const visibleState = params.compression
+    ? getVisibleConversationMessages(params.messages)
+    : { compressionState: null, visibleMessages: params.messages };
+  const rawMessages: BaseMessage[] = [];
+
+  if (params.systemPrompt) {
+    rawMessages.push(new SystemMessage(params.systemPrompt));
+  }
+  if (visibleState.compressionState?.digest) {
+    rawMessages.push(buildCompressionDigestMessage(visibleState.compressionState.digest));
+  }
+
+  rawMessages.push(...visibleState.visibleMessages);
+  return summarizeMessagesForModel(sanitizeToolMessageSequence(rawMessages));
+}
+
 function normalizeErrorMessage(text: string): string {
   return text
     .toLowerCase()
@@ -293,7 +628,7 @@ function buildToolFailureResponse(messages: BaseMessage[]): AIMessage {
  * the parent graph handles persistence.
  */
 export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
-  const { model, tools, systemPrompt, checkpointer } = config;
+  const { model, tools, systemPrompt, compression, checkpointer } = config;
 
   if (!model.bindTools) {
     throw new Error(
@@ -311,10 +646,11 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
     config?: unknown,
   ) => {
     const toolExecutionContext = readToolExecutionContext(config);
-    const rawMessages: BaseMessage[] = systemPrompt
-      ? [new SystemMessage(systemPrompt), ...state.messages]
-      : [...state.messages];
-    const messages = summarizeMessagesForModel(rawMessages);
+    const messages = buildMessagesForModel({
+      messages: state.messages,
+      systemPrompt,
+      compression,
+    });
     const response = await modelWithTools.invoke(messages);
 
     // Some local models emit JSON tool intents as plain text instead of native
@@ -363,17 +699,109 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
     return { messages: [buildToolFailureResponse(state.messages)] };
   };
 
+  const maybeCompressNode = async (
+    state: typeof MessagesAnnotation.State,
+    runtimeConfig?: unknown,
+  ) => {
+    if (!compression) return {};
+
+    const { compressionState, visibleMessages } = getVisibleConversationMessages(state.messages);
+    const visibleChars = visibleMessageCharCount(visibleMessages);
+    const shouldCompress =
+      visibleMessages.length >= compression.messageCountThreshold
+      || visibleChars >= compression.charThreshold;
+    if (!shouldCompress) {
+      return {};
+    }
+
+    // Find a safe cut point that never splits a tool_calls/ToolMessage pair.
+    // Never start the preserved tail with a ToolMessage (it would be orphaned),
+    // and never end the compressible region with an AIMessage that has pending
+    // tool_calls whose ToolMessage responses remain in the preserved region.
+    let safeCut = Math.max(0, visibleMessages.length - compression.preserveRecentMessages);
+    while (safeCut > 0) {
+      const msgAtCut = visibleMessages[safeCut];
+      const msgBeforeCut = visibleMessages[safeCut - 1];
+      if (msgAtCut && isToolLikeMessage(msgAtCut)) {
+        // Don't start the preserved tail with a ToolMessage (would be orphaned).
+        safeCut--;
+        continue;
+      }
+      if (msgBeforeCut && isAiLikeMessage(msgBeforeCut)) {
+        const toolCallIds = extractToolCallIdsFromAiMessage(msgBeforeCut);
+        if (toolCallIds.length > 0) {
+          // Only block this cut if matching ToolMessage responses are in the
+          // preserved tail; if all responses are already in the compressible
+          // region, this cut is safe.
+          const hasToolResponseInPreserved = visibleMessages
+            .slice(safeCut)
+            .some((msg) => {
+              if (!isToolLikeMessage(msg)) return false;
+              const id = extractToolCallIdFromToolMessage(msg);
+              return id !== undefined && toolCallIds.includes(id);
+            });
+          if (hasToolResponseInPreserved) {
+            safeCut--;
+            continue;
+          }
+        }
+      }
+      break;
+    }
+    if (safeCut <= 0) {
+      return {};
+    }
+
+    const compressibleMessages = visibleMessages.slice(0, safeCut);
+    const transcript = formatMessagesForCompression(compressibleMessages);
+    if (!transcript.trim()) return {};
+
+    const compressionInvokeConfig: RunnableConfig = {
+      ...(runtimeConfig as RunnableConfig | undefined),
+      runName: compression.toolName,
+    };
+
+    const compressionResult = await compression.tool.invoke(
+      {
+        mode: compression.mode,
+        currentDigest: compressionState?.digest,
+        transcript,
+        maxDigestChars: compression.maxDigestChars,
+      },
+      compressionInvokeConfig,
+    );
+    const digest = parseCompressionToolResult(compressionResult);
+    if (!digest) return {};
+
+    const nextSourceMessageCount = (compressionState?.sourceMessageCount ?? 0) + compressibleMessages.length;
+    return {
+      messages: [
+        createCompressionStateMessage({
+          toolName: compression.toolName,
+          mode: compression.mode,
+          digest,
+          sourceMessageCount: nextSourceMessageCount,
+          compressedMessageCount: compressibleMessages.length,
+          compressedChars: transcript.length,
+          updatedAt: new Date().toISOString(),
+        }),
+      ],
+    };
+  };
+
   const routeAfterTools = (
     state: typeof MessagesAnnotation.State,
-  ): "agent" | "tool_failure_stop" => {
-    return hasRepeatedRecentToolFailure(state.messages) ? "tool_failure_stop" : "agent";
+  ): "maybe_compress" | "tool_failure_stop" => {
+    return hasRepeatedRecentToolFailure(state.messages) ? "tool_failure_stop" : "maybe_compress";
   };
 
   return new StateGraph(MessagesAnnotation)
+    .addNode("maybe_compress", maybeCompressNode)
     .addNode("agent", callAgent)
     .addNode("tools", toolNode)
     .addNode("tool_failure_stop", toolFailureStopNode)
-    .addEdge(START, "agent")
+    .addEdge(START, "maybe_compress")
+    .addEdge("maybe_compress", "agent")
     .addConditionalEdges("agent", routeAfterAgent)
     .addConditionalEdges("tools", routeAfterTools)
     .addEdge("tool_failure_stop", END)
@@ -395,6 +823,8 @@ export interface SubAgentDef {
   systemPrompt?: string;
   /** Maximum LangGraph recursion limit for this sub-agent invocation. */
   recursionLimit?: number;
+  /** Optional runtime-managed context compression for this sub-agent. */
+  compression?: CompressionRuntimeConfig;
 }
 
 export interface OrchestratorGraphConfig {
@@ -512,6 +942,7 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
         model: sa.model,
         tools: sa.tools,
         systemPrompt: sa.systemPrompt,
+        compression: sa.compression,
         // No checkpointer — parent graph owns persistence
       }),
     );
@@ -522,7 +953,7 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
     const rawMessages: BaseMessage[] = orchestrator.systemPrompt
       ? [new SystemMessage(orchestrator.systemPrompt), ...state.messages]
       : [...state.messages];
-    const messages = summarizeMessagesForModel(rawMessages);
+    const messages = summarizeMessagesForModel(sanitizeToolMessageSequence(rawMessages));
 
     const response = await orchestratorModelWithTools.invoke(messages);
 
@@ -533,22 +964,31 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
       );
       if (handoffCall) {
         const targetAgent = handoffCall.name.replace(/^transfer_to_/, "");
-        // Respond to the handoff tool call so the conversation stays valid,
-        // then route to the sub-agent via Command.
-        const toolResponse = new ToolMessage({
-          content: (() => {
-            const req =
-              typeof handoffCall.args?.request === "string" ? handoffCall.args.request.trim() : "";
-            return req
-              ? `Transferring to ${targetAgent} agent. Task: ${req}`
-              : `Transferring to ${targetAgent} agent.`;
-          })(),
-          tool_call_id: handoffCall.id!,
-        });
+        // Respond to every tool_call id so provider-side message validation
+        // stays consistent even when the model emitted extra calls.
+        const handoffToolResponses = response.tool_calls
+          .filter((tc) => typeof tc.id === "string" && tc.id.trim().length > 0)
+          .map((tc) => {
+            const isHandoff = tc.id === handoffCall.id;
+            const content = isHandoff
+              ? (() => {
+                  const req =
+                    typeof handoffCall.args?.request === "string" ? handoffCall.args.request.trim() : "";
+                  return req
+                    ? `Transferring to ${targetAgent} agent. Task: ${req}`
+                    : `Transferring to ${targetAgent} agent.`;
+                })()
+              : `Skipped tool call \"${tc.name}\" because orchestrator delegated to ${targetAgent}.`;
+            return new ToolMessage({
+              content,
+              tool_call_id: tc.id!,
+              ...(tc.name ? { name: tc.name } : {}),
+            });
+          });
 
         return new Command({
           goto: targetAgent as never,
-          update: { messages: [response, toolResponse] },
+          update: { messages: [response, ...handoffToolResponses] },
         });
       }
     }
@@ -557,15 +997,27 @@ export function buildOrchestratorGraph(config: OrchestratorGraphConfig) {
     // native tool calls. Detect and treat it as a handoff anyway.
     const textHandoff = extractTextHandoff(response.content);
     if (textHandoff) {
+      const syntheticToolCallId = `text_handoff_${randomUUID()}`;
+      const syntheticHandoffCall = new AIMessage({
+        content: "",
+        tool_calls: [
+          {
+            id: syntheticToolCallId,
+            name: `transfer_to_${textHandoff.targetAgent}`,
+            args: { request: textHandoff.request },
+          },
+        ],
+      });
       const toolResponse = new ToolMessage({
         content: textHandoff.request
           ? `Transferring to ${textHandoff.targetAgent} agent. Task: ${textHandoff.request}`
           : `Transferring to ${textHandoff.targetAgent} agent.`,
-        tool_call_id: "text_handoff_fallback",
+        tool_call_id: syntheticToolCallId,
+        name: `transfer_to_${textHandoff.targetAgent}`,
       });
       return new Command({
         goto: textHandoff.targetAgent as never,
-        update: { messages: [response, toolResponse] },
+        update: { messages: [response, syntheticHandoffCall, toolResponse] },
       });
     }
 

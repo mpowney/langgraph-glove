@@ -94,6 +94,8 @@ interface AppHeaderProps {
   appInfo: AppInfo | null;
   status: ConnectionStatus;
   onOpenControlPanel: () => void;
+  /** Generated conversation title for the current session. Replaces agentDescription when present. */
+  conversationTitle?: string;
   /** Currently active personal token (empty string = none). */
   personalToken: string;
   onSetPersonalToken: (token: string) => void;
@@ -113,6 +115,7 @@ export function AppHeader({
   appInfo,
   status,
   onOpenControlPanel,
+  conversationTitle,
   personalToken,
   onSetPersonalToken,
   passkeyEnabled = false,
@@ -181,9 +184,9 @@ export function AppHeader({
         <Text size={500} className={styles.title}>
           {appInfo?.name ?? "LangGraph Glove"}
         </Text>
-        {appInfo?.agentDescription && (
+        {(conversationTitle ?? appInfo?.agentDescription) && (
           <Text size={200} className={styles.description}>
-            {appInfo.agentDescription}
+            {conversationTitle ?? appInfo?.agentDescription}
           </Text>
         )}
       </div>

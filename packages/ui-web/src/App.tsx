@@ -15,8 +15,8 @@ import { useWebSocket } from "./hooks/useWebSocket";
 import { useAppInfo } from "./hooks/useAppInfo";
 import { useTheme } from "./hooks/useTheme";
 import { AppHeader } from "./components/AppHeader";
-import { ChatArea } from "./components/ChatArea";
-import { InputBar } from "./components/InputBar";
+import { ChatArea } from "./components/chat/ChatArea";
+import { InputBar } from "./components/chat/InputBar";
 import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
@@ -30,6 +30,7 @@ import { createUuid } from "./uuid";
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
 const SHOW_DETAILS_KEY = "glove_show_accordion_and_sub_agents";
+const SHOW_INLINE_PROCESSING_MESSAGES_KEY = "glove_show_inline_processing_messages";
 const SHOW_SYSTEM_MESSAGES_KEY = "glove_show_system_messages";
 
 function resolveAuthApiBaseUrl(rawApiUrl: string | undefined): string | null {
@@ -88,7 +89,7 @@ function App() {
   const webSocketPersonalToken = shouldConnect ? personalToken || undefined : undefined;
   const webSocketPrivilegeGrantId = shouldConnect ? privilegedGrantId || undefined : undefined;
   const webSocketAuthToken = shouldConnect ? auth.token ?? undefined : undefined;
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(
+  const { messages, sendMessage, status, myConversationId, conversationTitles } = useWebSocket(
     conversationId,
     webSocketPersonalToken,
     webSocketPrivilegeGrantId,
@@ -100,6 +101,9 @@ function App() {
   );
   const [showAccordionAndSubAgentMessages, setShowAccordionAndSubAgentMessages] = useState(
     () => localStorage.getItem(SHOW_DETAILS_KEY) !== "false",
+  );
+  const [showInlineProcessingMessages, setShowInlineProcessingMessages] = useState(
+    () => localStorage.getItem(SHOW_INLINE_PROCESSING_MESSAGES_KEY) !== "false",
   );
   const [showSystemMessages, setShowSystemMessages] = useState(
     () => localStorage.getItem(SHOW_SYSTEM_MESSAGES_KEY) !== "false",
@@ -120,6 +124,11 @@ function App() {
   const setShowAccordionAndSubAgentMessagesPersisted = useCallback((value: boolean) => {
     localStorage.setItem(SHOW_DETAILS_KEY, String(value));
     setShowAccordionAndSubAgentMessages(value);
+  }, []);
+
+  const setShowInlineProcessingMessagesPersisted = useCallback((value: boolean) => {
+    localStorage.setItem(SHOW_INLINE_PROCESSING_MESSAGES_KEY, String(value));
+    setShowInlineProcessingMessages(value);
   }, []);
 
   const setShowSystemMessagesPersisted = useCallback((value: boolean) => {
@@ -183,8 +192,8 @@ function App() {
   }, [privilegedExpiresAt]);
 
   const isStreaming = useMemo(
-    () => messages.some((m) => m.isStreaming),
-    [messages],
+    () => messages.some((m) => m.isStreaming && m.conversationId === myConversationId),
+    [messages, myConversationId],
   );
   const inputDisabled = status !== "connected" || isStreaming;
   const configuredToolsBaseUrl = (import.meta.env.VITE_TOOLS_URL as string | undefined)?.trim() ?? "";
@@ -306,6 +315,7 @@ function App() {
       <div className={styles.shell}>
         <AppHeader
           appInfo={appInfo}
+          conversationTitle={conversationTitles.get(myConversationId)}
           status={status}
           onOpenControlPanel={() => setControlPanelOpen(true)}
           personalToken={personalToken}
@@ -325,7 +335,9 @@ function App() {
           messages={visibleMessages}
           myConversationId={myConversationId}
           showAll={showAll}
+          conversationTitles={conversationTitles}
           showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
+          showInlineProcessingMessages={showInlineProcessingMessages}
           showSystemMessages={showSystemMessages}
           onRequestSwitchConversation={handleSwitchConversation}
           modelContextWindowTokens={appInfo?.modelContextWindowTokens}
@@ -374,6 +386,8 @@ function App() {
           onToggleShowAll={setShowAllPersisted}
           showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
           onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
+          showInlineProcessingMessages={showInlineProcessingMessages}
+          onToggleShowInlineProcessingMessages={setShowInlineProcessingMessagesPersisted}
           showSystemMessages={showSystemMessages}
           onToggleShowSystemMessages={setShowSystemMessagesPersisted}
           onStartNewConversation={handleStartNewConversation}

@@ -99,9 +99,12 @@ type ServerMessage =
       checkpoint?: CheckpointMetadata;
       /** Optional structured metadata carrying tool parameter schema and agent context. */
       toolEventMetadata?: ToolEventMetadata;
+      /** Optional tool name extracted from the message for UI access. */
+      toolName?: string;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
-  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
+  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
+  | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
 
 interface CheckpointRow {
   checkpoint_id: string;
@@ -322,6 +325,25 @@ export class WebChannel extends Channel {
       return;
     }
 
+    if (message.role === "conversation-metadata") {
+      let metadata: { title?: string } = {};
+      try {
+        const parsed = JSON.parse(message.text) as unknown;
+        if (parsed !== null && typeof parsed === "object") {
+          metadata = parsed as { title?: string };
+        }
+      } catch {
+        // malformed payload — broadcast empty metadata
+      }
+      const payload: ServerMessage = {
+        type: "conversation_metadata",
+        conversationId: message.conversationId,
+        metadata,
+      };
+      this.broadcast(message.conversationId, payload);
+      return;
+    }
+
     if (
       message.role === "tool-call"
       || message.role === "tool-result"
@@ -338,6 +360,7 @@ export class WebChannel extends Channel {
         conversationId: message.conversationId,
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
         ...(message.toolEventMetadata ? { toolEventMetadata: message.toolEventMetadata } : {}),
+        ...(message.toolName ? { toolName: message.toolName } : {}),
       };
       this.broadcast(message.conversationId, payload);
       return;

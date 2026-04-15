@@ -35,6 +35,7 @@ import { getChannelEntryByKey } from "./channels/Channel";
 import { createCliChannelFromConfig } from "./channels/CliChannel";
 import { createWebChannelFromConfig } from "./channels/WebChannel";
 import { createBlueBubblesChannelFromConfig } from "./channels/BlueBubblesChannel";
+import { createObservabilityChannelFromConfig } from "./channels/ObservabilityChannel";
 import { AuthService } from "./auth/AuthService";
 import { Logger } from "./logging";
 
@@ -184,6 +185,19 @@ if (webEntry && webEntry.enabled !== false) {
 const blueBubblesEntry = getChannelEntryByKey(channelsConfig, "bluebubbles");
 if (blueBubblesEntry && blueBubblesEntry.enabled !== false) {
   channels.push(createBlueBubblesChannelFromConfig(blueBubblesEntry));
+}
+
+const observabilityEntry = getChannelEntryByKey(channelsConfig, "observability");
+if (observabilityEntry && observabilityEntry.enabled !== false) {
+  channels.push(
+    createObservabilityChannelFromConfig(observabilityEntry, {
+      appInfo: {
+        name: "LangGraph Glove Observability",
+        description: "Topology view for graphs, agents, models, and tools",
+        apiUrl,
+      },
+    }),
+  );
 }
 
 const gateway = new Gateway({

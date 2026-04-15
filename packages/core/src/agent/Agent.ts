@@ -326,6 +326,17 @@ export interface AgentConfig {
    * message is dispatched, so observers can see which graph processed it.
    */
   graphInfo?: GraphDispatchInfo;
+  /**
+   * Optional callback fired after a turn completes with a final assistant
+   * response, regardless of whether the source channel used streaming.
+   */
+  onTurnComplete?: (params: {
+    conversationId: string;
+    userText: string;
+    assistantText: string;
+    sourceChannel: string;
+    graphKey?: string;
+  }) => void | Promise<void>;
 }
 
 /**
@@ -501,7 +512,8 @@ export class GloveAgent {
     text: string,
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
-    onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, metadata?: ToolEventMetadata) => void,
+    onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolName?: string, metadata?: ToolEventMetadata) => void,
+    onToolNameHint?: (toolCallId: string, toolName: string) => void,
     personalToken?: string,
     privilegeGrantId?: string,
     runtimeContext?: Record<string, unknown>,
@@ -628,6 +640,13 @@ export class GloveAgent {
           // Completed tool-call decisions — fire event, don't yield text.
           if (onToolEvent) {
             for (const [toolIndex, tc] of chunk.tool_calls.entries()) {
+              if (
+                typeof tc.id === "string"
+                && typeof tc.name === "string"
+                && !isGenericToolName(tc.name)
+              ) {
+                onToolNameHint?.(tc.id, tc.name);
+              }
               const bufferedArgs = consumeBufferedToolArgs(
                 { id: tc.id, name: tc.name },
                 toolIndex,
@@ -660,7 +679,7 @@ export class GloveAgent {
                         }
                       })()
                     : "";
-                onToolEvent("agent-transfer", JSON.stringify({ agent: targetAgent, request }));
+                onToolEvent("agent-transfer", JSON.stringify({ agent: targetAgent, request }), undefined);
               }
             }
           }
@@ -885,10 +904,18 @@ export class GloveAgent {
     // Forward tool calls, results, and agent transfers to receiveAgentProcessing channels.
     const toolLookup = this.config.toolLookup;
     const onToolEvent = observabilityTargets.length
-      ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolEventMetadata?: ToolEventMetadata): void => {
+      ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolName?: string, toolEventMetadata?: ToolEventMetadata): void => {
+          const resolvedToolName = (() => {
+            if (toolName && !isGenericToolName(toolName)) return toolName;
+            const metaToolName = toolEventMetadata?.tool?.name;
+            if (typeof metaToolName === "string" && !isGenericToolName(metaToolName)) {
+              return metaToolName;
+            }
+            return toolName;
+          })();
           for (const ch of observabilityTargets) {
             ch
-              .sendMessage({ conversationId: message.conversationId, text, role, toolEventMetadata })
+              .sendMessage({ conversationId: message.conversationId, text, role, toolName: resolvedToolName, toolEventMetadata })
               .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
           }
         }
@@ -897,6 +924,7 @@ export class GloveAgent {
     // Emit tool-call and tool-result events from callback hooks so UI
     // observability does not depend on provider-specific stream chunk types.
     const toolRunNameByRunId = new Map<string, string>();
+    const toolNameByCallId = new Map<string, string>();
     const toolStartCallback = onToolEvent
       ? BaseCallbackHandler.fromMethods({
           handleToolStart: (
@@ -905,15 +933,24 @@ export class GloveAgent {
             runId,
             _parentRunId,
             _tags,
-            _metadata,
+            metadata,
             runName,
             toolCallId,
           ): void => {
-            const toolName = resolveToolName(
+            const resolvedToolName = resolveToolName(
               typeof runName === "string" ? runName : undefined,
               tool,
               typeof toolCallId === "string" ? toolCallId : undefined,
+              metadata,
             );
+            const hintedToolName =
+              typeof toolCallId === "string"
+                ? toolNameByCallId.get(toolCallId)
+                : undefined;
+            const toolName =
+              hintedToolName && !isGenericToolName(hintedToolName)
+                ? hintedToolName
+                : resolvedToolName;
             toolRunNameByRunId.set(String(runId), toolName);
             const args = parseJsonMaybe(input);
             const toolDef = toolLookup ? toolLookup(toolName) : undefined;
@@ -928,6 +965,7 @@ export class GloveAgent {
                 ...(toolCallId ? { id: toolCallId } : {}),
                 type: "tool_call",
               }),
+              toolName,
               meta,
             );
           },
@@ -947,7 +985,7 @@ export class GloveAgent {
             const meta: ToolEventMetadata | undefined = toolDef
               ? { tool: toolDef }
               : undefined;
-            onToolEvent("tool-result", JSON.stringify({ name: toolName, content }), meta);
+            onToolEvent("tool-result", JSON.stringify({ name: toolName, content }), toolName, meta);
           },
           handleToolError: (_error, runId): void => {
             toolRunNameByRunId.delete(String(runId));
@@ -975,6 +1013,26 @@ export class GloveAgent {
       sourceMetadata: safeSourceMetadata,
     };
 
+    const emitTurnComplete = (assistantText: string): void => {
+      if (!assistantText.trim()) return;
+      const onTurnComplete = this.config.onTurnComplete;
+      if (!onTurnComplete) return;
+      void Promise.resolve(
+        onTurnComplete({
+          conversationId: message.conversationId,
+          userText: message.text,
+          assistantText,
+          sourceChannel: sourceChannel.name,
+          graphKey: this.config.graphInfo?.graphKey,
+        }),
+      ).catch((err: unknown) => {
+        logger.error(
+          `onTurnComplete callback failed for conversation "${message.conversationId}"`,
+          err,
+        );
+      });
+    };
+
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
       const baseStream = this.stream(
@@ -982,6 +1040,9 @@ export class GloveAgent {
         message.conversationId,
         callbacks,
         onToolEvent,
+        (toolCallId, toolName) => {
+          toolNameByCallId.set(toolCallId, toolName);
+        },
         personalToken,
         privilegeGrantId,
         runtimeContext,
@@ -1005,6 +1066,7 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: fullText, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
         }
+        emitTurnComplete(fullText);
       } catch (err) {
         const detail = formatError(err);
         const canFallbackToInvoke = fullText.length === 0;
@@ -1036,6 +1098,7 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: fallbackResponse, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast fallback response to channel "${ch.name}"`, e));
         }
+        emitTurnComplete(fallbackResponse);
       } finally {
         this.activeConversations.delete(message.conversationId);
         this.stoppedConversations.delete(message.conversationId);
@@ -1058,6 +1121,7 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
         }
+        emitTurnComplete(response);
       } finally {
         this.activeConversations.delete(message.conversationId);
         this.stoppedConversations.delete(message.conversationId);

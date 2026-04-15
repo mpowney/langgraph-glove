@@ -15,11 +15,17 @@ import {
   type GloveConfig,
   type AgentEntry,
   type GraphEntry,
+  type SubgraphProfile,
   type ToolServerEntry,
   type ModelHealthResult,
 } from "@langgraph-glove/config";
 import { GloveAgent } from "../agent/Agent";
-import { buildSingleAgentGraph, buildOrchestratorGraph, type SubAgentDef } from "../agent/graphs";
+import {
+  buildSingleAgentGraph,
+  buildOrchestratorGraph,
+  type CompressionRuntimeConfig,
+  type SubAgentDef,
+} from "../agent/graphs";
 import { Logger } from "../logging/Logger";
 import { LogService } from "../logging/LogService";
 import { HttpRpcClient } from "../rpc/HttpRpcClient";
@@ -28,15 +34,18 @@ import type { RpcClient } from "../rpc/RpcClient";
 import { RemoteTool } from "../tools/RemoteTool";
 import { getToolPayloadRefTool } from "../tools/ToolPayloadRefTool";
 import { AdminApi } from "../api/AdminApi";
+import { ConversationMetadataService } from "../api/ConversationMetadataService";
 import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
 import { WebChannel } from "../channels/WebChannel";
 import type { ToolDefinition, AgentCapabilityEntry } from "../rpc/RpcProtocol";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
-import { resolveToolName } from "../agent/toolNameUtils.js";
+import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
 
 const logger = new Logger("Gateway");
+const CONVERSATION_TITLE_GRAPH_KEY = "conversation-title";
+const CONVERSATION_TITLE_MAX_CHARS = 80;
 
 export interface GatewayOptions {
   /** Path to the config directory. */
@@ -79,7 +88,10 @@ export class Gateway extends EventEmitter {
   private healthServer: HealthServer | null = null;
   private adminApi: AdminApi | null = null;
   private authService: AuthService | null = null;
+  private conversationMetadataService: ConversationMetadataService | null = null;
+  private readonly titleGenerationInFlight = new Set<string>();
   private shutdownHandlers: (() => void)[] = [];
+  private shutdownSignal: NodeJS.Signals | null = null;
 
   /** Discovered tool definitions, populated after `discoverTools()`. */
   private toolRegistry: ToolDefinition[] = [];
@@ -129,6 +141,8 @@ export class Gateway extends EventEmitter {
       // 4. Persistence
       const dbPath = this.config.gateway.dbPath ?? "data/checkpoints.sqlite";
       this.checkpointer = SqliteSaver.fromConnString(dbPath);
+      this.conversationMetadataService = new ConversationMetadataService(dbPath);
+      this.conversationMetadataService.ensureSchema();
       logger.info(`SQLite persistence: ${dbPath}`);
 
       // 5. Auth bootstrap
@@ -171,6 +185,14 @@ export class Gateway extends EventEmitter {
           orchestratorAgentKey: defaultGraphEntry.orchestratorAgentKey,
           subAgentKeys: defaultGraphEntry.subAgentKeys ?? [],
         },
+        onTurnComplete: ({ conversationId, userText, assistantText, graphKey }) => {
+          this.maybeScheduleConversationTitleGeneration({
+            graphKey: graphKey ?? "default",
+            conversationId,
+            userPrompt: userText,
+            assistantResponse: assistantText,
+          });
+        },
       });
 
       // 8. Channels
@@ -204,6 +226,7 @@ export class Gateway extends EventEmitter {
         host: apiHost,
         dbPath: this.config.gateway.dbPath,
         authService: this.authService,
+        config: this.config,
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
         toolRegistry: this.toolRegistry,
         agentCapabilities: this.agentCapabilities,
@@ -390,8 +413,14 @@ export class Gateway extends EventEmitter {
   private buildAgentGraph(
     allTools: StructuredToolInterface[],
     graphKey: string = "default",
+    options?: {
+      checkpointerOverride?: BaseCheckpointSaver | null;
+    },
   ) {
     const agents = this.config!.agents as Record<string, AgentEntry>;
+    const subgraphs = (this.config as GloveConfig & {
+      subgraphs?: Record<string, SubgraphProfile>;
+    }).subgraphs ?? {};
     const resolvedGraphEntry = this.config!.graphs[graphKey];
     if (!resolvedGraphEntry) {
       logger.warn(
@@ -400,30 +429,66 @@ export class Gateway extends EventEmitter {
     }
     const graphEntry: GraphEntry = resolvedGraphEntry ?? DEFAULT_GRAPH_ENTRY;
     const models = this.models!;
-    const checkpointer = this.checkpointer!;
+    const checkpointer = options?.checkpointerOverride === undefined
+      ? this.checkpointer!
+      : (options.checkpointerOverride ?? undefined);
 
     const orchestratorKey = graphEntry.orchestratorAgentKey;
-    const subAgentKeys = graphEntry.subAgentKeys ?? [];
+    const subAgentKeys = [...(graphEntry.subAgentKeys ?? [])];
+    const memorySubgraphKey = (graphEntry as GraphEntry & {
+      subgraphs?: { memory?: string };
+    }).subgraphs?.memory;
+    const memorySubgraphProfile = memorySubgraphKey
+      ? this.resolveSubgraphProfile(subgraphs, memorySubgraphKey)
+      : undefined;
+
+    if (memorySubgraphProfile && !subAgentKeys.includes("memory")) {
+      subAgentKeys.push("memory");
+    }
+
     const orchestratorEntry = resolveConfigEntry(agents, orchestratorKey);
 
     if (subAgentKeys.length === 0) {
       // Single-agent mode — standard ReAct loop
       const model = models.get(orchestratorEntry.modelKey ?? "default");
       const scopedTools = this.scopeTools(allTools, orchestratorEntry.tools);
+      const compression = this.resolveCompressionRuntimeConfig({
+        allTools,
+        agentEntry: orchestratorEntry,
+        agentKey: orchestratorKey,
+        graphEntry,
+        subgraphs,
+      });
       logger.info(`Graph "${graphKey}": single-agent mode (${scopedTools.length} tools)`);
+      if (compression) {
+        logger.info(
+          `Graph "${graphKey}": agent "${orchestratorKey}" compression tool "${compression.toolName}" resolved`,
+        );
+      }
 
       return buildSingleAgentGraph({
         model,
         tools: scopedTools,
         systemPrompt: this.resolveSystemPrompt(orchestratorEntry.systemPrompt, scopedTools),
+        compression,
         checkpointer,
       });
     }
 
     // Multi-agent orchestrator mode
     const subAgents: SubAgentDef[] = subAgentKeys.map((key) => {
-      const entry = resolveConfigEntry(agents, key);
+      const entry =
+        key === "memory" && memorySubgraphProfile
+          ? this.resolveAgentEntryFromSubgraphProfile(agents, memorySubgraphProfile)
+          : resolveConfigEntry(agents, key);
       const scopedTools = this.scopeTools(allTools, entry.tools);
+      const compression = this.resolveCompressionRuntimeConfig({
+        allTools,
+        agentEntry: entry,
+        agentKey: key,
+        graphEntry,
+        subgraphs,
+      });
       return {
         name: key,
         description: entry.description ?? key,
@@ -431,6 +496,7 @@ export class Gateway extends EventEmitter {
         tools: scopedTools,
         systemPrompt: this.resolveSystemPrompt(entry.systemPrompt, scopedTools),
         recursionLimit: entry.recursionLimit,
+        compression,
       };
     });
 
@@ -440,6 +506,17 @@ export class Gateway extends EventEmitter {
     logger.info(
       `Graph "${graphKey}": multi-agent orchestrator mode with ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
     );
+    if (memorySubgraphKey) {
+      logger.info(
+        `Graph "${graphKey}": memory subgraph profile "${memorySubgraphKey}" resolved`,
+      );
+    }
+    for (const subAgent of subAgents) {
+      if (!subAgent.compression) continue;
+      logger.info(
+        `Graph "${graphKey}": agent "${subAgent.name}" compression tool "${subAgent.compression.toolName}" resolved`,
+      );
+    }
 
     return buildOrchestratorGraph({
       orchestrator: {
@@ -457,6 +534,7 @@ export class Gateway extends EventEmitter {
     prompt: string;
     graphKey?: string;
     personalToken?: string;
+    disableConversationTitleGeneration?: boolean;
     observability?: {
       enabled?: boolean;
       conversationId?: string;
@@ -476,14 +554,24 @@ export class Gateway extends EventEmitter {
       role: "prompt" | "tool-call" | "tool-result" | "model-call" | "model-response" | "graph-definition" | "system-event" | "agent-transfer",
       text: string,
       toolEventMetadata?: ToolEventMetadata,
+      toolName?: string,
     ): void => {
       if (!observabilityEnabled) return;
+      const resolvedToolName = (() => {
+        if (toolName && !isGenericToolName(toolName)) return toolName;
+        const metaToolName = toolEventMetadata?.tool?.name;
+        if (typeof metaToolName === "string" && !isGenericToolName(metaToolName)) {
+          return metaToolName;
+        }
+        return toolName;
+      })();
       for (const channel of targets) {
         channel
           .sendMessage({
             conversationId: observabilityConversationId,
             text,
             role,
+            ...(resolvedToolName ? { toolName: resolvedToolName } : {}),
             ...(toolEventMetadata ? { toolEventMetadata } : {}),
           })
           .catch((err: unknown) =>
@@ -501,7 +589,16 @@ export class Gateway extends EventEmitter {
             graphName: graphKey,
             graph: {
               graphKey,
-              mode: graphKey === "default" ? "single-agent" : "multi-agent",
+              mode: (() => {
+                const entry = this.config?.graphs[graphKey] ?? DEFAULT_GRAPH_ENTRY;
+                return (entry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent";
+              })(),
+              memorySubgraphKey: (
+                this.config?.graphs[graphKey] as GraphEntry & { subgraphs?: { memory?: string } } | undefined
+              )?.subgraphs?.memory,
+              compressionSubgraphKeys: (
+                this.config?.graphs[graphKey] as GraphEntry & { subgraphs?: { compression?: Record<string, string> } } | undefined
+              )?.subgraphs?.compression,
             },
             sourceChannel: params.observability?.sourceChannel ?? "scheduled",
             schedule: {
@@ -537,7 +634,7 @@ export class Gateway extends EventEmitter {
             runId,
             _parentRunId,
             _tags,
-            _metadata,
+            metadata,
             runName,
             toolCallId,
           ): void => {
@@ -545,6 +642,7 @@ export class Gateway extends EventEmitter {
               typeof runName === "string" ? runName : undefined,
               tool,
               typeof toolCallId === "string" ? toolCallId : undefined,
+              metadata,
             );
             toolRunNameByRunId.set(String(runId), toolName);
 
@@ -578,6 +676,7 @@ export class Gateway extends EventEmitter {
                   type: "tool_call",
                 }),
                 meta,
+                toolName,
               );
             }
           },
@@ -590,7 +689,7 @@ export class Gateway extends EventEmitter {
               ? { tool: toolDef }
               : undefined;
             const content = typeof output === "string" ? output : safeStringify(output);
-            sendObservability("tool-result", JSON.stringify({ name: toolName, content }), meta);
+            sendObservability("tool-result", JSON.stringify({ name: toolName, content }), meta, toolName);
           },
           handleToolError: (_error, runId): void => {
             toolRunNameByRunId.delete(String(runId));
@@ -603,7 +702,7 @@ export class Gateway extends EventEmitter {
 
     if (graphKey === "default") {
       if (!this.agent) throw new Error("Agent is not running");
-      return this.agent.invoke(
+      const responseText = await this.agent.invoke(
         params.prompt,
         params.conversationId,
         callbacks,
@@ -619,6 +718,14 @@ export class Gateway extends EventEmitter {
           },
         },
       );
+      this.maybeScheduleConversationTitleGeneration({
+        graphKey,
+        conversationId: params.conversationId,
+        userPrompt: params.prompt,
+        assistantResponse: responseText,
+        disableConversationTitleGeneration: params.disableConversationTitleGeneration,
+      });
+      return responseText;
     }
 
     if (!this.config || !this.models || !this.checkpointer) {
@@ -647,7 +754,176 @@ export class Gateway extends EventEmitter {
 
     const last = result.messages.at(-1);
     if (!last) throw new Error("Agent returned no messages");
-    return typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+    const responseText = typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+    this.maybeScheduleConversationTitleGeneration({
+      graphKey,
+      conversationId: params.conversationId,
+      userPrompt: params.prompt,
+      assistantResponse: responseText,
+      disableConversationTitleGeneration: params.disableConversationTitleGeneration,
+    });
+    return responseText;
+  }
+
+  private maybeScheduleConversationTitleGeneration(params: {
+    graphKey: string;
+    conversationId: string;
+    userPrompt: string;
+    assistantResponse: string;
+    disableConversationTitleGeneration?: boolean;
+  }): void {
+    if (params.disableConversationTitleGeneration) return;
+    if (params.graphKey !== "default") return;
+    if (!this.conversationMetadataService) return;
+
+    const hasTitleGraph = Boolean(this.config?.graphs[CONVERSATION_TITLE_GRAPH_KEY]);
+    if (!hasTitleGraph) return;
+
+    const userPrompt = params.userPrompt.trim();
+    if (!userPrompt) return;
+
+    void this.generateConversationTitle({
+      conversationId: params.conversationId,
+      userPrompt,
+      assistantResponse: params.assistantResponse,
+    }).catch((err: unknown) => {
+      logger.error(
+        `Failed to generate conversation title for conversation "${params.conversationId}"`,
+        err,
+      );
+    });
+  }
+
+  private async generateConversationTitle(params: {
+    conversationId: string;
+    userPrompt: string;
+    assistantResponse: string;
+  }): Promise<void> {
+    if (!this.conversationMetadataService) return;
+
+    const existingTitle = this.conversationMetadataService.getTitle(params.conversationId)?.trim();
+    if (existingTitle) return;
+
+    if (this.titleGenerationInFlight.has(params.conversationId)) return;
+    this.titleGenerationInFlight.add(params.conversationId);
+
+    try {
+      const fallbackTitle = buildFallbackConversationTitle(params.userPrompt);
+      const titlePrompt = buildConversationTitlePrompt({
+        userPrompt: params.userPrompt,
+        assistantResponse: params.assistantResponse,
+      });
+
+      let generatedTitle = "";
+      try {
+        generatedTitle = await this.invokeConfiguredGraph({
+          conversationId: params.conversationId,
+          prompt: titlePrompt,
+          graphKey: CONVERSATION_TITLE_GRAPH_KEY,
+          disableConversationTitleGeneration: true,
+          observability: { enabled: true },
+        });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `Conversation title graph invocation failed for conversation "${params.conversationId}"; using fallback title (${detail})`,
+        );
+      }
+
+      const title = normalizeConversationTitle(generatedTitle) ?? fallbackTitle;
+      this.conversationMetadataService.upsertTitle(params.conversationId, title);
+
+      // Broadcast the generated title to all channels as a metadata event.
+      const allChannels = this.options.channels ?? [];
+      const metadataPayload = JSON.stringify({ title });
+      for (const channel of allChannels) {
+        channel
+          .sendMessage({
+            conversationId: params.conversationId,
+            text: metadataPayload,
+            role: "conversation-metadata",
+          })
+          .catch((err: unknown) => {
+            const detail = err instanceof Error ? err.message : String(err);
+            logger.warn(`Failed to broadcast conversation title to channel "${channel.name}": ${detail}`);
+          });
+      }
+    } finally {
+      this.titleGenerationInFlight.delete(params.conversationId);
+    }
+  }
+
+  private resolveAgentEntryFromSubgraphProfile(
+    agents: Record<string, AgentEntry>,
+    profile: SubgraphProfile,
+  ): AgentEntry {
+    const baseEntry = resolveConfigEntry(agents, profile.agentKey ?? "memory");
+
+    return {
+      ...baseEntry,
+      ...(profile.modelKey ? { modelKey: profile.modelKey } : {}),
+      ...(profile.systemPrompt ? { systemPrompt: profile.systemPrompt } : {}),
+      ...(profile.description ? { description: profile.description } : {}),
+      ...(profile.tools ? { tools: profile.tools } : {}),
+      ...(profile.recursionLimit !== undefined ? { recursionLimit: profile.recursionLimit } : {}),
+    };
+  }
+
+  private resolveSubgraphProfile(
+    subgraphs: Record<string, SubgraphProfile>,
+    subgraphKey: string,
+  ): SubgraphProfile {
+    const profile = subgraphs[subgraphKey];
+    if (!profile) {
+      throw new Error(
+        `Subgraph key "${subgraphKey}" not found. Available: ${Object.keys(subgraphs).join(", ")}`,
+      );
+    }
+
+    const base = subgraphs["default"];
+    if (!base || subgraphKey === "default") return profile;
+
+    return {
+      ...base,
+      ...profile,
+    };
+  }
+
+  private resolveCompressionRuntimeConfig(params: {
+    allTools: StructuredToolInterface[];
+    agentEntry: AgentEntry;
+    agentKey: string;
+    graphEntry: GraphEntry;
+    subgraphs: Record<string, SubgraphProfile>;
+  }): CompressionRuntimeConfig | undefined {
+    const graphCompressionSubgraphKey = params.graphEntry.subgraphs?.compression?.[params.agentKey];
+    const subgraphKey = graphCompressionSubgraphKey ?? params.agentEntry.compressionSubgraph;
+    if (!subgraphKey) return undefined;
+
+    const profile = this.resolveSubgraphProfile(params.subgraphs, subgraphKey);
+    const compression = profile.compression;
+    if (!compression) {
+      throw new Error(
+        `Compression subgraph "${subgraphKey}" for agent "${params.agentKey}" does not define a compression block`,
+      );
+    }
+
+    const tool = params.allTools.find((candidate) => candidate.name === compression.tool);
+    if (!tool) {
+      throw new Error(
+        `Compression subgraph "${subgraphKey}" for agent "${params.agentKey}" references unknown tool "${compression.tool}"`,
+      );
+    }
+
+    return {
+      tool,
+      toolName: compression.tool,
+      mode: compression.mode ?? "research-digest",
+      preserveRecentMessages: compression.preserveRecentMessages ?? 6,
+      messageCountThreshold: compression.messageCountThreshold ?? 12,
+      charThreshold: compression.charThreshold ?? 16000,
+      maxDigestChars: compression.maxDigestChars ?? 4000,
+    };
   }
 
   /**
@@ -794,15 +1070,33 @@ export class Gateway extends EventEmitter {
   }
 
   private installSignalHandlers(): void {
-    const shutdown = () => {
-      this.stop().catch((err) => {
-        logger.error("Error during shutdown", err);
+    const shutdown = (signal: NodeJS.Signals) => {
+      if (this.shutdownSignal) {
+        logger.warn(`Received ${signal} while shutdown from ${this.shutdownSignal} is still in progress; forcing exit`);
         process.exit(1);
-      });
+      }
+
+      this.shutdownSignal = signal;
+      const forceExitTimer = setTimeout(() => {
+        logger.error(`Timed out while shutting down after ${signal}; forcing exit`);
+        process.exit(1);
+      }, 10_000);
+      forceExitTimer.unref();
+
+      this.stop()
+        .then(() => {
+          clearTimeout(forceExitTimer);
+          process.exit(0);
+        })
+        .catch((err) => {
+          clearTimeout(forceExitTimer);
+          logger.error("Error during shutdown", err);
+          process.exit(1);
+        });
     };
 
-    const onSIGINT = () => { logger.info("Received SIGINT"); shutdown(); };
-    const onSIGTERM = () => { logger.info("Received SIGTERM"); shutdown(); };
+    const onSIGINT = () => { logger.info("Received SIGINT"); shutdown("SIGINT"); };
+    const onSIGTERM = () => { logger.info("Received SIGTERM"); shutdown("SIGTERM"); };
 
     process.on("SIGINT", onSIGINT);
     process.on("SIGTERM", onSIGTERM);
@@ -831,6 +1125,36 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function normalizeConversationTitle(value: string): string | undefined {
+  const trimmed = value.trim().replace(/^['"`]+|['"`]+$/g, "");
+  if (!trimmed) return undefined;
+  const singleLine = trimmed.replace(/\s+/g, " ");
+  if (!singleLine) return undefined;
+  if (singleLine.length <= CONVERSATION_TITLE_MAX_CHARS) return singleLine;
+  return `${singleLine.slice(0, CONVERSATION_TITLE_MAX_CHARS - 1)}...`;
+}
+
+function buildFallbackConversationTitle(userPrompt: string): string {
+  const cleaned = userPrompt.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "Untitled conversation";
+  if (cleaned.length <= CONVERSATION_TITLE_MAX_CHARS) return cleaned;
+  return `${cleaned.slice(0, CONVERSATION_TITLE_MAX_CHARS - 1)}...`;
+}
+
+function buildConversationTitlePrompt(params: {
+  userPrompt: string;
+  assistantResponse: string;
+}): string {
+  const assistantSnippet = params.assistantResponse.trim().slice(0, 1000);
+  return [
+    "Generate a concise title for this conversation.",
+    "Return only the title text.",
+    "",
+    `User: ${params.userPrompt.trim()}`,
+    `Assistant: ${assistantSnippet}`,
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------

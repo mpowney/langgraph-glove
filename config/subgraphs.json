@@ -1,0 +1,16 @@
+{
+  "memory-default": {
+    "agentKey": "memory"
+  },
+  "researcher-long-run-compression": {
+    "agentKey": "researcher",
+    "compression": {
+      "tool": "research_context_compress",
+      "mode": "research-digest",
+      "preserveRecentMessages": 6,
+      "messageCountThreshold": 12,
+      "charThreshold": 16000,
+      "maxDigestChars": 4000
+    }
+  }
+}

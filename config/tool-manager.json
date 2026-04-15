@@ -1,0 +1,6 @@
+{
+  "commandTemplate": "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && nvm use 22 && pnpm --filter @langgraph-glove/tool-{tool} dev",
+  "shutdownTimeoutMs": 3000,
+  "forceKillTimeoutMs": 1500,
+  "maxLogLines": 1200
+}

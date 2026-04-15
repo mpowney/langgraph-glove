@@ -55,9 +55,12 @@ export type ServerMessage =
       conversationId: string;
       checkpoint?: CheckpointMetadata;
       toolEventMetadata?: ToolEventMetadata;
+      /** Optional tool name extracted from the message for UI access. */
+      toolName?: string;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
-  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
+  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
+  | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
 
 /** Messages sent from browser client → server. */
 export type ClientMessage =
@@ -105,7 +108,7 @@ export interface AppInfo {
 export interface ChatEntry {
   id: string;
   conversationId: string;
-  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event" | "error";
+  role: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event" | "error" | "conversation-metadata";
   content: string;
   isStreaming?: boolean;
   /** Source stream classification for agent chunks. */
@@ -118,6 +121,8 @@ export interface ChatEntry {
   checkpoint?: CheckpointMetadata;
   /** Tool parameter/schema metadata attached to tool-call and tool-result entries. */
   toolEventMetadata?: ToolEventMetadata;
+  /** Optional tool name extracted from the message for easy UI access. */
+  toolName?: string;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -130,6 +135,7 @@ export interface ConversationSummary {
   threadId: string;
   messageCount: number;
   latestCheckpointId: string;
+  title?: string;
 }
 
 export interface BrowserMessage {
