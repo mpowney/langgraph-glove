@@ -40,19 +40,21 @@ export interface SecretDetail {
 // ---------------------------------------------------------------------------
 
 /**
- * Reads the `X-Privilege-Grant-Id` and `X-Conversation-Id` headers (or query
- * params as a fallback) from the request and validates them against the
- * authService.  Writes a 401 response and returns `false` on failure.
+ * Reads the `X-Privilege-Grant-Id` and `X-Conversation-Id` headers from the
+ * request and validates them against the authService.  Writes a 401 response
+ * and returns `false` on failure.
+ *
+ * Credentials are intentionally read from headers only (not query params) to
+ * avoid the grant IDs being captured in server access logs, browser history,
+ * or referrer headers.
  */
 function requirePrivilegeGrant(
   req: express.Request,
   res: express.Response,
   authService: AuthService,
 ): boolean {
-  const grantId =
-    String(req.headers["x-privilege-grant-id"] ?? req.query["grantId"] ?? "").trim();
-  const conversationId =
-    String(req.headers["x-conversation-id"] ?? req.query["conversationId"] ?? "").trim();
+  const grantId = String(req.headers["x-privilege-grant-id"] ?? "").trim();
+  const conversationId = String(req.headers["x-conversation-id"] ?? "").trim();
 
   if (!grantId || !conversationId) {
     res.status(401).json({ error: "Privilege grant is required (provide X-Privilege-Grant-Id and X-Conversation-Id headers)" });
@@ -76,7 +78,12 @@ function resolveSecretsDir(override?: string): string {
 }
 
 function isSafeFilename(name: string): boolean {
-  return name.endsWith(".json") && path.basename(name) === name && !name.includes("/");
+  return (
+    name.endsWith(".json") &&
+    path.basename(name) === name &&
+    !name.includes("/") &&
+    !name.includes("\\")
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -222,31 +229,15 @@ export function registerSecretsRoutes(
   // -------------------------------------------------------------------------
   // POST /api/secrets — add or update a secret
   //
-  // Body: { grantId, conversationId, file, name, value }
+  // Privilege grant must be provided as X-Privilege-Grant-Id and
+  // X-Conversation-Id headers (same as the GET endpoints).
+  // Body: { file, name, value }
   // -------------------------------------------------------------------------
   app.post("/api/secrets", (req, res) => {
     if (!requireAuthUser(req, res)) return;
+    if (!requirePrivilegeGrant(req, res, authService)) return;
 
-    // For POST, privilege grant can come from body or headers
     const body = req.body as Record<string, unknown> | undefined;
-    const grantIdFromBody = typeof body?.["grantId"] === "string" ? body["grantId"] : "";
-    const convIdFromBody = typeof body?.["conversationId"] === "string" ? body["conversationId"] : "";
-    const grantIdHeader = String(req.headers["x-privilege-grant-id"] ?? "").trim();
-    const convIdHeader = String(req.headers["x-conversation-id"] ?? "").trim();
-
-    const grantId = grantIdFromBody || grantIdHeader;
-    const conversationId = convIdFromBody || convIdHeader;
-
-    if (!grantId || !conversationId) {
-      res.status(401).json({ error: "Privilege grant is required (provide grantId + conversationId in body or headers)" });
-      return;
-    }
-
-    if (!authService.validatePrivilegeGrant(grantId, conversationId)) {
-      res.status(401).json({ error: "Invalid or expired privilege grant" });
-      return;
-    }
-
     const file = typeof body?.["file"] === "string" ? body["file"] : "";
     const name = typeof body?.["name"] === "string" ? body["name"] : "";
     const value = typeof body?.["value"] === "string" ? body["value"] : undefined;
@@ -270,7 +261,9 @@ export function registerSecretsRoutes(
       // Ensure secrets directory exists
       await fs.mkdir(secretsDir, { recursive: true });
 
-      const filePath = path.join(secretsDir, file);
+      // Use basename explicitly to prevent any path traversal despite earlier validation
+      const safeBasename = path.basename(file);
+      const filePath = path.join(secretsDir, safeBasename);
 
       let existing: Record<string, string> = {};
       try {
@@ -284,7 +277,7 @@ export function registerSecretsRoutes(
 
       await fs.writeFile(filePath, JSON.stringify(existing, null, 2) + "\n", "utf8");
 
-      res.json({ success: true, file, name });
+      res.json({ success: true, file: safeBasename, name });
     })();
   });
 }

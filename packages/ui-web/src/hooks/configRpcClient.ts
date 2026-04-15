@@ -209,13 +209,17 @@ export async function upsertSecret(
   authToken?: string,
 ): Promise<void> {
   const url = `${adminApiUrl}/api/secrets`;
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
   if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
 
   const res = await fetch(url, {
     method: "POST",
     headers,
-    body: JSON.stringify({ grantId: privilegeGrantId, conversationId, file, name, value }),
+    body: JSON.stringify({ file, name, value }),
   });
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
