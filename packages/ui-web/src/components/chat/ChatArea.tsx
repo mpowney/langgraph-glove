@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Button, makeStyles, tokens } from "@fluentui/react-components";
+import { Button, makeStyles, tokens, Text } from "@fluentui/react-components";
 import { ChatMessage } from "./ChatMessage";
+import { formatMessageTimestamp } from "./utils/dataFormatters";
 import type { ChatEntry } from "../../types";
 
 const AUTO_SCROLL_LINE_THRESHOLD = 6;
@@ -42,6 +43,7 @@ function isProcessingDetailEntry(entry: ChatEntry): boolean {
     || entry.role === "graph-definition"
     || entry.role === "model-response"
     || entry.role === "system-event"
+    || entry.role === "conversation-metadata"
     || entry.role === "error"
   );
 }
@@ -197,8 +199,19 @@ const useStyles = makeStyles({
   },
   processingStatusWrapper: {
     display: "flex",
-    justifyContent: "flex-end",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalM,
     marginTop: `-${tokens.spacingVerticalXS}`,
+    maxWidth: "80vw",
+    alignSelf: "flex-end",
+  },
+  messageTimestamp: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground4,
+    fontStyle: "italic",
+    whiteSpace: "nowrap",
+    alignSelf: "flex-start",
   },
   processingStatusBubble: {
     maxWidth: "72%",
@@ -243,6 +256,7 @@ interface ChatAreaProps {
   messages: ChatEntry[];
   myConversationId: string;
   showAll: boolean;
+  conversationTitles?: Map<string, string>;
   showAccordionAndSubAgentMessages: boolean;
   showInlineProcessingMessages: boolean;
   showSystemMessages: boolean;
@@ -260,6 +274,7 @@ export function ChatArea({
   messages,
   myConversationId,
   showAll,
+  conversationTitles,
   showAccordionAndSubAgentMessages,
   showInlineProcessingMessages,
   showSystemMessages,
@@ -275,7 +290,8 @@ export function ChatArea({
     (entry) =>
       entry.role === "agent"
       && entry.isStreaming
-      && entry.streamSource !== "sub-agent",
+      && entry.streamSource !== "sub-agent"
+      && entry.conversationId === myConversationId,
   );
 
   // Build a map from conversationId → chatGuid by scanning graph-definition messages.
@@ -320,35 +336,54 @@ export function ChatArea({
 
   const inlineProcessingStatus = useMemo(() => {
     if (!showAccordionAndSubAgentMessages || showInlineProcessingMessages) {
-      return null;
+      return new Map<string, { anchorMessageId: string; text: string; statusMessageId: string }>();
     }
 
-    const lastUserIndex = messagesRespectingSystemPreference.findLastIndex((entry) => entry.role === "user");
-    if (lastUserIndex < 0) {
-      return null;
+    const statusByConversation = new Map<string, { anchorMessageId: string; text: string; statusMessageId: string }>();
+
+    // Group messages by conversation ID
+    const conversationIds = new Set(messagesRespectingSystemPreference.map((m) => m.conversationId));
+
+    for (const convId of conversationIds) {
+      const convMessages = messagesRespectingSystemPreference.filter((m) => m.conversationId === convId);
+
+      // Find last user message by searching in reverse
+      let lastUserIndex = -1;
+      for (let i = convMessages.length - 1; i >= 0; i--) {
+        if (convMessages[i].role === "user") {
+          lastUserIndex = i;
+          break;
+        }
+      }
+
+      if (lastUserIndex < 0) {
+        continue;
+      }
+
+      const anchorUserMessage = convMessages[lastUserIndex];
+      const afterUserMessages = convMessages.slice(lastUserIndex + 1);
+      const hasMainAgentReply = afterUserMessages.some(
+        (entry) => entry.role === "agent" && entry.streamSource !== "sub-agent",
+      );
+      if (hasMainAgentReply) {
+        continue;
+      }
+
+      const latestProcessingEntry = [...afterUserMessages]
+        .reverse()
+        .find((entry) => isProcessingDetailEntry(entry));
+      if (!latestProcessingEntry) {
+        continue;
+      }
+
+      statusByConversation.set(convId, {
+        anchorMessageId: anchorUserMessage.id,
+        text: formatProcessingStatus(latestProcessingEntry),
+        statusMessageId: latestProcessingEntry.id,
+      });
     }
 
-    const anchorUserMessage = messagesRespectingSystemPreference[lastUserIndex];
-    const afterUserMessages = messagesRespectingSystemPreference.slice(lastUserIndex + 1);
-    const hasMainAgentReply = afterUserMessages.some(
-      (entry) => entry.role === "agent" && entry.streamSource !== "sub-agent",
-    );
-    if (hasMainAgentReply) {
-      return null;
-    }
-
-    const latestProcessingEntry = [...afterUserMessages]
-      .reverse()
-      .find((entry) => isProcessingDetailEntry(entry));
-    if (!latestProcessingEntry) {
-      return null;
-    }
-
-    return {
-      anchorMessageId: anchorUserMessage.id,
-      text: formatProcessingStatus(latestProcessingEntry),
-      statusMessageId: latestProcessingEntry.id,
-    };
+    return statusByConversation;
   }, [
     messagesRespectingSystemPreference,
     showAccordionAndSubAgentMessages,
@@ -405,6 +440,8 @@ export function ChatArea({
       >
         {filteredMessages.map((entry) => {
           const isForeignConversation = showAll && entry.conversationId !== myConversationId;
+          const status = inlineProcessingStatus.get(entry.conversationId);
+          const hasStatusForThisEntry = status && entry.id === status.anchorMessageId && entry.role === "user";
           return (
             <React.Fragment key={entry.id}>
               <ChatMessage
@@ -416,19 +453,31 @@ export function ChatArea({
                     ? formatSessionLabel(entry.conversationId)
                     : undefined
                 }
+                sessionTitle={isForeignConversation ? conversationTitles?.get(entry.conversationId) : undefined}
                 sessionConversationId={isForeignConversation ? entry.conversationId : undefined}
                 chatGuid={isForeignConversation ? chatGuidByConversationId.get(entry.conversationId) : undefined}
                 onRequestSwitchConversation={onRequestSwitchConversation}
+                suppressTimestamp={hasStatusForThisEntry}
               />
-              {inlineProcessingStatus
-                && entry.id === inlineProcessingStatus.anchorMessageId && (
+              {(() => {
+                const currentStatus = inlineProcessingStatus.get(entry.conversationId);
+                if (!currentStatus || entry.id !== currentStatus.anchorMessageId) {
+                  return null;
+                }
+                const timestamp = entry.role === "user" ? formatMessageTimestamp(entry.receivedAt) : null;
+                return (
                   <div
                     className={styles.processingStatusWrapper}
-                    key={inlineProcessingStatus.statusMessageId}
+                    key={currentStatus.statusMessageId}
                     aria-live="polite"
                   >
+                    {timestamp && (
+                      <Text block className={styles.messageTimestamp}>
+                        {timestamp}
+                      </Text>
+                    )}
                     <div className={styles.processingStatusBubble}>
-                      <span>{inlineProcessingStatus.text}</span>
+                      <span>{currentStatus.text}</span>
                       <span className={styles.processingStatusEllipsis} aria-hidden="true">
                         <span className={`${styles.processingStatusDot} ${styles.processingStatusDot1}`}>.</span>
                         <span className={`${styles.processingStatusDot} ${styles.processingStatusDot2}`}>.</span>
@@ -436,7 +485,8 @@ export function ChatArea({
                       </span>
                     </div>
                   </div>
-                )}
+                );
+              })()}
             </React.Fragment>
           );
         })}

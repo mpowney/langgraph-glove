@@ -34,6 +34,7 @@ import type { RpcClient } from "../rpc/RpcClient";
 import { RemoteTool } from "../tools/RemoteTool";
 import { getToolPayloadRefTool } from "../tools/ToolPayloadRefTool";
 import { AdminApi } from "../api/AdminApi";
+import { ConversationMetadataService } from "../api/ConversationMetadataService";
 import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
 import { WebChannel } from "../channels/WebChannel";
@@ -43,6 +44,8 @@ import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
 
 const logger = new Logger("Gateway");
+const CONVERSATION_TITLE_GRAPH_KEY = "conversation-title";
+const CONVERSATION_TITLE_MAX_CHARS = 80;
 
 export interface GatewayOptions {
   /** Path to the config directory. */
@@ -85,6 +88,8 @@ export class Gateway extends EventEmitter {
   private healthServer: HealthServer | null = null;
   private adminApi: AdminApi | null = null;
   private authService: AuthService | null = null;
+  private conversationMetadataService: ConversationMetadataService | null = null;
+  private readonly titleGenerationInFlight = new Set<string>();
   private shutdownHandlers: (() => void)[] = [];
   private shutdownSignal: NodeJS.Signals | null = null;
 
@@ -136,6 +141,8 @@ export class Gateway extends EventEmitter {
       // 4. Persistence
       const dbPath = this.config.gateway.dbPath ?? "data/checkpoints.sqlite";
       this.checkpointer = SqliteSaver.fromConnString(dbPath);
+      this.conversationMetadataService = new ConversationMetadataService(dbPath);
+      this.conversationMetadataService.ensureSchema();
       logger.info(`SQLite persistence: ${dbPath}`);
 
       // 5. Auth bootstrap
@@ -177,6 +184,14 @@ export class Gateway extends EventEmitter {
           mode: (defaultGraphEntry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent",
           orchestratorAgentKey: defaultGraphEntry.orchestratorAgentKey,
           subAgentKeys: defaultGraphEntry.subAgentKeys ?? [],
+        },
+        onTurnComplete: ({ conversationId, userText, assistantText, graphKey }) => {
+          this.maybeScheduleConversationTitleGeneration({
+            graphKey: graphKey ?? "default",
+            conversationId,
+            userPrompt: userText,
+            assistantResponse: assistantText,
+          });
         },
       });
 
@@ -398,6 +413,9 @@ export class Gateway extends EventEmitter {
   private buildAgentGraph(
     allTools: StructuredToolInterface[],
     graphKey: string = "default",
+    options?: {
+      checkpointerOverride?: BaseCheckpointSaver | null;
+    },
   ) {
     const agents = this.config!.agents as Record<string, AgentEntry>;
     const subgraphs = (this.config as GloveConfig & {
@@ -411,7 +429,9 @@ export class Gateway extends EventEmitter {
     }
     const graphEntry: GraphEntry = resolvedGraphEntry ?? DEFAULT_GRAPH_ENTRY;
     const models = this.models!;
-    const checkpointer = this.checkpointer!;
+    const checkpointer = options?.checkpointerOverride === undefined
+      ? this.checkpointer!
+      : (options.checkpointerOverride ?? undefined);
 
     const orchestratorKey = graphEntry.orchestratorAgentKey;
     const subAgentKeys = [...(graphEntry.subAgentKeys ?? [])];
@@ -514,6 +534,7 @@ export class Gateway extends EventEmitter {
     prompt: string;
     graphKey?: string;
     personalToken?: string;
+    disableConversationTitleGeneration?: boolean;
     observability?: {
       enabled?: boolean;
       conversationId?: string;
@@ -681,7 +702,7 @@ export class Gateway extends EventEmitter {
 
     if (graphKey === "default") {
       if (!this.agent) throw new Error("Agent is not running");
-      return this.agent.invoke(
+      const responseText = await this.agent.invoke(
         params.prompt,
         params.conversationId,
         callbacks,
@@ -697,6 +718,14 @@ export class Gateway extends EventEmitter {
           },
         },
       );
+      this.maybeScheduleConversationTitleGeneration({
+        graphKey,
+        conversationId: params.conversationId,
+        userPrompt: params.prompt,
+        assistantResponse: responseText,
+        disableConversationTitleGeneration: params.disableConversationTitleGeneration,
+      });
+      return responseText;
     }
 
     if (!this.config || !this.models || !this.checkpointer) {
@@ -725,7 +754,103 @@ export class Gateway extends EventEmitter {
 
     const last = result.messages.at(-1);
     if (!last) throw new Error("Agent returned no messages");
-    return typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+    const responseText = typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+    this.maybeScheduleConversationTitleGeneration({
+      graphKey,
+      conversationId: params.conversationId,
+      userPrompt: params.prompt,
+      assistantResponse: responseText,
+      disableConversationTitleGeneration: params.disableConversationTitleGeneration,
+    });
+    return responseText;
+  }
+
+  private maybeScheduleConversationTitleGeneration(params: {
+    graphKey: string;
+    conversationId: string;
+    userPrompt: string;
+    assistantResponse: string;
+    disableConversationTitleGeneration?: boolean;
+  }): void {
+    if (params.disableConversationTitleGeneration) return;
+    if (params.graphKey !== "default") return;
+    if (!this.conversationMetadataService) return;
+
+    const hasTitleGraph = Boolean(this.config?.graphs[CONVERSATION_TITLE_GRAPH_KEY]);
+    if (!hasTitleGraph) return;
+
+    const userPrompt = params.userPrompt.trim();
+    if (!userPrompt) return;
+
+    void this.generateConversationTitle({
+      conversationId: params.conversationId,
+      userPrompt,
+      assistantResponse: params.assistantResponse,
+    }).catch((err: unknown) => {
+      logger.error(
+        `Failed to generate conversation title for conversation "${params.conversationId}"`,
+        err,
+      );
+    });
+  }
+
+  private async generateConversationTitle(params: {
+    conversationId: string;
+    userPrompt: string;
+    assistantResponse: string;
+  }): Promise<void> {
+    if (!this.conversationMetadataService) return;
+
+    const existingTitle = this.conversationMetadataService.getTitle(params.conversationId)?.trim();
+    if (existingTitle) return;
+
+    if (this.titleGenerationInFlight.has(params.conversationId)) return;
+    this.titleGenerationInFlight.add(params.conversationId);
+
+    try {
+      const fallbackTitle = buildFallbackConversationTitle(params.userPrompt);
+      const titlePrompt = buildConversationTitlePrompt({
+        userPrompt: params.userPrompt,
+        assistantResponse: params.assistantResponse,
+      });
+
+      let generatedTitle = "";
+      try {
+        generatedTitle = await this.invokeConfiguredGraph({
+          conversationId: params.conversationId,
+          prompt: titlePrompt,
+          graphKey: CONVERSATION_TITLE_GRAPH_KEY,
+          disableConversationTitleGeneration: true,
+          observability: { enabled: true },
+        });
+      } catch (err) {
+        const detail = err instanceof Error ? err.message : String(err);
+        logger.warn(
+          `Conversation title graph invocation failed for conversation "${params.conversationId}"; using fallback title (${detail})`,
+        );
+      }
+
+      const title = normalizeConversationTitle(generatedTitle) ?? fallbackTitle;
+      this.conversationMetadataService.upsertTitle(params.conversationId, title);
+
+      // Broadcast the generated title to all channels as a metadata event.
+      const allChannels = this.options.channels ?? [];
+      const metadataPayload = JSON.stringify({ title });
+      for (const channel of allChannels) {
+        channel
+          .sendMessage({
+            conversationId: params.conversationId,
+            text: metadataPayload,
+            role: "conversation-metadata",
+          })
+          .catch((err: unknown) => {
+            const detail = err instanceof Error ? err.message : String(err);
+            logger.warn(`Failed to broadcast conversation title to channel "${channel.name}": ${detail}`);
+          });
+      }
+    } finally {
+      this.titleGenerationInFlight.delete(params.conversationId);
+    }
   }
 
   private resolveAgentEntryFromSubgraphProfile(
@@ -1000,6 +1125,36 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function normalizeConversationTitle(value: string): string | undefined {
+  const trimmed = value.trim().replace(/^['"`]+|['"`]+$/g, "");
+  if (!trimmed) return undefined;
+  const singleLine = trimmed.replace(/\s+/g, " ");
+  if (!singleLine) return undefined;
+  if (singleLine.length <= CONVERSATION_TITLE_MAX_CHARS) return singleLine;
+  return `${singleLine.slice(0, CONVERSATION_TITLE_MAX_CHARS - 1)}...`;
+}
+
+function buildFallbackConversationTitle(userPrompt: string): string {
+  const cleaned = userPrompt.replace(/\s+/g, " ").trim();
+  if (!cleaned) return "Untitled conversation";
+  if (cleaned.length <= CONVERSATION_TITLE_MAX_CHARS) return cleaned;
+  return `${cleaned.slice(0, CONVERSATION_TITLE_MAX_CHARS - 1)}...`;
+}
+
+function buildConversationTitlePrompt(params: {
+  userPrompt: string;
+  assistantResponse: string;
+}): string {
+  const assistantSnippet = params.assistantResponse.trim().slice(0, 1000);
+  return [
+    "Generate a concise title for this conversation.",
+    "Return only the title text.",
+    "",
+    `User: ${params.userPrompt.trim()}`,
+    `Assistant: ${assistantSnippet}`,
+  ].join("\n");
 }
 
 // ---------------------------------------------------------------------------

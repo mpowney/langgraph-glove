@@ -103,7 +103,8 @@ type ServerMessage =
       toolName?: string;
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
-  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata };
+  | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
+  | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
 
 interface CheckpointRow {
   checkpoint_id: string;
@@ -319,6 +320,25 @@ export class WebChannel extends Channel {
         message: message.text,
         conversationId: message.conversationId,
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+      };
+      this.broadcast(message.conversationId, payload);
+      return;
+    }
+
+    if (message.role === "conversation-metadata") {
+      let metadata: { title?: string } = {};
+      try {
+        const parsed = JSON.parse(message.text) as unknown;
+        if (parsed !== null && typeof parsed === "object") {
+          metadata = parsed as { title?: string };
+        }
+      } catch {
+        // malformed payload — broadcast empty metadata
+      }
+      const payload: ServerMessage = {
+        type: "conversation_metadata",
+        conversationId: message.conversationId,
+        metadata,
       };
       this.broadcast(message.conversationId, payload);
       return;

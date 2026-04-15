@@ -27,6 +27,43 @@ export function isSpecificToolName(value: unknown): value is string {
   return normalized.length > 0 && normalized !== "tool";
 }
 
+export function formatMessageTimestamp(isoString?: string): string | null {
+  if (!isoString) return null;
+
+  try {
+    const date = new Date(isoString);
+    if (Number.isNaN(date.getTime())) return null;
+
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const messageDate = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    const diffDays = Math.floor((today.getTime() - messageDate.getTime()) / (1000 * 60 * 60 * 24));
+
+    const timeStr = date.toLocaleTimeString("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+
+    if (diffDays === 0) {
+      return timeStr;
+    } else if (diffDays === 1) {
+      return `Yesterday ${timeStr}`;
+    } else if (diffDays < 7) {
+      return `${date.toLocaleDateString("en-US", { weekday: "short" })} ${timeStr}`;
+    }
+    return date.toLocaleDateString("en-US", {
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    });
+  } catch {
+    return null;
+  }
+}
+
 export function tryFormatJsonString(value: string): string {
   const trimmed = value.trim();
   if (!trimmed) return value;

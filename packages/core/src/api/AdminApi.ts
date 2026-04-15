@@ -3,6 +3,7 @@ import express, { type Express } from "express";
 import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
+import { ConversationMetadataService } from "./ConversationMetadataService.js";
 import type {
   ToolServerEntry,
   GloveConfig,
@@ -52,6 +53,7 @@ interface ConversationRow {
   thread_id: string;
   checkpoint_count: number;
   latest_checkpoint_id: string;
+  title: string | null;
 }
 
 /** A single decoded message in a conversation. */
@@ -68,6 +70,7 @@ export interface ConversationSummary {
   threadId: string;
   messageCount: number;
   latestCheckpointId: string;
+  title?: string;
 }
 
 export type TopologyNodeType = "graph" | "agent" | "subgraph" | "model" | "tool";
@@ -899,6 +902,8 @@ export class AdminApi {
 
     if (this.dbPath) {
       const dbPath = this.dbPath;
+      const conversationMetadataService = new ConversationMetadataService(dbPath);
+      conversationMetadataService.ensureSchema();
 
       // List all conversation threads
       this.app.get("/api/conversations", (req, res) => {
@@ -907,13 +912,22 @@ export class AdminApi {
           const db = new Database(dbPath, { readonly: true, fileMustExist: true });
           const rows = db.prepare<[], ConversationRow>(`
             SELECT
-              thread_id,
-              COUNT(*) AS checkpoint_count,
-              MAX(checkpoint_id) AS latest_checkpoint_id
-            FROM checkpoints
-            WHERE checkpoint_ns = ''
-            GROUP BY thread_id
-            ORDER BY MAX(checkpoint_id) DESC
+              grouped.thread_id,
+              grouped.checkpoint_count,
+              grouped.latest_checkpoint_id,
+              meta.title
+            FROM (
+              SELECT
+                thread_id,
+                COUNT(*) AS checkpoint_count,
+                MAX(checkpoint_id) AS latest_checkpoint_id
+              FROM checkpoints
+              WHERE checkpoint_ns = ''
+              GROUP BY thread_id
+            ) AS grouped
+            LEFT JOIN conversation_metadata AS meta
+              ON meta.thread_id = grouped.thread_id
+            ORDER BY grouped.latest_checkpoint_id DESC
           `).all();
           db.close();
 
@@ -921,6 +935,7 @@ export class AdminApi {
             threadId: r.thread_id,
             messageCount: r.checkpoint_count,
             latestCheckpointId: r.latest_checkpoint_id,
+            ...(typeof r.title === "string" && r.title.trim().length > 0 ? { title: r.title } : {}),
           }));
           res.json(summaries);
         } catch (err) {

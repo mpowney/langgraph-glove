@@ -52,6 +52,13 @@ const useStyles = makeStyles({
     color: tokens.colorNeutralForeground1,
     wordBreak: "break-all",
   },
+  conversationTitle: {
+    fontSize: tokens.fontSizeBase300,
+    fontWeight: tokens.fontWeightSemibold,
+    color: tokens.colorNeutralForeground1,
+    lineHeight: tokens.lineHeightBase300,
+    wordBreak: "break-word",
+  },
   conversationMeta: {
     display: "flex",
     gap: tokens.spacingHorizontalS,
@@ -271,7 +278,10 @@ export function ConversationBrowser({
                     tabIndex={0}
                     onKeyDown={(e) => e.key === "Enter" && loadMessages(conv.threadId)}
                   >
-                    <Text className={styles.conversationId}>{conv.threadId}</Text>
+                      {conv.title ? (
+                        <Text className={styles.conversationTitle}>{conv.title}</Text>
+                      ) : null}
+                      <Text className={styles.conversationId}>{conv.threadId}</Text>
                     <div className={styles.conversationMeta}>
                       <Badge appearance="tint" color="informative" size="small">
                         {conv.messageCount} checkpoint{conv.messageCount !== 1 ? "s" : ""}

@@ -67,7 +67,7 @@ export interface OutgoingMessage {
   * the current dispatch; "system-event" carries background runtime events
     * (for example scheduler scan progress) for receiveSystem channels.
    */
-  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event" | "error";
+  role?: "user" | "agent" | "prompt" | "tool-call" | "tool-result" | "agent-transfer" | "model-call" | "model-response" | "graph-definition" | "system-event" | "error" | "conversation-metadata";
   /**
    * Optional structured metadata for `"tool-call"` and `"tool-result"` events.
    * Carries the tool definition (parameter schema/descriptions) and the agent

@@ -16,13 +16,22 @@ import {
   tryFormatJsonString,
 } from "./utils/dataFormatters";
 import { estimatePromptContextUsage } from "./utils/promptAnalytics";
+import { formatMessageTimestamp } from "./utils/dataFormatters";
 import type { ChatEntry } from "../../types";
 
 const useStyles = makeStyles({
   // ── Wrapper / alignment ───────────────────────────────────────────────────
   userWrapper: {
     display: "flex",
-    justifyContent: "flex-end",
+    flexDirection: "column",
+    alignItems: "flex-end",
+  },
+  userMessageContainer: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "stretch",
+    width: "fit-content",
+    maxWidth: "80vw",
   },
   agentWrapper: {
     display: "flex",
@@ -90,6 +99,15 @@ const useStyles = makeStyles({
     color: tokens.colorBrandForeground1,
     textDecorationLine: "underline",
     cursor: "pointer",
+  },
+
+  // ── Message timestamp ────────────────────────────────────────────────────────
+  messageTimestamp: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground4,
+    marginTop: tokens.spacingVerticalXXS,
+    fontStyle: "italic",
+    alignSelf: "flex-start",
   },
 
   // ── Prompt accordion ──────────────────────────────────────────────────────
@@ -168,6 +186,13 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
+  conversationMetadataAccordion: {
+    borderRadius: tokens.borderRadiusMedium,
+    border: `1px solid ${tokens.colorPaletteLightGreenBorder1}`,
+    backgroundColor: tokens.colorPaletteLightGreenBackground1,
+    paddingRight: tokens.spacingHorizontalM,
+    overflow: "hidden",
+  },
 });
 
 interface ChatMessageProps {
@@ -176,6 +201,8 @@ interface ChatMessageProps {
   collapseSubAgentStream?: boolean;
   /** Shown as a small muted label when viewing all conversations. */
   sessionLabel?: string;
+  /** Generated conversation title shown in italics after the session label. */
+  sessionTitle?: string;
   /** Full conversation id for a foreign-session message label. */
   sessionConversationId?: string;
   /** BlueBubbles chat GUID (e.g. phone number) for this conversation. */
@@ -184,16 +211,20 @@ interface ChatMessageProps {
   onRequestSwitchConversation?: (conversationId: string) => void;
   /** Active model context window tokens for prompt-context estimation. */
   modelContextWindowTokens?: number;
+  /** Suppress timestamp rendering (e.g., when status message will show it instead). */
+  suppressTimestamp?: boolean;
 }
 
 export function ChatMessage({
   entry,
   collapseSubAgentStream,
   sessionLabel,
+  sessionTitle,
   sessionConversationId,
   chatGuid,
   onRequestSwitchConversation,
   modelContextWindowTokens,
+  suppressTimestamp,
 }: ChatMessageProps) {
   const styles = useStyles();
   const isSubAgentEntry = entry.role === "agent" && entry.streamSource === "sub-agent";
@@ -235,16 +266,19 @@ export function ChatMessage({
           sessionLabel
         )}
         {chatGuidDisplay && <> · {chatGuidDisplay}</>}
+        {sessionTitle && <em style={{ opacity: 0.75 }}> — {sessionTitle}</em>}
       </Text>
     );
   };
 
   if (entry.role === "user") {
+    const timestamp = !suppressTimestamp ? formatMessageTimestamp(entry.receivedAt) : null;
     return (
       <div className={styles.userWrapper}>
-        <div>
-          {renderSessionLabel("right")}
+        {renderSessionLabel("right")}
+        <div className={styles.userMessageContainer}>
           <Text className={styles.userBubble}>{entry.content}</Text>
+          {timestamp && <Text block className={styles.messageTimestamp}>{timestamp}</Text>}
         </div>
       </div>
     );
@@ -456,6 +490,38 @@ export function ChatMessage({
     );
   }
 
+  if (entry.role === "conversation-metadata") {
+    let headerText = "Conversation metadata";
+    let displayContent = entry.content;
+    try {
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed) && typeof parsed.title === "string") {
+        headerText = `Conversation title: ${parsed.title}`;
+      }
+      displayContent = toDisplayJson(parsed, entry.content);
+    } catch {
+      // leave raw content as-is
+    }
+    return (
+      <div className={styles.promptWrapper}>
+        <div>
+          {renderSessionLabel()}
+          <MessageAccordion
+            className={styles.conversationMetadataAccordion}
+            itemValue="conversation-metadata"
+            headerText={headerText}
+            panelClassName={styles.toolPanel}
+            rawPayload={entry.content}
+            receivedAt={entry.receivedAt}
+            checkpoint={entry.checkpoint}
+          >
+            {displayContent}
+          </MessageAccordion>
+        </div>
+      </div>
+    );
+  }
+
   if (entry.role === "model-response") {
     let modelName: string | undefined;
     let modelResponseContent = entry.content;
@@ -602,6 +668,7 @@ export function ChatMessage({
   }
 
   // agent
+  const timestamp = !suppressTimestamp ? formatMessageTimestamp(entry.receivedAt) : null;
   return (
     <div className={styles.agentWrapper}>
       <div>
@@ -610,6 +677,7 @@ export function ChatMessage({
           <InlineContent content={entry.content} />
           {entry.isStreaming && <span className={styles.cursor} aria-hidden />}
         </div>
+        {timestamp && <Text block className={styles.messageTimestamp}>{timestamp}</Text>}
       </div>
     </div>
   );

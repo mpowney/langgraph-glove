@@ -89,7 +89,7 @@ function App() {
   const webSocketPersonalToken = shouldConnect ? personalToken || undefined : undefined;
   const webSocketPrivilegeGrantId = shouldConnect ? privilegedGrantId || undefined : undefined;
   const webSocketAuthToken = shouldConnect ? auth.token ?? undefined : undefined;
-  const { messages, sendMessage, status, myConversationId } = useWebSocket(
+  const { messages, sendMessage, status, myConversationId, conversationTitles } = useWebSocket(
     conversationId,
     webSocketPersonalToken,
     webSocketPrivilegeGrantId,
@@ -192,8 +192,8 @@ function App() {
   }, [privilegedExpiresAt]);
 
   const isStreaming = useMemo(
-    () => messages.some((m) => m.isStreaming),
-    [messages],
+    () => messages.some((m) => m.isStreaming && m.conversationId === myConversationId),
+    [messages, myConversationId],
   );
   const inputDisabled = status !== "connected" || isStreaming;
   const configuredToolsBaseUrl = (import.meta.env.VITE_TOOLS_URL as string | undefined)?.trim() ?? "";
@@ -315,6 +315,7 @@ function App() {
       <div className={styles.shell}>
         <AppHeader
           appInfo={appInfo}
+          conversationTitle={conversationTitles.get(myConversationId)}
           status={status}
           onOpenControlPanel={() => setControlPanelOpen(true)}
           personalToken={personalToken}
@@ -334,6 +335,7 @@ function App() {
           messages={visibleMessages}
           myConversationId={myConversationId}
           showAll={showAll}
+          conversationTitles={conversationTitles}
           showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
           showInlineProcessingMessages={showInlineProcessingMessages}
           showSystemMessages={showSystemMessages}

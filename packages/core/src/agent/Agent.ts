@@ -326,6 +326,17 @@ export interface AgentConfig {
    * message is dispatched, so observers can see which graph processed it.
    */
   graphInfo?: GraphDispatchInfo;
+  /**
+   * Optional callback fired after a turn completes with a final assistant
+   * response, regardless of whether the source channel used streaming.
+   */
+  onTurnComplete?: (params: {
+    conversationId: string;
+    userText: string;
+    assistantText: string;
+    sourceChannel: string;
+    graphKey?: string;
+  }) => void | Promise<void>;
 }
 
 /**
@@ -1002,6 +1013,26 @@ export class GloveAgent {
       sourceMetadata: safeSourceMetadata,
     };
 
+    const emitTurnComplete = (assistantText: string): void => {
+      if (!assistantText.trim()) return;
+      const onTurnComplete = this.config.onTurnComplete;
+      if (!onTurnComplete) return;
+      void Promise.resolve(
+        onTurnComplete({
+          conversationId: message.conversationId,
+          userText: message.text,
+          assistantText,
+          sourceChannel: sourceChannel.name,
+          graphKey: this.config.graphInfo?.graphKey,
+        }),
+      ).catch((err: unknown) => {
+        logger.error(
+          `onTurnComplete callback failed for conversation "${message.conversationId}"`,
+          err,
+        );
+      });
+    };
+
     if (sourceChannel.supportsStreaming) {
       let fullText = "";
       const baseStream = this.stream(
@@ -1035,6 +1066,7 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: fullText, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
         }
+        emitTurnComplete(fullText);
       } catch (err) {
         const detail = formatError(err);
         const canFallbackToInvoke = fullText.length === 0;
@@ -1066,6 +1098,7 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: fallbackResponse, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast fallback response to channel "${ch.name}"`, e));
         }
+        emitTurnComplete(fallbackResponse);
       } finally {
         this.activeConversations.delete(message.conversationId);
         this.stoppedConversations.delete(message.conversationId);
@@ -1088,6 +1121,7 @@ export class GloveAgent {
             .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
             .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
         }
+        emitTurnComplete(response);
       } finally {
         this.activeConversations.delete(message.conversationId);
         this.stoppedConversations.delete(message.conversationId);

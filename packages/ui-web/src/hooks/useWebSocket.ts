@@ -44,6 +44,7 @@ export function useWebSocket(
 ) {
   const [messages, setMessages] = useState<ChatEntry[]>([]);
   const [status, setStatus] = useState<ConnectionStatus>("connecting");
+  const [conversationTitles, setConversationTitles] = useState<Map<string, string>>(new Map());
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
@@ -274,6 +275,25 @@ export function useWebSocket(
             checkpoint: msg.checkpoint,
           },
         ]);
+      } else if (msg.type === "conversation_metadata") {
+        if (msg.metadata.title) {
+          setConversationTitles((prev) => {
+            const next = new Map(prev);
+            next.set(msg.conversationId, msg.metadata.title!);
+            return next;
+          });
+        }
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: createUuid(),
+            conversationId: msg.conversationId,
+            role: "conversation-metadata" as const,
+            content: JSON.stringify(msg.metadata),
+            isStreaming: false,
+            receivedAt,
+          },
+        ]);
       }
       };
 
@@ -405,5 +425,5 @@ export function useWebSocket(
     [conversationId, personalToken, privilegeGrantId],
   );
 
-  return { messages, sendMessage, status, myConversationId: conversationId };
+  return { messages, sendMessage, status, myConversationId: conversationId, conversationTitles };
 }

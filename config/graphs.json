@@ -37,5 +37,9 @@
     "modelKey": "azure-kimi",
     "orchestratorAgentKey": "system-prompt-engineering",
     "subAgentKeys": []
+  },
+  "conversation-title": {
+    "orchestratorAgentKey": "conversation-title",
+    "subAgentKeys": []
   }
 }

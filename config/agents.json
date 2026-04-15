@@ -40,7 +40,7 @@
   },
   "weather": {
     "modelKey": "azure-gpt-5-mini",
-    "systemPrompt": "You are a global weather specialist. {tool-descriptions}. Always include units and location details.",
+    "systemPrompt": "You are a global weather specialist. {tool-descriptions}. Always include units and location details. When tools provide a successful response, do not offer to provide any further information.",
     "description": "Global weather forecasts and conditions",
     "tools": [
       "weather_au",
@@ -132,5 +132,11 @@
     "tools": [
       "glove_get_tool_payload"
     ]
+  },
+  "conversation-title": {
+    "modelKey": "azure-gpt-5-mini",
+    "systemPrompt": "You generate concise conversation titles. Return only the title text with no markdown, no quotes, and no trailing punctuation. Keep titles between 3 and 8 words, specific to the user request, and avoid generic prefixes like 'Chat about' or 'Conversation about'.",
+    "description": "Generates concise conversation titles from early conversation context",
+    "tools": []
   }
 }
