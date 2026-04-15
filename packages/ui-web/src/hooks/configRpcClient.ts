@@ -132,6 +132,69 @@ export async function getConfigVersion(
   return JSON.parse(raw) as ConfigVersion;
 }
 
+export async function listSecretFiles(
+  configToolUrl: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<Array<{ name: string }>> {
+  const raw = await callConfigTool<string>(
+    configToolUrl,
+    "secrets_list_files",
+    { privilegeGrantId, conversationId },
+    authToken,
+  );
+  return JSON.parse(raw) as Array<{ name: string }>;
+}
+
+export async function listSecrets(
+  configToolUrl: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<Array<{ name: string; file: string }>> {
+  const raw = await callConfigTool<string>(
+    configToolUrl,
+    "secrets_list",
+    { privilegeGrantId, conversationId },
+    authToken,
+  );
+  return JSON.parse(raw) as Array<{ name: string; file: string }>;
+}
+
+export async function getSecret(
+  configToolUrl: string,
+  name: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<{ name: string; value: string; file: string }> {
+  const raw = await callConfigTool<string>(
+    configToolUrl,
+    "secrets_get",
+    { name, privilegeGrantId, conversationId },
+    authToken,
+  );
+  return JSON.parse(raw) as { name: string; value: string; file: string };
+}
+
+export async function upsertSecret(
+  configToolUrl: string,
+  file: string,
+  name: string,
+  value: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<void> {
+  await callConfigTool<string>(
+    configToolUrl,
+    "secrets_upsert",
+    { file, name, value, privilegeGrantId, conversationId },
+    authToken,
+  );
+}
+
 export async function validateConfigFile(
   configToolUrl: string,
   file: string,

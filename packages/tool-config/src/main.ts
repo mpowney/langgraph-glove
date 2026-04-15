@@ -24,6 +24,16 @@ import {
   handleConfigGetVersion,
   resolveDbPath,
 } from "./tools/ConfigTool";
+import {
+  secretsListFilesMetadata,
+  handleSecretsListFiles,
+  secretsListMetadata,
+  handleSecretsList,
+  secretsGetMetadata,
+  handleSecretsGet,
+  secretsUpsertMetadata,
+  handleSecretsUpsert,
+} from "./tools/SecretsTool";
 
 const adminApiUrl = process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081";
 const store = new ConfigStore(resolveDbPath());
@@ -48,6 +58,18 @@ await launchToolServer({
     );
     server.register(configGetVersionMetadata, (params) =>
       handleConfigGetVersion(params, adminApiUrl, store),
+    );
+    server.register(secretsListFilesMetadata, (params) =>
+      handleSecretsListFiles(params, adminApiUrl),
+    );
+    server.register(secretsListMetadata, (params) =>
+      handleSecretsList(params, adminApiUrl),
+    );
+    server.register(secretsGetMetadata, (params) =>
+      handleSecretsGet(params, adminApiUrl),
+    );
+    server.register(secretsUpsertMetadata, (params) =>
+      handleSecretsUpsert(params, adminApiUrl),
     );
   },
 });

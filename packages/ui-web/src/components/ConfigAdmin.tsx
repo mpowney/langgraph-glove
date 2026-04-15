@@ -21,15 +21,16 @@ import {
   DialogActions,
   MessageBar,
   MessageBarBody,
-  Field,
-  Input,
-  Dropdown,
-  Option,
-  Switch,
-  Textarea,
 } from "@fluentui/react-components";
 
 import { SystemPromptDialog } from "./SystemPromptDialog";
+import { ConfigItemNav } from "./config/ConfigItemNav";
+import { SecretsPanel } from "./config/SecretsPanel";
+import { DependentsPanel } from "./config/DependentsPanel";
+import { FriendlyEntryEditor } from "./config/FriendlyEntryEditor";
+import { HistoryDialog } from "./config/HistoryDialog";
+import { AddItemDialog } from "./config/AddItemDialog";
+import { computeDependents, extractSecretRefs } from "./config/configUtils";
 
 // Monaco editor is large — lazy-load it so it doesn't bloat the initial bundle
 const MonacoJsonEditor = lazy(() =>
@@ -46,15 +47,15 @@ import {
   ErrorCircle24Regular,
   TextWrap24Regular,
   TextWrapOff24Regular,
-  Add24Regular,
   BotSparkle24Regular,
+  KeyMultiple24Regular,
 } from "@fluentui/react-icons";
 import type {
   ConfigFileSummary,
-  ConfigVersionSummary,
   ConfigValidationIssue,
 } from "../types";
 import { useConfigAdmin } from "../hooks/useConfigAdmin";
+import { useSecrets } from "../hooks/useSecrets";
 import { PrivilegedAccessButton } from "./PrivilegedAccessButton";
 
 const useStyles = makeStyles({
@@ -67,7 +68,7 @@ const useStyles = makeStyles({
     height: "100%",
   },
   fileBrowser: {
-    width: "200px",
+    width: "160px",
     flexShrink: 0,
     borderRight: `1px solid ${tokens.colorNeutralStroke1}`,
     display: "flex",
@@ -123,6 +124,12 @@ const useStyles = makeStyles({
     flex: 1,
     overflow: "hidden",
     display: "flex",
+    flexDirection: "row",
+  },
+  editorMain: {
+    flex: 1,
+    overflow: "hidden",
+    display: "flex",
     flexDirection: "column",
   },
   monacoWrapper: {
@@ -157,68 +164,6 @@ const useStyles = makeStyles({
     height: "100%",
     gap: tokens.spacingVerticalM,
     color: tokens.colorNeutralForeground3,
-  },
-  historyList: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXS,
-    maxHeight: "400px",
-    overflowY: "auto",
-  },
-  historyItem: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "space-between",
-    padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalS}`,
-    border: `1px solid ${tokens.colorNeutralStroke1}`,
-    borderRadius: tokens.borderRadiusMedium,
-  },
-  historyItemInfo: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-    flex: 1,
-  },
-  versionPreview: {
-    fontFamily: "Consolas, 'Courier New', monospace",
-    fontSize: tokens.fontSizeBase100,
-    backgroundColor: tokens.colorNeutralBackground2,
-    padding: tokens.spacingHorizontalS,
-    borderRadius: tokens.borderRadiusMedium,
-    maxHeight: "300px",
-    overflowY: "auto",
-    whiteSpace: "pre-wrap",
-    wordBreak: "break-all",
-    marginTop: tokens.spacingVerticalS,
-  },
-  friendlyEntry: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-    padding: `${tokens.spacingVerticalM} 0`,
-    borderBottom: `1px solid ${tokens.colorNeutralStroke1}`,
-  },
-  friendlyEntryKey: {
-    fontWeight: tokens.fontWeightSemibold,
-    fontFamily: "Consolas, 'Courier New', monospace",
-  },
-  friendlyField: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalXXS,
-  },
-  listEditor: {
-    display: "flex",
-    flexDirection: "column",
-    gap: tokens.spacingVerticalS,
-  },
-  listRow: {
-    display: "flex",
-    alignItems: "center",
-    gap: tokens.spacingHorizontalS,
-  },
-  listInput: {
-    flex: 1,
   },
   noPrivileged: {
     display: "flex",
@@ -286,18 +231,6 @@ function formatDate(iso: string): string {
   }
 }
 
-const MODEL_PROVIDER_OPTIONS = [
-  "openai",
-  "anthropic",
-  "google",
-  "ollama",
-  "openai-compatible",
-] as const;
-
-function toDisplayLabel(fieldKey: string): string {
-  return fieldKey.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase());
-}
-
 function parseModelKeys(content?: string): string[] {
   if (!content) return [];
   try {
@@ -306,310 +239,6 @@ function parseModelKeys(content?: string): string[] {
   } catch {
     return [];
   }
-}
-
-function updateObjectField(
-  onChange: (key: string, newValue: unknown) => void,
-  entryKey: string,
-  obj: Record<string, unknown>,
-  fieldKey: string,
-  newValue: unknown,
-): void {
-  onChange(entryKey, { ...obj, [fieldKey]: newValue });
-}
-
-function AgentModelKeyField({
-  entryKey,
-  obj,
-  modelKeys,
-  onChange,
-}: {
-  entryKey: string;
-  obj: Record<string, unknown>;
-  modelKeys: string[];
-  onChange: (key: string, newValue: unknown) => void;
-}) {
-  const currentValue = typeof obj.modelKey === "string" ? obj.modelKey : "";
-  const hasKnownValue = currentValue !== "" && modelKeys.includes(currentValue);
-  const selectedValue = hasKnownValue ? currentValue : "__custom__";
-
-  return (
-    <Field label="Model key">
-      <div style={{ display: "flex", flexDirection: "column", gap: tokens.spacingVerticalS }}>
-        <Dropdown
-          placeholder="Select model key"
-          value={selectedValue === "__custom__" ? "Custom value" : currentValue}
-          selectedOptions={selectedValue ? [selectedValue] : []}
-          onOptionSelect={(_, data) => {
-            const value = data.optionValue;
-            if (!value) {
-              return;
-            }
-            if (value === "__custom__") {
-              return;
-            }
-            updateObjectField(onChange, entryKey, obj, "modelKey", value);
-          }}
-        >
-          {modelKeys.map((modelKey) => (
-            <Option key={modelKey} value={modelKey}>
-              {modelKey}
-            </Option>
-          ))}
-          <Option value="__custom__">Custom value</Option>
-        </Dropdown>
-        {selectedValue === "__custom__" && (
-          <Input
-            value={currentValue}
-            placeholder="Enter custom model key"
-            onChange={(_, data) => updateObjectField(onChange, entryKey, obj, "modelKey", data.value)}
-          />
-        )}
-      </div>
-    </Field>
-  );
-}
-
-function AgentToolsField({
-  entryKey,
-  obj,
-  onChange,
-}: {
-  entryKey: string;
-  obj: Record<string, unknown>;
-  onChange: (key: string, newValue: unknown) => void;
-}) {
-  const styles = useStyles();
-  const tools = Array.isArray(obj.tools)
-    ? obj.tools.map((tool) => (typeof tool === "string" ? tool : String(tool)))
-    : [];
-
-  const setTools = (nextTools: string[]) => {
-    updateObjectField(onChange, entryKey, obj, "tools", nextTools);
-  };
-
-  return (
-    <Field label="Tools">
-      <div className={styles.listEditor}>
-        {tools.map((tool, index) => (
-          <div key={`${entryKey}-tool-${index}`} className={styles.listRow}>
-            <Input
-              className={styles.listInput}
-              value={tool}
-              placeholder="Tool name"
-              onChange={(_, data) => {
-                const nextTools = [...tools];
-                nextTools[index] = data.value;
-                setTools(nextTools);
-              }}
-            />
-            <Button
-              appearance="subtle"
-              aria-label={`Remove tool ${index + 1}`}
-              onClick={() => setTools(tools.filter((_, toolIndex) => toolIndex !== index))}
-            >
-              Remove
-            </Button>
-          </div>
-        ))}
-        <Button
-          appearance="secondary"
-          icon={<Add24Regular />}
-          onClick={() => setTools([...tools, ""])}
-        >
-          Add tool
-        </Button>
-      </div>
-    </Field>
-  );
-}
-
-function ModelProviderField({
-  entryKey,
-  obj,
-  onChange,
-}: {
-  entryKey: string;
-  obj: Record<string, unknown>;
-  onChange: (key: string, newValue: unknown) => void;
-}) {
-  const currentValue = typeof obj.provider === "string" ? obj.provider : "";
-
-  return (
-    <Field label="Provider">
-      <Dropdown
-        placeholder="Select provider"
-        value={currentValue}
-        selectedOptions={currentValue ? [currentValue] : []}
-        onOptionSelect={(_, data) => {
-          if (data.optionValue) {
-            updateObjectField(onChange, entryKey, obj, "provider", data.optionValue);
-          }
-        }}
-      >
-        {MODEL_PROVIDER_OPTIONS.map((provider) => (
-          <Option key={provider} value={provider}>
-            {provider}
-          </Option>
-        ))}
-      </Dropdown>
-    </Field>
-  );
-}
-
-function ModelThinkField({
-  entryKey,
-  obj,
-  onChange,
-}: {
-  entryKey: string;
-  obj: Record<string, unknown>;
-  onChange: (key: string, newValue: unknown) => void;
-}) {
-  const checked = Boolean(obj.think);
-
-  return (
-    <Field label="Think">
-      <Switch
-        checked={checked}
-        label={checked ? "Enabled" : "Disabled"}
-        onChange={(_, data) => updateObjectField(onChange, entryKey, obj, "think", data.checked)}
-      />
-    </Field>
-  );
-}
-
-function ModelBaseUrlField({
-  entryKey,
-  obj,
-  onChange,
-}: {
-  entryKey: string;
-  obj: Record<string, unknown>;
-  onChange: (key: string, newValue: unknown) => void;
-}) {
-  const currentValue = typeof obj.baseUrl === "string" ? obj.baseUrl : "";
-
-  return (
-    <Field label="Base Url">
-      <Input
-        value={currentValue}
-        placeholder="https://example.com"
-        onChange={(_, data) => updateObjectField(onChange, entryKey, obj, "baseUrl", data.value)}
-      />
-    </Field>
-  );
-}
-
-/** Simple friendly view for a single config entry. */
-function FriendlyEntryEditor({
-  filename,
-  entryKey,
-  value,
-  modelKeys,
-  onChange,
-}: {
-  filename: string;
-  entryKey: string;
-  value: unknown;
-  modelKeys: string[];
-  onChange: (key: string, newValue: unknown) => void;
-}) {
-  const styles = useStyles();
-
-  if (typeof value !== "object" || value === null) {
-    return (
-      <div className={styles.friendlyEntry}>
-        <Text className={styles.friendlyEntryKey}>{entryKey}</Text>
-        <Field label={entryKey}>
-          <Textarea
-            value={String(value)}
-            onChange={(_, data) => onChange(entryKey, data.value)}
-            rows={1}
-          />
-        </Field>
-      </div>
-    );
-  }
-
-  const obj = value as Record<string, unknown>;
-
-  const renderTypedField = (fieldKey: string) => {
-    if (filename === "agents.json" && fieldKey === "modelKey") {
-      return (
-        <AgentModelKeyField
-          entryKey={entryKey}
-          obj={obj}
-          modelKeys={modelKeys}
-          onChange={onChange}
-        />
-      );
-    }
-    if (filename === "agents.json" && fieldKey === "tools") {
-      return <AgentToolsField entryKey={entryKey} obj={obj} onChange={onChange} />;
-    }
-    if (filename === "models.json" && fieldKey === "provider") {
-      return <ModelProviderField entryKey={entryKey} obj={obj} onChange={onChange} />;
-    }
-    if (filename === "models.json" && fieldKey === "think") {
-      return <ModelThinkField entryKey={entryKey} obj={obj} onChange={onChange} />;
-    }
-    if (filename === "models.json" && fieldKey === "baseUrl") {
-      return <ModelBaseUrlField entryKey={entryKey} obj={obj} onChange={onChange} />;
-    }
-
-    return null;
-  };
-
-  return (
-    <div className={styles.friendlyEntry}>
-      <Text className={styles.friendlyEntryKey}>{entryKey}</Text>
-      {Object.entries(obj).map(([fieldKey, fieldValue]) => {
-        const typedField = renderTypedField(fieldKey);
-        if (typedField) {
-          return <div key={fieldKey} className={styles.friendlyField}>{typedField}</div>;
-        }
-
-        const fieldLabel = toDisplayLabel(fieldKey);
-        const stringValue =
-          typeof fieldValue === "string"
-            ? fieldValue
-            : typeof fieldValue === "number" || typeof fieldValue === "boolean"
-              ? String(fieldValue)
-              : JSON.stringify(fieldValue, null, 2);
-
-        const isLong =
-          typeof fieldValue === "object" ||
-          (typeof fieldValue === "string" && fieldValue.length > 80);
-
-        return (
-          <div key={fieldKey} className={styles.friendlyField}>
-            <Field label={fieldLabel}>
-              <Textarea
-                value={stringValue}
-                rows={isLong ? 4 : 1}
-                onChange={(_, data) => {
-                  let parsed: unknown = data.value;
-                  if (typeof fieldValue === "number") {
-                    parsed = Number(data.value);
-                  } else if (typeof fieldValue === "boolean") {
-                    parsed = data.value === "true";
-                  } else if (typeof fieldValue === "object") {
-                    try {
-                      parsed = JSON.parse(data.value);
-                    } catch {
-                      parsed = data.value;
-                    }
-                  }
-                  onChange(entryKey, { ...obj, [fieldKey]: parsed });
-                }}
-              />
-            </Field>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
 export function ConfigAdmin({
@@ -659,6 +288,21 @@ export function ConfigAdmin({
     clearSelectedVersion,
   } = useConfigAdmin(configToolUrl, privilegeGrantId, conversationId, authToken);
 
+  const {
+    secretFilesState,
+    secretsState,
+    upsertState,
+    secretFilesError,
+    secretsError,
+    upsertError,
+    secretFiles,
+    secrets,
+    loadSecretFiles,
+    loadSecrets,
+    revealSecret,
+    saveSecret,
+  } = useSecrets(configToolUrl, privilegeGrantId, conversationId, authToken);
+
   const [editorTab, setEditorTab] = useState<EditorTab>("raw");
   const [wordWrap, setWordWrap] = useState(false);
   const [draftContent, setDraftContent] = useState<string>("");
@@ -678,14 +322,23 @@ export function ConfigAdmin({
   const [dialogSystemPrompt, setDialogSystemPrompt] = useState("");
   const [dialogTargetAgentKey, setDialogTargetAgentKey] = useState<string | null>(null);
 
+  // Secondary navigation — selected item key within the config file
+  const [selectedItemKey, setSelectedItemKey] = useState<string | null>(null);
+  // Secrets panel visibility
+  const [showSecretsPanel, setShowSecretsPanel] = useState(false);
+  // Add item dialog
+  const [addItemDialogOpen, setAddItemDialogOpen] = useState(false);
+
   const hasPrivilege = Boolean(privilegeGrantId) && Boolean(conversationId);
 
-  // Load files on open when privilege is available
+  // Load files and secrets on open when privilege is available
   useEffect(() => {
     if (open && hasPrivilege) {
       void loadFiles();
+      void loadSecrets();
+      void loadSecretFiles();
     }
-  }, [open, hasPrivilege, loadFiles]);
+  }, [open, hasPrivilege, loadFiles, loadSecrets, loadSecretFiles]);
 
   // When a file is selected or fileContent changes, update draft
   useEffect(() => {
@@ -698,6 +351,8 @@ export function ConfigAdmin({
     setCursorOnSystemPrompt(false);
     setDialogSystemPrompt("");
     setDialogTargetAgentKey(null);
+    // Reset item selection when file changes
+    setSelectedItemKey(null);
   }, [fileContent]);
 
   // Live validation — run with debounce on every draft change to keep Monaco
@@ -731,6 +386,46 @@ export function ConfigAdmin({
       setWordWrap(prefs.wordWrap);
     },
     [loadFileContent, isDirty],
+  );
+
+  // Friendly editor: parse the draft content and allow editing
+  const parsedConfig = useMemo(() => {
+    try {
+      return JSON.parse(draftContent) as Record<string, unknown>;
+    } catch {
+      return null;
+    }
+  }, [draftContent]);
+
+  // Navigate to a specific file and item key (used by DependentsPanel)
+  const handleNavigateTo = useCallback(
+    (filename: string, itemKey: string) => {
+      if (selectedFile !== filename) {
+        void loadFileContent(filename).then(() => {
+          setSelectedItemKey(itemKey);
+        });
+        const prefs = getFilePrefs(filename);
+        setEditorTab(prefs.tab);
+        setWordWrap(prefs.wordWrap);
+      } else {
+        setSelectedItemKey(itemKey);
+      }
+    },
+    [selectedFile, loadFileContent],
+  );
+
+  // Handle adding a new item key to the config
+  const handleAddItem = useCallback(
+    (key: string) => {
+      if (!selectedFile || !parsedConfig) return;
+      const updated = { ...parsedConfig, [key]: {} };
+      const newContent = JSON.stringify(updated, null, 2);
+      setDraftContent(newContent);
+      setIsDirty(true);
+      setSaveNotice(null);
+      setSelectedItemKey(key);
+    },
+    [selectedFile, parsedConfig],
   );
 
   const handleEditorChange = useCallback((value: string) => {
@@ -827,15 +522,6 @@ export function ConfigAdmin({
       setIsRestarting(false);
     }
   }, [onRestartService]);
-
-  // Friendly editor: parse the draft content and allow editing
-  const parsedConfig = useMemo(() => {
-    try {
-      return JSON.parse(draftContent) as Record<string, unknown>;
-    } catch {
-      return null;
-    }
-  }, [draftContent]);
 
   // System Prompt Dialog functions
 
@@ -1232,6 +918,25 @@ export function ConfigAdmin({
     return parseModelKeys(allConfigs["models.json"]);
   }, [allConfigs, parsedConfig, selectedFile]);
 
+  // Compute item keys for secondary navigation
+  const itemKeys = useMemo(() => {
+    if (!parsedConfig) return [];
+    return Object.keys(parsedConfig);
+  }, [parsedConfig]);
+
+  // Compute secret names referenced in the currently-selected item
+  const activeSecretNames = useMemo(() => {
+    if (!selectedItemKey || !parsedConfig) return [];
+    const itemValue = parsedConfig[selectedItemKey];
+    return extractSecretRefs(itemValue);
+  }, [selectedItemKey, parsedConfig]);
+
+  // Compute dependents for the selected item
+  const dependents = useMemo(() => {
+    if (!selectedFile || !selectedItemKey) return [];
+    return computeDependents(selectedFile, selectedItemKey, allConfigs);
+  }, [selectedFile, selectedItemKey, allConfigs]);
+
   const handleFriendlyChange = useCallback(
     (key: string, value: unknown) => {
       if (!parsedConfig) return;
@@ -1299,20 +1004,32 @@ export function ConfigAdmin({
       );
     }
 
+    // Show single item if selected via secondary nav, otherwise show all
+    const entriesToShow = selectedItemKey
+      ? Object.entries(parsedConfig).filter(([k]) => k === selectedItemKey)
+      : Object.entries(parsedConfig);
+
     return (
       <div className={styles.friendlyEditorScroll}>
-        {Object.entries(parsedConfig).map(([key, value]) => (
+        {entriesToShow.map(([key, value]) => (
           <FriendlyEntryEditor
             key={key}
             filename={selectedFile}
             entryKey={key}
             value={value}
             modelKeys={modelKeys}
+            activeSecretNames={activeSecretNames}
             onChange={handleFriendlyChange}
           />
         ))}
         {Object.keys(parsedConfig).length === 0 && (
-          <Text>No entries — add entries in Raw mode.</Text>
+          <Text>No entries — use the + button to add an item.</Text>
+        )}
+        {selectedItemKey && dependents.length > 0 && (
+          <DependentsPanel
+            dependents={dependents}
+            onNavigateTo={handleNavigateTo}
+          />
         )}
       </div>
     );
@@ -1448,12 +1165,28 @@ export function ConfigAdmin({
               )}
             </div>
 
+            {/* Secondary Navigation — items within the selected file */}
+            {selectedFile && parsedConfig && editorTab === "friendly" && (
+              <ConfigItemNav
+                filename={selectedFile}
+                itemKeys={itemKeys}
+                selectedKey={selectedItemKey}
+                onSelectKey={setSelectedItemKey}
+                onAddItem={() => setAddItemDialogOpen(true)}
+              />
+            )}
+
             {/* Editor Pane */}
             <div className={styles.editorPane}>
               {selectedFile && (
                 <div className={styles.editorToolbar}>
                   <div style={{ display: "flex", alignItems: "center", gap: tokens.spacingHorizontalS }}>
                     <Text weight="semibold" size={300}>{selectedFile}</Text>
+                    {selectedItemKey && editorTab === "friendly" && (
+                      <Text size={200} style={{ color: tokens.colorNeutralForeground3 }}>
+                        › {selectedItemKey}
+                      </Text>
+                    )}
                     {isDirty && (
                       <Text size={100} style={{ color: tokens.colorPaletteYellowForeground1 }}>
                         (modified)
@@ -1488,6 +1221,13 @@ export function ConfigAdmin({
                       onClick={handleOpenSystemPromptDialog}
                       disabled={selectedFile !== "agents.json"}
                     />
+                    <Button
+                      appearance={showSecretsPanel ? "primary" : "subtle"}
+                      icon={<KeyMultiple24Regular />}
+                      size="small"
+                      title={showSecretsPanel ? "Hide secrets panel" : "Show secrets panel"}
+                      onClick={() => setShowSecretsPanel((v) => !v)}
+                    />
                     <TabList
                       size="small"
                       selectedValue={editorTab}
@@ -1509,7 +1249,22 @@ export function ConfigAdmin({
               )}
 
               <div className={styles.editorContent}>
-                {renderEditorContent()}
+                <div className={styles.editorMain}>
+                  {renderEditorContent()}
+                </div>
+                {showSecretsPanel && selectedFile && (
+                  <SecretsPanel
+                    secrets={secrets}
+                    secretFiles={secretFiles}
+                    secretsLoading={secretsState === "loading"}
+                    secretsError={secretsError}
+                    upsertError={upsertError}
+                    upsertLoading={upsertState === "loading"}
+                    activeSecretNames={activeSecretNames}
+                    onRevealSecret={revealSecret}
+                    onSaveSecret={saveSecret}
+                  />
+                )}
               </div>
 
               {selectedFile && (
@@ -1584,80 +1339,22 @@ export function ConfigAdmin({
       </Dialog>
 
       {/* History dialog */}
-      <Dialog
+      <HistoryDialog
         open={historyDialogOpen}
-        onOpenChange={(_, data) => {
-          if (!data.open) {
-            setHistoryDialogOpen(false);
-            clearSelectedVersion();
-          }
+        selectedFile={selectedFile}
+        history={history}
+        historyState={historyState}
+        historyError={historyError}
+        selectedVersion={selectedVersion}
+        versionState={versionState}
+        versionError={versionError}
+        onClose={() => {
+          setHistoryDialogOpen(false);
+          clearSelectedVersion();
         }}
-      >
-        <DialogSurface style={{ maxWidth: "700px", width: "90vw" }}>
-          <DialogBody>
-            <DialogTitle>Version History — {selectedFile}</DialogTitle>
-            <DialogContent>
-              {historyState === "loading" && <Spinner />}
-              {historyError && (
-                <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{historyError}</Text>
-              )}
-              {history.length === 0 && historyState === "idle" && (
-                <Text>No version history available yet.</Text>
-              )}
-              <div className={styles.historyList}>
-                {history.map((v: ConfigVersionSummary) => (
-                  <div key={v.id} className={styles.historyItem}>
-                    <div className={styles.historyItemInfo}>
-                      <Text size={200} weight="semibold">{formatDate(v.savedAt)}</Text>
-                      {v.description && <Text size={200}>{v.description}</Text>}
-                      <Text size={100} style={{ color: tokens.colorNeutralForeground3 }}>
-                        {(v.contentLength / 1024).toFixed(1)} KB
-                      </Text>
-                    </div>
-                    <Button
-                      appearance="subtle"
-                      size="small"
-                      onClick={() => { void handleLoadVersion(v.id); }}
-                      disabled={versionState === "loading"}
-                    >
-                      Preview
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              {selectedVersion && (
-                <div>
-                  <Text weight="semibold" size={200}>
-                    Preview: {formatDate(selectedVersion.savedAt)}
-                  </Text>
-                  {versionError && (
-                    <Text style={{ color: tokens.colorPaletteRedForeground1 }}>{versionError}</Text>
-                  )}
-                  <div className={styles.versionPreview}>
-                    {selectedVersion.content}
-                  </div>
-                </div>
-              )}
-            </DialogContent>
-            <DialogActions>
-              {selectedVersion && (
-                <Button appearance="secondary" onClick={handleRestoreVersion}>
-                  Restore this version
-                </Button>
-              )}
-              <Button
-                appearance="primary"
-                onClick={() => {
-                  setHistoryDialogOpen(false);
-                  clearSelectedVersion();
-                }}
-              >
-                Close
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+        onLoadVersion={handleLoadVersion}
+        onRestoreVersion={handleRestoreVersion}
+      />
 
       {/* Restart service dialog */}
       <Dialog
@@ -1723,6 +1420,15 @@ export function ConfigAdmin({
         privilegeGrantId={privilegeGrantId}
         conversationId={conversationId}
         authToken={authToken}
+      />
+
+      {/* Add Item Dialog */}
+      <AddItemDialog
+        open={addItemDialogOpen}
+        filename={selectedFile ?? ""}
+        existingKeys={itemKeys}
+        onClose={() => setAddItemDialogOpen(false)}
+        onAdd={handleAddItem}
       />
     </>
   );
