@@ -718,17 +718,33 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
     // Never start the preserved tail with a ToolMessage (it would be orphaned),
     // and never end the compressible region with an AIMessage that has pending
     // tool_calls whose ToolMessage responses remain in the preserved region.
-    let safeCut = visibleMessages.length - compression.preserveRecentMessages;
+    let safeCut = Math.max(0, visibleMessages.length - compression.preserveRecentMessages);
     while (safeCut > 0) {
       const msgAtCut = visibleMessages[safeCut];
       const msgBeforeCut = visibleMessages[safeCut - 1];
       if (msgAtCut && isToolLikeMessage(msgAtCut)) {
+        // Don't start the preserved tail with a ToolMessage (would be orphaned).
         safeCut--;
         continue;
       }
-      if (msgBeforeCut && isAiLikeMessage(msgBeforeCut) && extractToolCallIdsFromAiMessage(msgBeforeCut).length > 0) {
-        safeCut--;
-        continue;
+      if (msgBeforeCut && isAiLikeMessage(msgBeforeCut)) {
+        const toolCallIds = extractToolCallIdsFromAiMessage(msgBeforeCut);
+        if (toolCallIds.length > 0) {
+          // Only block this cut if matching ToolMessage responses are in the
+          // preserved tail; if all responses are already in the compressible
+          // region, this cut is safe.
+          const hasToolResponseInPreserved = visibleMessages
+            .slice(safeCut)
+            .some((msg) => {
+              if (!isToolLikeMessage(msg)) return false;
+              const id = extractToolCallIdFromToolMessage(msg);
+              return id !== undefined && toolCallIds.includes(id);
+            });
+          if (hasToolResponseInPreserved) {
+            safeCut--;
+            continue;
+          }
+        }
       }
       break;
     }
