@@ -14,6 +14,7 @@ export interface ToolDescriptor {
   packageName: string;
   command: string;
   logPath: string;
+  env: Record<string, string>;
 }
 
 export interface ToolRuntimeState {

@@ -198,6 +198,83 @@ export type MemoriesConfig = z.infer<typeof MemoriesConfigSchema>;
 export const ToolTransportSchema = z.enum(["http", "unix-socket"]);
 export type ToolTransport = z.infer<typeof ToolTransportSchema>;
 
+export const McpAuthModeSchema = z.enum([
+  "bearer-static",
+  "api-key",
+  "basic",
+  "oauth-client-credentials",
+  "oauth-device-code",
+]);
+export type McpAuthMode = z.infer<typeof McpAuthModeSchema>;
+
+const McpBearerStaticAuthSchema = z.object({
+  mode: z.literal("bearer-static"),
+  token: z.string().min(1),
+});
+
+const McpApiKeyAuthSchema = z.object({
+  mode: z.literal("api-key"),
+  apiKey: z.string().min(1),
+  location: z.enum(["header", "query"]).optional(),
+  name: z.string().min(1).optional(),
+});
+
+const McpBasicAuthSchema = z.object({
+  mode: z.literal("basic"),
+  username: z.string().min(1),
+  password: z.string(),
+});
+
+const McpOAuthClientCredentialsAuthSchema = z.object({
+  mode: z.literal("oauth-client-credentials"),
+  tokenUrl: z.string().url(),
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  scope: z.string().optional(),
+  audience: z.string().optional(),
+  extraTokenParams: z.record(z.string(), z.string()).optional(),
+});
+
+const McpOAuthDeviceCodeAuthSchema = z.object({
+  mode: z.literal("oauth-device-code"),
+  deviceCodeUrl: z.string().url(),
+  tokenUrl: z.string().url(),
+  clientId: z.string().min(1),
+  clientSecret: z.string().optional(),
+  scope: z.string().optional(),
+  audience: z.string().optional(),
+  pollTimeoutMs: z.number().int().positive().optional(),
+  extraDeviceCodeParams: z.record(z.string(), z.string()).optional(),
+  extraTokenParams: z.record(z.string(), z.string()).optional(),
+});
+
+export const McpAuthConfigSchema = z.discriminatedUnion("mode", [
+  McpBearerStaticAuthSchema,
+  McpApiKeyAuthSchema,
+  McpBasicAuthSchema,
+  McpOAuthClientCredentialsAuthSchema,
+  McpOAuthDeviceCodeAuthSchema,
+]);
+export type McpAuthConfig = z.infer<typeof McpAuthConfigSchema>;
+
+export const McpServerConfigSchema = z.object({
+  endpoint: z.string().url(),
+  toolNamePrefix: z.string().min(1).optional(),
+  requestTimeoutMs: z.number().int().positive().optional(),
+  customHeaders: z.record(z.string(), z.string()).optional(),
+  auth: McpAuthConfigSchema.optional(),
+});
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+
+export const ToolLauncherConfigSchema = z.object({
+  packageName: z.string().min(1).optional(),
+  packageDir: z.string().min(1).optional(),
+  commandTemplate: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+export type ToolLauncherConfig = z.infer<typeof ToolLauncherConfigSchema>;
+
 /** A single tool server entry in tools.json. */
 export const ToolServerEntrySchema = z.object({
   /** Transport type. */
@@ -208,6 +285,10 @@ export const ToolServerEntrySchema = z.object({
   socketName: z.string().optional(),
   /** Whether this tool server is enabled. Defaults to `true` if omitted. */
   enabled: z.boolean().optional(),
+  /** Optional launch overrides used by tool-manager for this tool instance. */
+  launcher: ToolLauncherConfigSchema.optional(),
+  /** Optional MCP client runtime configuration for MCP-backed tool servers. */
+  mcp: McpServerConfigSchema.optional(),
 });
 export type ToolServerEntry = z.infer<typeof ToolServerEntrySchema>;
 
@@ -338,11 +419,15 @@ export const ToolManagerConfigSchema = z.object({
   /** In-memory per-tool log buffer size shown in TUI. */
   maxLogLines: z.number().int().positive().optional(),
 }).superRefine((value, ctx) => {
-  if (value.commandTemplate && !value.commandTemplate.includes("{tool}")) {
+  if (
+    value.commandTemplate
+    && !value.commandTemplate.includes("{tool}")
+    && !value.commandTemplate.includes("{packageName}")
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["commandTemplate"],
-      message: 'toolManager.commandTemplate must include the "{tool}" token',
+      message: 'toolManager.commandTemplate must include "{tool}" or "{packageName}" token',
     });
   }
 });

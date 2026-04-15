@@ -45,9 +45,13 @@ export async function runCli(argv = process.argv.slice(2)): Promise<void> {
       // eslint-disable-next-line no-console
       console.log(`- ${tool.key}`);
       // eslint-disable-next-line no-console
+      console.log(`  packageName: ${tool.packageName}`);
+      // eslint-disable-next-line no-console
       console.log(`  packageDir: ${tool.packageDir}`);
       // eslint-disable-next-line no-console
       console.log(`  command: ${tool.command}`);
+      // eslint-disable-next-line no-console
+      console.log(`  env: ${JSON.stringify(tool.env)}`);
       // eslint-disable-next-line no-console
       console.log(`  logPath: ${tool.logPath}`);
     }

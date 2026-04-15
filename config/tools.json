@@ -71,5 +71,40 @@
     "url": "http://localhost:3018",
     "socketName": "docker",
     "enabled": true
+  },
+  "mcp-github": {
+    "transport": "unix-socket",
+    "socketName": "mcp-github",
+    "enabled": false,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-mcp-client"
+    },
+    "mcp": {
+      "endpoint": "http://localhost:3301/mcp",
+      "toolNamePrefix": "mcp_github__",
+      "auth": {
+        "mode": "bearer-static",
+        "token": "CHANGE_ME"
+      }
+    }
+  },
+  "mcp-atlassian": {
+    "transport": "unix-socket",
+    "socketName": "mcp-atlassian",
+    "enabled": false,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-mcp-client"
+    },
+    "mcp": {
+      "endpoint": "http://localhost:3302/mcp",
+      "toolNamePrefix": "mcp_atlassian__",
+      "auth": {
+        "mode": "oauth-client-credentials",
+        "tokenUrl": "https://example.com/oauth/token",
+        "clientId": "CHANGE_ME",
+        "clientSecret": "CHANGE_ME",
+        "scope": "read:all"
+      }
+    }
   }
 }
