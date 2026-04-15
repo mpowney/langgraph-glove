@@ -1064,12 +1064,35 @@ function buildTopologyPayload(params: {
   const nodes: TopologyNode[] = [];
   const edges: TopologyEdge[] = [];
 
-  const nodeById = new Set<string>();
+  const nodeById = new Map<string, TopologyNode>();
   const edgeById = new Set<string>();
 
+  const hasText = (value: string | null | undefined): value is string =>
+    typeof value === "string" && value.trim().length > 0;
+
   const addNode = (node: TopologyNode): void => {
-    if (nodeById.has(node.id)) return;
-    nodeById.add(node.id);
+    const existing = nodeById.get(node.id);
+    if (existing) {
+      const mergedNode: TopologyNode = {
+        ...existing,
+        ...node,
+        key: hasText(node.key) ? node.key : existing.key,
+        label: hasText(node.label) ? node.label : existing.label,
+        meta: {
+          ...(existing.meta ?? {}),
+          ...(node.meta ?? {}),
+        },
+      };
+
+      nodeById.set(node.id, mergedNode);
+      const existingIndex = nodes.findIndex((entry) => entry.id === node.id);
+      if (existingIndex !== -1) {
+        nodes[existingIndex] = mergedNode;
+      }
+      return;
+    }
+
+    nodeById.set(node.id, node);
     nodes.push(node);
   };
 
