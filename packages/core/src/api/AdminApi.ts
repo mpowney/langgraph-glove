@@ -776,7 +776,7 @@ export class AdminApi {
     // grant.  Secrets are managed exclusively through these first-class Admin
     // API endpoints so they can never be accessed by agents via tool paths.
     // -----------------------------------------------------------------------
-    if (this.authService && (this.secretsDir !== undefined || process.env["GLOVE_SECRETS_DIR"])) {
+    if (this.authService) {
       registerSecretsRoutes(this.app, {
         secretsDir: this.secretsDir,
         authService: this.authService,
