@@ -710,12 +710,33 @@ export function buildSingleAgentGraph(config: SingleAgentGraphConfig) {
     const shouldCompress =
       visibleMessages.length >= compression.messageCountThreshold
       || visibleChars >= compression.charThreshold;
-    const compressibleCount = visibleMessages.length - compression.preserveRecentMessages;
-    if (!shouldCompress || compressibleCount <= 0) {
+    if (!shouldCompress) {
       return {};
     }
 
-    const compressibleMessages = visibleMessages.slice(0, compressibleCount);
+    // Find a safe cut point that never splits a tool_calls/ToolMessage pair.
+    // Never start the preserved tail with a ToolMessage (it would be orphaned),
+    // and never end the compressible region with an AIMessage that has pending
+    // tool_calls whose ToolMessage responses remain in the preserved region.
+    let safeCut = visibleMessages.length - compression.preserveRecentMessages;
+    while (safeCut > 0) {
+      const msgAtCut = visibleMessages[safeCut];
+      const msgBeforeCut = visibleMessages[safeCut - 1];
+      if (msgAtCut && isToolLikeMessage(msgAtCut)) {
+        safeCut--;
+        continue;
+      }
+      if (msgBeforeCut && isAiLikeMessage(msgBeforeCut) && extractToolCallIdsFromAiMessage(msgBeforeCut).length > 0) {
+        safeCut--;
+        continue;
+      }
+      break;
+    }
+    if (safeCut <= 0) {
+      return {};
+    }
+
+    const compressibleMessages = visibleMessages.slice(0, safeCut);
     const transcript = formatMessagesForCompression(compressibleMessages);
     if (!transcript.trim()) return {};
 
