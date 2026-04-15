@@ -243,7 +243,7 @@ function ModelBaseUrlField({
   const currentValue = typeof obj.baseUrl === "string" ? obj.baseUrl : "";
 
   return (
-    <Field label="Base Url">
+    <Field label="Base URL">
       <Input
         value={currentValue}
         placeholder="https://example.com"
@@ -278,7 +278,6 @@ function HighlightedSecretValue({
 
   // Split on {SECRET:name} references
   const parts: React.ReactNode[] = [];
-  let remaining = value;
   let idx = 0;
   const pattern = /\{SECRET:([a-zA-Z0-9_-]+)\}/g;
   let match: RegExpExecArray | null;

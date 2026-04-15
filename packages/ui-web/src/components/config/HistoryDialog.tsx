@@ -88,8 +88,12 @@ export function HistoryDialog({
 }: HistoryDialogProps) {
   const styles = useStyles();
 
+  const handleOpenChange = (_: unknown, data: { open: boolean }) => {
+    if (!data.open) onClose();
+  };
+
   return (
-    <Dialog open={open} onOpenChange={(_, data) => { if (!data.open) onClose(); }}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogSurface style={{ maxWidth: "700px", width: "90vw" }}>
         <DialogBody>
           <DialogTitle>Version History — {selectedFile}</DialogTitle>
