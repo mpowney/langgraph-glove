@@ -132,6 +132,101 @@ export async function getConfigVersion(
   return JSON.parse(raw) as ConfigVersion;
 }
 
+export async function listSecretFiles(
+  adminApiUrl: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<Array<{ name: string }>> {
+  const url = `${adminApiUrl}/api/secrets/files`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as Array<{ name: string }>;
+}
+
+export async function listSecrets(
+  adminApiUrl: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<Array<{ name: string; file: string }>> {
+  const url = `${adminApiUrl}/api/secrets`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as Array<{ name: string; file: string }>;
+}
+
+export async function getSecret(
+  adminApiUrl: string,
+  name: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<{ name: string; value: string; file: string }> {
+  const url = `${adminApiUrl}/api/secrets/${encodeURIComponent(name)}`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, { method: "GET", headers });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as { name: string; value: string; file: string };
+}
+
+export async function upsertSecret(
+  adminApiUrl: string,
+  file: string,
+  name: string,
+  value: string,
+  privilegeGrantId: string,
+  conversationId: string,
+  authToken?: string,
+): Promise<void> {
+  const url = `${adminApiUrl}/api/secrets`;
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Privilege-Grant-Id": privilegeGrantId,
+    "X-Conversation-Id": conversationId,
+  };
+  if (authToken?.trim()) headers.Authorization = `Bearer ${authToken.trim()}`;
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ file, name, value }),
+  });
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new Error(body.error ?? `HTTP ${res.status}`);
+  }
+}
+
 export async function validateConfigFile(
   configToolUrl: string,
   file: string,
