@@ -2,6 +2,17 @@ import AppKit
 import ApplicationServices
 import Foundation
 
+struct DiscoveredToolInfo: Identifiable {
+    let id: String
+    let name: String
+    let description: String
+}
+
+struct PeekabooDiagnosticLine: Identifiable {
+    let id: String
+    let text: String
+}
+
 // MARK: - Transport type
 
 /// The transport protocol the tool server listens on.
@@ -43,6 +54,13 @@ final class AppState: ObservableObject {
     /// The actual path will be `/tmp/langgraph-glove-{socketName}.sock`.
     @Published var socketName: String = "macos-control"
 
+    /// Enable forwarding of dynamically discovered Peekaboo MCP tools.
+    @Published var peekabooEnabled: Bool = false
+
+    /// Base command used to execute Peekaboo operations.
+    /// The MCP server is started by appending `mcp`.
+    @Published var peekabooBaseCommand: String = "npx -y @steipete/peekaboo"
+
     @Published var serverRunning: Bool = false
     @Published var serverError: String? = nil
 
@@ -54,6 +72,14 @@ final class AppState: ObservableObject {
     @Published var toolLogEntries: [ToolLogEntry] = []
     /// Absolute path to the persistent log file.
     @Published var toolLogFilePath: String = ""
+    /// Tools discovered from Peekaboo MCP and exposed via this server.
+    @Published var peekabooDiscoveredTools: [DiscoveredToolInfo] = []
+    /// Last discovery/diagnostic error for Peekaboo MCP integration.
+    @Published var peekabooLastError: String? = nil
+    /// Human-readable diagnostics shown in the main window.
+    @Published var peekabooDiagnosticLines: [PeekabooDiagnosticLine] = []
+    /// True while a manual diagnostic run is in progress.
+    @Published var peekabooDiagnosing: Bool = false
 
     /// True when the gateway appears to be connected / recently active.
     /// - Unix socket: at least one open connection.
@@ -74,6 +100,8 @@ final class AppState: ObservableObject {
     private var httpServer: RpcServer?
     private var unixServer: UnixSocketRpcServer?
     private let toolLogManager = ToolRequestLogManager()
+    private let peekabooMcpBridge = PeekabooMcpBridge()
+    private var serverStarting: Bool = false
 
     /// Derived socket path — always in sync with `socketName`.
     var currentSocketPath: String { socketPathForTool(socketName) }
@@ -88,6 +116,11 @@ final class AppState: ObservableObject {
         if savedPort > 0 { serverPort = savedPort }
         if let name = UserDefaults.standard.string(forKey: "rpc.socketName"), !name.isEmpty {
             socketName = name
+        }
+        peekabooEnabled = UserDefaults.standard.bool(forKey: "peekaboo.enabled")
+        if let baseCommand = UserDefaults.standard.string(forKey: "peekaboo.baseCommand"),
+           !baseCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            peekabooBaseCommand = baseCommand
         }
         checkPermissions()
         Task { [weak self] in
@@ -111,6 +144,8 @@ final class AppState: ObservableObject {
         UserDefaults.standard.set(transport.rawValue, forKey: "rpc.transport")
         UserDefaults.standard.set(serverPort, forKey: "rpc.port")
         UserDefaults.standard.set(socketName, forKey: "rpc.socketName")
+        UserDefaults.standard.set(peekabooEnabled, forKey: "peekaboo.enabled")
+        UserDefaults.standard.set(peekabooBaseCommand, forKey: "peekaboo.baseCommand")
     }
 
     // MARK: - Permission management
@@ -162,14 +197,30 @@ final class AppState: ObservableObject {
     // MARK: - Server lifecycle
 
     func startServer() {
-        guard !serverRunning else { return }
+        guard !serverRunning, !serverStarting else { return }
+        serverStarting = true
+        Task { @MainActor [weak self] in
+            await self?.startServerInternal()
+        }
+    }
+
+    private func startServerInternal() async {
+        defer { serverStarting = false }
+
         let registry = ToolRegistry()
-        registerAllTools(in: registry)
+        await registerAllTools(in: registry)
+
+        let baseCommand = peekabooEnabled ? peekabooBaseCommand.trimmingCharacters(in: .whitespacesAndNewlines) : nil
 
         do {
             switch transport {
             case .http:
-                let s = RpcServer(port: UInt16(clamping: serverPort), registry: registry)
+                let s = RpcServer(
+                    port: UInt16(clamping: serverPort),
+                    registry: registry,
+                    peekabooMcpBridge: peekabooEnabled ? peekabooMcpBridge : nil,
+                    peekabooBaseCommand: baseCommand
+                )
                 s.onRequestHandled = { [weak self] in
                     Task { @MainActor [weak self] in self?.lastRequestDate = Date() }
                 }
@@ -177,7 +228,12 @@ final class AppState: ObservableObject {
                 httpServer = s
 
             case .unixSocket:
-                let s = UnixSocketRpcServer(name: socketName, registry: registry)
+                let s = UnixSocketRpcServer(
+                    name: socketName,
+                    registry: registry,
+                    peekabooMcpBridge: peekabooEnabled ? peekabooMcpBridge : nil,
+                    peekabooBaseCommand: baseCommand
+                )
                 s.onConnectionOpened = { [weak self] in
                     Task { @MainActor [weak self] in
                         guard let self else { return }
@@ -210,8 +266,66 @@ final class AppState: ObservableObject {
         unixServer?.stop()
         unixServer = nil
         serverRunning = false
+        serverStarting = false
         activeConnections = 0
         lastRequestDate = nil
+        Task {
+            await peekabooMcpBridge.stop()
+        }
+    }
+
+    func runPeekabooDiagnostics() {
+        guard !peekabooDiagnosing else { return }
+        peekabooDiagnosing = true
+        let baseCommand = peekabooBaseCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.peekabooDiagnosing = false }
+
+            var lines: [PeekabooDiagnosticLine] = []
+            lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Base command: \(baseCommand.isEmpty ? "<empty>" : baseCommand)"))
+            lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Peekaboo enabled: \(peekabooEnabled ? "yes" : "no")"))
+            lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Environment: nvm initialized with Node 22"))
+
+            if baseCommand.isEmpty {
+                let message = "Base command is empty. Set it to something like 'npx -y @steipete/peekaboo'."
+                self.peekabooLastError = message
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: message))
+                self.peekabooDiagnosticLines = lines
+                return
+            }
+
+            do {
+                let discovered = try await peekabooMcpBridge.discoverTools(baseCommand: baseCommand)
+                self.peekabooLastError = nil
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "MCP handshake: successful"))
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Tools discovered: \(discovered.count)"))
+
+                if discovered.isEmpty {
+                    lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Peekaboo MCP returned zero tools."))
+                    lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Try restarting the server, then run diagnostics again."))
+                    lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Also verify the command works in Terminal: \(baseCommand) mcp"))
+                } else {
+                    for tool in discovered.prefix(10) {
+                        lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "- \(tool.proxyName)"))
+                    }
+                    if discovered.count > 10 {
+                        lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "…and \(discovered.count - 10) more"))
+                    }
+                }
+            } catch {
+                let message = error.localizedDescription
+                self.peekabooLastError = message
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "MCP handshake: failed"))
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Error: \(message)"))
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "The app initializes nvm Node 22 automatically in all shell commands."))
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Verify: nvm is installed, Node 22 is available (nvm list), and \"\(baseCommand) mcp\" works in Terminal."))
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Or set Base Command to an absolute path to the peekaboo binary."))
+            }
+
+            self.peekabooDiagnosticLines = lines
+        }
     }
 
     func restartServer() {
@@ -221,7 +335,7 @@ final class AppState: ObservableObject {
 
     // MARK: - Tool registration
 
-    private func registerAllTools(in registry: ToolRegistry) {
+    private func registerAllTools(in registry: ToolRegistry) async {
         registerLoggedTool(in: registry, metadata: getFrontmostAppMetadata, handler: handleGetFrontmostApp)
         registerLoggedTool(in: registry, metadata: listRunningAppsMetadata, handler: handleListRunningApps)
         registerLoggedTool(in: registry, metadata: launchAppMetadata, handler: handleLaunchApp)
@@ -234,6 +348,13 @@ final class AppState: ObservableObject {
         registerLoggedTool(in: registry, metadata: pressKeyMetadata, handler: handlePressKey)
         registerLoggedTool(in: registry, metadata: scrollMetadata, handler: handleScroll)
         registerLoggedTool(in: registry, metadata: takeScreenshotMetadata, handler: handleTakeScreenshot)
+        
+        // Peekaboo tools are now discovered dynamically via RPC dispatch interception.
+        // No pre-registration needed in v3 model.
+        if !peekabooEnabled {
+            peekabooDiscoveredTools = []
+            peekabooLastError = nil
+        }
     }
 
     private func registerLoggedTool(

@@ -12,6 +12,8 @@ struct SettingsView: View {
     @State private var editPort: Int             = 3020
     @State private var editPortString: String    = "3020"
     @State private var editSocketName: String    = "macos-control"
+    @State private var editPeekabooEnabled: Bool = false
+    @State private var editPeekabooBaseCommand: String = "npx -y @steipete/peekaboo"
     @State private var applyPending: Bool        = false
 
     var body: some View {
@@ -74,6 +76,25 @@ struct SettingsView: View {
                 Text("Connection Method")
             }
 
+            // ── Peekaboo MCP bridge ─────────────────────────────────────
+            Section {
+                Toggle("Enable Peekaboo MCP tools", isOn: $editPeekabooEnabled)
+
+                HStack {
+                    Text("Base Command")
+                    Spacer()
+                    TextField("Peekaboo base command", text: $editPeekabooBaseCommand)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 260)
+                }
+
+                Text("When enabled, tool-macos-control starts '\(editPeekabooBaseCommand) mcp', discovers available MCP tools, and forwards calls with a peekaboo_ prefix.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } header: {
+                Text("Peekaboo")
+            }
+
             // ── Accessibility ────────────────────────────────────────────
             Section {
                 HStack(spacing: 10) {
@@ -118,6 +139,8 @@ struct SettingsView: View {
         return editTransport == appState.transport
             && parsedPort    == appState.serverPort
             && editSocketName == appState.socketName
+            && editPeekabooEnabled == appState.peekabooEnabled
+            && editPeekabooBaseCommand == appState.peekabooBaseCommand
     }
 
     private func syncFromAppState() {
@@ -125,6 +148,8 @@ struct SettingsView: View {
         editPort       = appState.serverPort
         editPortString = String(appState.serverPort)
         editSocketName = appState.socketName
+        editPeekabooEnabled = appState.peekabooEnabled
+        editPeekabooBaseCommand = appState.peekabooBaseCommand
     }
 
     private func apply() {
@@ -136,6 +161,8 @@ struct SettingsView: View {
             editPortString = String(p)
         }
         appState.socketName = editSocketName
+        appState.peekabooEnabled = editPeekabooEnabled
+        appState.peekabooBaseCommand = editPeekabooBaseCommand
         appState.saveSettings()
         appState.restartServer()
         // Brief visual feedback before re-enabling the button.

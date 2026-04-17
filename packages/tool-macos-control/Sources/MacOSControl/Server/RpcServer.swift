@@ -12,13 +12,17 @@ final class RpcServer {
     private let registry: ToolRegistry
     private var listener: NWListener?
     private let requestTimeoutMs: UInt64
+    private var peekabooMcpBridge: PeekabooMcpBridge?
+    private var peekabooBaseCommand: String?
 
     /// Called on the server's internal queue each time a JSON-RPC request is handled.
     var onRequestHandled: (() -> Void)?
 
-    init(port: UInt16, registry: ToolRegistry) {
+    init(port: UInt16, registry: ToolRegistry, peekabooMcpBridge: PeekabooMcpBridge? = nil, peekabooBaseCommand: String? = nil) {
         self.port = port
         self.registry = registry
+        self.peekabooMcpBridge = peekabooMcpBridge
+        self.peekabooBaseCommand = peekabooBaseCommand
         let rawTimeout = ProcessInfo.processInfo.environment["MACOS_CONTROL_RPC_TIMEOUT_MS"]
         let parsedTimeout = rawTimeout.flatMap(UInt64.init) ?? 30_000
         self.requestTimeoutMs = max(1_000, parsedTimeout)
@@ -210,7 +214,27 @@ final class RpcServer {
         let rpcResp: RpcResponse
 
         if req.method == "__introspect__" {
-            rpcResp = RpcResponse(id: req.id, result: registry.allMetadata(), error: nil)
+            var allMetadata = registry.allMetadata()
+            if let bridge = peekabooMcpBridge, let baseCmd = peekabooBaseCommand {
+                do {
+                    let peekabooTools = try await bridge.getToolsForIntrospect(baseCommand: baseCmd)
+                    allMetadata.append(contentsOf: peekabooTools)
+                } catch {
+                    // If Peekaboo discovery fails, just return registry tools
+                }
+            }
+            rpcResp = RpcResponse(id: req.id, result: allMetadata, error: nil)
+        } else if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
+            let upstreamName = String(req.method.dropFirst(9))
+            do {
+                let result = try await runWithTimeout(
+                    milliseconds: requestTimeoutMs,
+                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: req.params) }
+                )
+                rpcResp = RpcResponse(id: req.id, result: result, error: nil)
+            } catch {
+                rpcResp = RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
+            }
         } else if let handler = registry.handler(for: req.method) {
             do {
                 let result = try await runWithTimeout(

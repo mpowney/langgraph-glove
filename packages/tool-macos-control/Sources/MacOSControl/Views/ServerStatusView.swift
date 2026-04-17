@@ -31,6 +31,56 @@ struct ServerStatusView: View {
                     unixSocketConfigRow
                 }
 
+                Divider()
+
+                HStack {
+                    Toggle("Enable Peekaboo MCP tools", isOn: $appState.peekabooEnabled)
+                        .onChange(of: appState.peekabooEnabled) { _ in
+                            appState.saveSettings()
+                            if appState.serverRunning {
+                                appState.restartServer()
+                            }
+                        }
+                    Spacer()
+                }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .center, spacing: 8) {
+                        Image(systemName: peekabooStatusIcon)
+                            .foregroundStyle(peekabooStatusColor)
+                        Text(peekabooStatusText)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button(appState.peekabooDiagnosing ? "Diagnosing…" : "Diagnose Peekaboo") {
+                            appState.runPeekabooDiagnostics()
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .disabled(appState.peekabooDiagnosing)
+                    }
+
+                    if let lastError = appState.peekabooLastError, appState.peekabooEnabled {
+                        Text(lastError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+
+                    if !appState.peekabooDiagnosticLines.isEmpty, appState.peekabooEnabled {
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(appState.peekabooDiagnosticLines) { line in
+                                Text(line.text)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 6)
+                        .background(Color(.textBackgroundColor))
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                    }
+                }
+
                 // ── Status + start/stop ──────────────────────────────────
                 HStack {
                     Circle()
@@ -129,6 +179,38 @@ struct ServerStatusView: View {
         case .unixSocket:
             return "Running on Unix socket"
         }
+    }
+
+    private var peekabooStatusText: String {
+        if !appState.peekabooEnabled {
+            return "Peekaboo MCP tools are disabled"
+        }
+        if appState.peekabooDiagnosing {
+            return "Running Peekaboo diagnostics..."
+        }
+        if !appState.peekabooDiscoveredTools.isEmpty {
+            return "Peekaboo discovered \(appState.peekabooDiscoveredTools.count) tools"
+        }
+        if appState.peekabooLastError != nil {
+            return "Peekaboo discovery failed"
+        }
+        return "No tools discovered from Peekaboo MCP yet"
+    }
+
+    private var peekabooStatusIcon: String {
+        if !appState.peekabooEnabled { return "power" }
+        if appState.peekabooDiagnosing { return "arrow.triangle.2.circlepath" }
+        if !appState.peekabooDiscoveredTools.isEmpty { return "checkmark.circle.fill" }
+        if appState.peekabooLastError != nil { return "exclamationmark.triangle.fill" }
+        return "questionmark.circle"
+    }
+
+    private var peekabooStatusColor: Color {
+        if !appState.peekabooEnabled { return .secondary }
+        if appState.peekabooDiagnosing { return .blue }
+        if !appState.peekabooDiscoveredTools.isEmpty { return .green }
+        if appState.peekabooLastError != nil { return .orange }
+        return .secondary
     }
 }
 

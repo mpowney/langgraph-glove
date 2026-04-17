@@ -49,6 +49,8 @@ struct ContentView: View {
 // MARK: - Tool list summary
 
 private struct ToolListView: View {
+    @EnvironmentObject var appState: AppState
+
     private let tools = [
         ("macos_get_frontmost_app", "Get the frontmost application"),
         ("macos_list_running_apps", "List all running applications"),
@@ -76,6 +78,31 @@ private struct ToolListView: View {
                         Text(description)
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                }
+                if appState.peekabooEnabled {
+                    if appState.peekabooDiscoveredTools.isEmpty {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("peekaboo")
+                                .font(.system(.caption, design: .monospaced))
+                                .foregroundStyle(Color.accentColor)
+                                .frame(width: 230, alignment: .leading)
+                            Text("No tools discovered yet from Peekaboo MCP")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        ForEach(appState.peekabooDiscoveredTools) { tool in
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(tool.name)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 230, alignment: .leading)
+                                Text(tool.description)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
                 }
             }
