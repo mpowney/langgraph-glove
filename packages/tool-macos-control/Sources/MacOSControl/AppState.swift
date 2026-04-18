@@ -385,8 +385,23 @@ final class AppState: ObservableObject {
     }
 
     func restartServer() {
-        stopServer()
-        startServer()
+        // Synchronously tear down the transport servers (safe on MainActor).
+        httpServer?.stop()
+        httpServer = nil
+        unixServer?.stop()
+        unixServer = nil
+        serverRunning = false
+        serverStarting = true  // prevent concurrent startServer() calls during the restart
+        activeConnections = 0
+        lastRequestDate = nil
+        // Await the Peekaboo bridge stop before starting the new server so a
+        // queued stop() cannot terminate the freshly started process.
+        // Note: strong capture is intentional – AppState is a long-lived singleton and
+        // startServerInternal()'s defer always resets serverStarting on any exit path.
+        Task { @MainActor in
+            await self.peekabooMcpBridge.stop()
+            await self.startServerInternal()
+        }
     }
 
     // MARK: - Tool registration
