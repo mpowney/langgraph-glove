@@ -246,7 +246,13 @@ export class RemoteTool extends StructuredTool {
 
     const result = await this.rpcClient.call(this.name, args);
 
-    const maxBytes = maxInlineToolResultBytes();
+    const configurableLimit =
+      typeof config?.configurable === "object" &&
+      config.configurable !== null &&
+      typeof (config.configurable as Record<string, unknown>).maxInlineToolResultBytes === "number"
+        ? (config.configurable as Record<string, unknown>).maxInlineToolResultBytes as number
+        : undefined;
+    const maxBytes = configurableLimit ?? maxInlineToolResultBytes();
     const compact = maybeCompactLargePayload(result, maxBytes);
     if (compact) return compact;
 

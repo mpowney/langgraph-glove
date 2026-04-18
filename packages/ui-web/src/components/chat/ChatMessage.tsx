@@ -16,6 +16,7 @@ import {
   tryFormatJsonString,
 } from "./utils/dataFormatters";
 import { estimatePromptContextUsage } from "./utils/promptAnalytics";
+import { splitContentWithImages } from "./utils/imageUtils";
 import { formatMessageTimestamp } from "./utils/dataFormatters";
 import type { ChatEntry } from "../../types";
 
@@ -591,7 +592,18 @@ export function ChatMessage({
             checkpoint={entry.checkpoint}
           >
             <Text block className={styles.toolMetaDesc}>{toolNameDebugLine}</Text>
-            {toolContent}
+            {splitContentWithImages(toolContent).map((segment, i) =>
+              segment.kind === "image" ? (
+                <img
+                  key={i}
+                  src={segment.src}
+                  alt={segment.alt || "tool image result"}
+                  style={{ display: "block", maxWidth: "100%", height: "auto", margin: "4px 0", borderRadius: "4px" }}
+                />
+              ) : (
+                <span key={i}>{segment.content}</span>
+              ),
+            )}
             {entry.toolEventMetadata && (
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}

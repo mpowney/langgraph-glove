@@ -46,6 +46,45 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Expandable description view
+
+private struct ExpandableDescriptionView: View {
+    let description: String
+    @State private var isExpanded = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(isExpanded ? nil : 3)
+
+            // Check if description would exceed 3 lines by comparing against a 3-line measurement
+            if shouldShowExpandButton {
+                Button(action: { isExpanded.toggle() }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.caption2)
+                        Text(isExpanded ? "Collapse" : "Expand")
+                            .font(.caption2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.blue)
+                .frame(height: 16)
+            }
+        }
+    }
+
+    private var shouldShowExpandButton: Bool {
+        // Measure if text exceeds 3 lines
+        // A simple heuristic: if description is very long, probably needs more than 3 lines
+        let estimatedLineCount = description.split(separator: "\n", omittingEmptySubsequences: false).count
+            + (description.count / 50) // rough estimate of wrapped lines
+        return estimatedLineCount > 3 || description.count > 150
+    }
+}
+
 // MARK: - Tool list summary
 
 private struct ToolListView: View {
@@ -68,42 +107,61 @@ private struct ToolListView: View {
 
     var body: some View {
         GroupBox("Available Tools") {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(tools, id: \.0) { name, description in
-                    HStack(alignment: .top, spacing: 8) {
-                        Text(name)
-                            .font(.system(.caption, design: .monospaced))
-                            .foregroundStyle(Color.accentColor)
-                            .frame(width: 230, alignment: .leading)
-                        Text(description)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 0) {
+                if appState.macosToolsEnabled {
+                    ForEach(0..<tools.count, id: \.self) { index in
+                        let (name, description) = tools[index]
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(alignment: .top, spacing: 8) {
+                                Text(name)
+                                    .font(.system(.caption, design: .monospaced))
+                                    .foregroundStyle(Color.accentColor)
+                                    .frame(width: 230, alignment: .leading)
+                                ExpandableDescriptionView(description: description)
+                            }
+                            if index < tools.count - 1 || appState.peekabooEnabled {
+                                Divider()
+                                    .padding(.vertical, 6)
+                            }
+                        }
                     }
                 }
                 if appState.peekabooEnabled {
                     if appState.peekabooDiscoveredTools.isEmpty {
-                        HStack(alignment: .top, spacing: 8) {
-                            Text("peekaboo")
-                                .font(.system(.caption, design: .monospaced))
-                                .foregroundStyle(Color.accentColor)
-                                .frame(width: 230, alignment: .leading)
-                            Text("No tools discovered yet from Peekaboo MCP")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    } else {
-                        ForEach(appState.peekabooDiscoveredTools) { tool in
+                        VStack(alignment: .leading, spacing: 6) {
                             HStack(alignment: .top, spacing: 8) {
-                                Text(tool.name)
+                                Text("peekaboo")
                                     .font(.system(.caption, design: .monospaced))
                                     .foregroundStyle(Color.accentColor)
                                     .frame(width: 230, alignment: .leading)
-                                Text(tool.description)
+                                Text("No tools discovered yet from Peekaboo MCP")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
                         }
+                    } else {
+                        ForEach(0..<appState.peekabooDiscoveredTools.count, id: \.self) { index in
+                            let tool = appState.peekabooDiscoveredTools[index]
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack(alignment: .top, spacing: 8) {
+                                    Text(tool.name)
+                                        .font(.system(.caption, design: .monospaced))
+                                        .foregroundStyle(Color.accentColor)
+                                        .frame(width: 230, alignment: .leading)
+                                    ExpandableDescriptionView(description: tool.description)
+                                }
+                                if index < appState.peekabooDiscoveredTools.count - 1 {
+                                    Divider()
+                                        .padding(.vertical, 6)
+                                }
+                            }
+                        }
                     }
+                }
+                if !appState.macosToolsEnabled && !appState.peekabooEnabled {
+                    Text("No tools enabled")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .padding(8)

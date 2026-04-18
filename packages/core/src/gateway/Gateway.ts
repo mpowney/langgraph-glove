@@ -95,6 +95,8 @@ export class Gateway extends EventEmitter {
 
   /** Discovered tool definitions, populated after `discoverTools()`. */
   private toolRegistry: ToolDefinition[] = [];
+  /** Mapping of tools.json server key -> discovered tool names. */
+  private discoveredToolNamesByServer: Record<string, string[]> = {};
   /** Agent capability entries, populated after `buildAgentGraph()`. */
   private agentCapabilities: AgentCapabilityEntry[] = [];
   /** Tool set discovered during startup, reused to build non-default graphs on demand. */
@@ -451,7 +453,7 @@ export class Gateway extends EventEmitter {
     if (subAgentKeys.length === 0) {
       // Single-agent mode — standard ReAct loop
       const model = models.get(orchestratorEntry.modelKey ?? "default");
-      const scopedTools = this.scopeTools(allTools, orchestratorEntry.tools);
+      const scopedTools = this.scopeTools(allTools, this.resolveAllowedToolNames(orchestratorEntry));
       const compression = this.resolveCompressionRuntimeConfig({
         allTools,
         agentEntry: orchestratorEntry,
@@ -481,7 +483,7 @@ export class Gateway extends EventEmitter {
         key === "memory" && memorySubgraphProfile
           ? this.resolveAgentEntryFromSubgraphProfile(agents, memorySubgraphProfile)
           : resolveConfigEntry(agents, key);
-      const scopedTools = this.scopeTools(allTools, entry.tools);
+      const scopedTools = this.scopeTools(allTools, this.resolveAllowedToolNames(entry));
       const compression = this.resolveCompressionRuntimeConfig({
         allTools,
         agentEntry: entry,
@@ -501,7 +503,10 @@ export class Gateway extends EventEmitter {
     });
 
     const orchestratorModel = models.get(orchestratorEntry.modelKey ?? "default");
-    const orchestratorTools = this.scopeTools(allTools, orchestratorEntry.tools);
+    const orchestratorTools = this.scopeTools(
+      allTools,
+      this.resolveAllowedToolNames(orchestratorEntry),
+    );
 
     logger.info(
       `Graph "${graphKey}": multi-agent orchestrator mode with ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
@@ -702,6 +707,11 @@ export class Gateway extends EventEmitter {
 
     if (graphKey === "default") {
       if (!this.agent) throw new Error("Agent is not running");
+      const defaultGraphEntry = this.config!.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
+      const defaultOrchestratorEntry = resolveConfigEntry(
+        this.config!.agents as Record<string, AgentEntry>,
+        defaultGraphEntry.orchestratorAgentKey,
+      );
       const responseText = await this.agent.invoke(
         params.prompt,
         params.conversationId,
@@ -716,6 +726,9 @@ export class Gateway extends EventEmitter {
             taskId: params.observability?.taskId,
             scheduleType: params.observability?.scheduleType,
           },
+          ...(defaultOrchestratorEntry.maxInlineToolResultBytes !== undefined
+            ? { maxInlineToolResultBytes: defaultOrchestratorEntry.maxInlineToolResultBytes }
+            : {}),
         },
       );
       this.maybeScheduleConversationTitleGeneration({
@@ -746,6 +759,9 @@ export class Gateway extends EventEmitter {
           thread_id: params.conversationId,
           conversationId: params.conversationId,
           ...(params.personalToken ? { personalToken: params.personalToken } : {}),
+          ...(orchestratorEntry.maxInlineToolResultBytes !== undefined
+            ? { maxInlineToolResultBytes: orchestratorEntry.maxInlineToolResultBytes }
+            : {}),
         },
         recursionLimit: orchestratorEntry.recursionLimit ?? 25,
         callbacks,
@@ -960,11 +976,38 @@ export class Gateway extends EventEmitter {
     return allTools.filter((t) => allowed.has(t.name));
   }
 
+  /**
+   * Resolve an agent's effective allow-list from explicit tool names and
+   * tools discovered from configured tool server keys.
+   */
+  private resolveAllowedToolNames(entry: AgentEntry): string[] | undefined {
+    const explicit = entry.tools;
+    const rawAutoDiscoveryKeys = (entry as Record<string, unknown>)["autoToolDiscovery"];
+    const autoDiscoveryKeys = Array.isArray(rawAutoDiscoveryKeys)
+      ? rawAutoDiscoveryKeys.filter((value): value is string => typeof value === "string")
+      : undefined;
+
+    if (explicit === undefined && autoDiscoveryKeys === undefined) {
+      return undefined;
+    }
+
+    const resolved = new Set<string>(explicit ?? []);
+    for (const serverKey of autoDiscoveryKeys ?? []) {
+      const discovered = this.discoveredToolNamesByServer[serverKey] ?? [];
+      for (const toolName of discovered) {
+        resolved.add(toolName);
+      }
+    }
+
+    return [...resolved];
+  }
+
   /** Connect to all tool servers declared in tools.json and discover their tools. */
   private async discoverTools(
     toolsConfig: Record<string, ToolServerEntry>,
   ): Promise<StructuredToolInterface[]> {
     const allTools: StructuredToolInterface[] = [getToolPayloadRefTool];
+    this.discoveredToolNamesByServer = {};
 
     // Seed registry with the built-in tool payload ref tool so it appears in the catalog.
     this.toolRegistry = [
@@ -990,11 +1033,13 @@ export class Gateway extends EventEmitter {
           logger.debug(`Tool server "${name}": connected, discovering tools...`);
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
+          this.discoveredToolNamesByServer[name] = [...new Set(tools.map((tool) => tool.name))];
           // Also capture raw metadata for the registry so the UI can read parameter schemas.
           const metadata = await client.listTools();
           this.toolRegistry.push(...metadata);
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
         } catch (err) {
+          this.discoveredToolNamesByServer[name] = [];
           logger.error(`Failed to connect to tool server "${name}"`, err);
         }
         return;
@@ -1030,7 +1075,7 @@ export class Gateway extends EventEmitter {
       description: entry.description ?? key,
       modelKey: entry.modelKey ?? "default",
       // `undefined` means no restriction (all tools); empty array means none.
-      tools: entry.tools === undefined ? null : entry.tools,
+      tools: this.resolveAllowedToolNames(entry) ?? null,
     }));
   }
 
@@ -1049,7 +1094,7 @@ export class Gateway extends EventEmitter {
 
     const missingByAgent = Object.entries(agents)
       .map(([agentKey, entry]) => {
-        const configured = entry.tools ?? [];
+        const configured = this.resolveAllowedToolNames(entry) ?? [];
         const missing = configured.filter((toolName) => !discoveredNames.has(toolName));
         return { agentKey, missing };
       })

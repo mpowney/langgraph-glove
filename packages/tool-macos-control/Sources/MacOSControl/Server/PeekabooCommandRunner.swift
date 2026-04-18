@@ -5,7 +5,6 @@ func runPeekabooCommand(
     commandTokens: [String],
     params: [String: Any]
 ) async throws -> Any {
-    let commandPath = commandTokens.isEmpty ? "" : commandTokens.joined(separator: " ")
     var argv: [String] = []
 
     if let positional = params["_args"] as? [Any] {
@@ -59,17 +58,16 @@ func runPeekabooCommand(
         }
     }
 
-    var segments: [String] = [baseCommand]
-    if !commandPath.isEmpty {
-        segments.append(commandPath)
-    }
-    segments.append("--json")
-    for arg in argv {
-        segments.append(shellEscape(arg))
-    }
+    let invocation = try processInvocation(for: baseCommand)
+    var processArgs: [String] = invocation.arguments
+    processArgs.append(contentsOf: commandTokens)
+    processArgs.append("--json")
+    processArgs.append(contentsOf: argv)
 
-    let shellCommand = segments.joined(separator: " ")
-    let output = try await runShellCommand(shellCommand)
+    let output = try await runProcessCommand(
+        executable: invocation.executable,
+        arguments: processArgs
+    )
 
     if output.exitCode != 0 {
         let stderr = output.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -85,9 +83,13 @@ func runPeekabooCommand(
         return parsed
     }
 
+    let commandDescription = ([invocation.displayName] + processArgs)
+        .map(shellEscape)
+        .joined(separator: " ")
+
     return [
         "ok": true,
-        "command": shellCommand,
+        "command": commandDescription,
         "stdout": output.stdout,
         "stderr": output.stderr,
         "exitCode": output.exitCode,
@@ -100,13 +102,11 @@ private struct ShellCommandOutput {
     let exitCode: Int32
 }
 
-private func runShellCommand(_ command: String) async throws -> ShellCommandOutput {
+private func runProcessCommand(executable: String, arguments: [String]) async throws -> ShellCommandOutput {
     try await withCheckedThrowingContinuation { continuation in
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        // Prepend nvm initialization so Node.js versions from nvm are available.
-        let nvmSetup = "export NVM_DIR=\"$HOME/.nvm\" && [ -s \"$NVM_DIR/nvm.sh\" ] && . \"$NVM_DIR/nvm.sh\" && nvm use 22 >/dev/null 2>&1; "
-        process.arguments = ["-lc", nvmSetup + command]
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = arguments
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()
@@ -133,6 +133,93 @@ private func runShellCommand(_ command: String) async throws -> ShellCommandOutp
             continuation.resume(throwing: ToolError.failed("Failed to start Peekaboo command: \(error.localizedDescription)"))
         }
     }
+}
+
+private func processInvocation(for baseCommand: String) throws -> (executable: String, arguments: [String], displayName: String) {
+    let command = baseCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !command.isEmpty else {
+        throw ToolError.failed("Peekaboo base command is empty")
+    }
+
+    let tokens = try parseCommandLine(command)
+    guard let executable = tokens.first else {
+        throw ToolError.failed("Peekaboo base command has no executable")
+    }
+
+    let args = Array(tokens.dropFirst())
+
+    if executable.contains("/") {
+        return (executable, args, executable)
+    }
+
+    return ("/usr/bin/env", [executable] + args, executable)
+}
+
+private func parseCommandLine(_ command: String) throws -> [String] {
+    enum QuoteState {
+        case none
+        case single
+        case double
+    }
+
+    var tokens: [String] = []
+    var current = ""
+    var state: QuoteState = .none
+    var escapeNext = false
+
+    for scalar in command.unicodeScalars {
+        let char = Character(scalar)
+
+        if escapeNext {
+            current.append(char)
+            escapeNext = false
+            continue
+        }
+
+        switch state {
+        case .single:
+            if char == "'" {
+                state = .none
+            } else {
+                current.append(char)
+            }
+        case .double:
+            if char == "\"" {
+                state = .none
+            } else if char == "\\" {
+                escapeNext = true
+            } else {
+                current.append(char)
+            }
+        case .none:
+            if char == "'" {
+                state = .single
+            } else if char == "\"" {
+                state = .double
+            } else if char == "\\" {
+                escapeNext = true
+            } else if char.isWhitespace {
+                if !current.isEmpty {
+                    tokens.append(current)
+                    current.removeAll(keepingCapacity: true)
+                }
+            } else {
+                current.append(char)
+            }
+        }
+    }
+
+    if escapeNext {
+        throw ToolError.failed("Peekaboo base command has a trailing escape")
+    }
+    if state != .none {
+        throw ToolError.failed("Peekaboo base command has an unterminated quote")
+    }
+    if !current.isEmpty {
+        tokens.append(current)
+    }
+
+    return tokens
 }
 
 private func stringifyPrimitive(_ value: Any) -> String? {

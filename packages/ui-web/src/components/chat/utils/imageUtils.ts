@@ -57,12 +57,17 @@ export function toImagePayload(value: unknown): StructuredImagePayload | null {
   }
 
   if (!isRecord(value)) return null;
-  if (typeof value.data !== "string" || typeof value.format !== "string") return null;
+  if (typeof value.data !== "string") return null;
+  // Accept either { format: "png" } or { mimeType: "image/png" }
+  const rawFormat = typeof value.format === "string"
+    ? value.format
+    : (typeof value.mimeType === "string" ? value.mimeType.replace(/^image\//, "") : null);
+  if (!rawFormat) return null;
   if (value.encoding != null && value.encoding !== "base64") return null;
   if (value.width != null && typeof value.width !== "number") return null;
   if (value.height != null && typeof value.height !== "number") return null;
 
-  const format = normalizeImageFormat(value.format);
+  const format = normalizeImageFormat(rawFormat);
   if (!format) return null;
 
   return {
@@ -137,25 +142,57 @@ export function splitContentWithImages(content: string): ContentSegment[] {
   return segments.length > 0 ? segments : [{ kind: "text", content }];
 }
 
-export function getAccordionImagePayload(rawPayload: unknown, children: ReactNode): StructuredImagePayload | null {
-  if (typeof children === "string") {
-    const fromChildren = toImagePayload(children);
-    if (fromChildren) return fromChildren;
-  }
+/**
+ * Recursively searches `value` for an image payload, parsing any JSON strings
+ * encountered along the way. Handles arbitrarily nested structures such as
+ * LangChain ToolMessage wrappers:
+ *   { name, content: '{ lc, kwargs: { content: '{ content: [{type:"image",...}] }' } }' }
+ */
+function deepFindImagePayload(value: unknown, depth = 0): StructuredImagePayload | null {
+  if (depth > 6) return null;
 
-  const fromRawPayload = toImagePayload(rawPayload);
-  if (fromRawPayload) return fromRawPayload;
+  // Direct image object?
+  const direct = toImagePayload(value);
+  if (direct) return direct;
 
-  if (typeof rawPayload === "string") {
+  // JSON string — parse and recurse
+  if (typeof value === "string" && value.trimStart().startsWith("{")) {
     try {
-      const parsed = JSON.parse(rawPayload) as unknown;
-      if (isRecord(parsed) && "content" in parsed) {
-        return toImagePayload(parsed.content);
-      }
+      return deepFindImagePayload(JSON.parse(value) as unknown, depth + 1);
     } catch {
       return null;
     }
   }
 
+  if (!isRecord(value)) return null;
+
+  // Array-of-content: [{ type: "image", data, mimeType }, ...]
+  if (Array.isArray(value.content)) {
+    const firstImage = (value.content as unknown[]).find(
+      (item): item is Record<string, unknown> => isRecord(item) && item.type === "image",
+    );
+    if (firstImage) {
+      const result = toImagePayload(firstImage);
+      if (result) return result;
+    }
+  }
+
+  // Recurse into common envelope fields: content, kwargs
+  for (const key of ["content", "kwargs"] as const) {
+    if (key in value) {
+      const result = deepFindImagePayload(value[key], depth + 1);
+      if (result) return result;
+    }
+  }
+
   return null;
+}
+
+export function getAccordionImagePayload(rawPayload: unknown, children: ReactNode): StructuredImagePayload | null {
+  if (typeof children === "string") {
+    const fromChildren = deepFindImagePayload(children);
+    if (fromChildren) return fromChildren;
+  }
+
+  return deepFindImagePayload(rawPayload);
 }
