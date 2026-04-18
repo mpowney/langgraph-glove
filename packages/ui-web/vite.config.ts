@@ -73,6 +73,10 @@ export default defineConfig({
               target: toolsTarget,
               changeOrigin: true,
             },
+            "/api/feedback": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
           }
         : {}),
       // Forward remaining /api/* routes to the backend server in dev mode.

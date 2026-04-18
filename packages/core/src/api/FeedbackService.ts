@@ -43,9 +43,7 @@ export interface FeedbackEventInput {
   modelName: string;
   modelKey?: string;
   promptUsageId?: string;
-  promptOriginal?: string;
   promptOriginalHash?: string;
-  promptResolved?: string;
   promptResolvedHash?: string;
   checkpointId?: string;
   agentKey?: string;
@@ -89,8 +87,6 @@ interface FeedbackEventRow {
   prompt_usage_id: string | null;
   prompt_original_hash: string | null;
   prompt_resolved_hash: string | null;
-  prompt_original: string | null;
-  prompt_resolved: string | null;
   checkpoint_id: string | null;
   agent_key: string | null;
   source_view: string | null;
@@ -147,8 +143,6 @@ export class FeedbackService {
           prompt_usage_id TEXT,
           prompt_original_hash TEXT,
           prompt_resolved_hash TEXT,
-          prompt_original TEXT,
-          prompt_resolved TEXT,
           checkpoint_id TEXT,
           agent_key TEXT,
           source_view TEXT,
@@ -334,15 +328,13 @@ export class FeedbackService {
             prompt_usage_id,
             prompt_original_hash,
             prompt_resolved_hash,
-            prompt_original,
-            prompt_resolved,
             checkpoint_id,
             agent_key,
             source_view,
             note,
             user_id
           )
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(conversation_id, message_id) DO UPDATE SET
             signal = excluded.signal,
             message_role = excluded.message_role,
@@ -351,8 +343,6 @@ export class FeedbackService {
             prompt_usage_id = excluded.prompt_usage_id,
             prompt_original_hash = excluded.prompt_original_hash,
             prompt_resolved_hash = excluded.prompt_resolved_hash,
-            prompt_original = excluded.prompt_original,
-            prompt_resolved = excluded.prompt_resolved,
             checkpoint_id = excluded.checkpoint_id,
             agent_key = excluded.agent_key,
             source_view = excluded.source_view,
@@ -372,8 +362,6 @@ export class FeedbackService {
           input.promptUsageId ?? null,
           input.promptOriginalHash ?? null,
           input.promptResolvedHash ?? null,
-          input.promptOriginal ?? null,
-          input.promptResolved ?? null,
           input.checkpointId ?? null,
           input.agentKey ?? null,
           input.sourceView ?? null,
@@ -395,8 +383,6 @@ export class FeedbackService {
             prompt_usage_id,
             prompt_original_hash,
             prompt_resolved_hash,
-            prompt_original,
-            prompt_resolved,
             checkpoint_id,
             agent_key,
             source_view,
@@ -436,8 +422,6 @@ export class FeedbackService {
             prompt_usage_id,
             prompt_original_hash,
             prompt_resolved_hash,
-            prompt_original,
-            prompt_resolved,
             checkpoint_id,
             agent_key,
             source_view,
@@ -472,8 +456,6 @@ export class FeedbackService {
             prompt_usage_id,
             prompt_original_hash,
             prompt_resolved_hash,
-            prompt_original,
-            prompt_resolved,
             checkpoint_id,
             agent_key,
             source_view,

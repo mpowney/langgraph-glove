@@ -42,9 +42,7 @@ export interface FeedbackContext {
   modelKey?: string;
   agentKey?: string;
   promptUsageId?: string;
-  promptOriginal?: string;
   promptOriginalHash?: string;
-  promptResolved?: string;
   promptResolvedHash?: string;
 }
 

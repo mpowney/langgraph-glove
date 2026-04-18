@@ -449,9 +449,7 @@ function parseFeedbackContext(text: string): FeedbackContext | undefined {
     const modelKey = typeof parsed.modelKey === "string" ? parsed.modelKey : undefined;
     const agentKey = typeof parsed.agentKey === "string" ? parsed.agentKey : undefined;
     const promptUsageId = typeof parsed.promptUsageId === "string" ? parsed.promptUsageId : undefined;
-    const promptOriginal = typeof parsed.promptOriginal === "string" ? parsed.promptOriginal : undefined;
     const promptOriginalHash = typeof parsed.promptOriginalHash === "string" ? parsed.promptOriginalHash : undefined;
-    const promptResolved = typeof parsed.promptResolved === "string" ? parsed.promptResolved : undefined;
     const promptResolvedHash = typeof parsed.promptResolvedHash === "string" ? parsed.promptResolvedHash : undefined;
     if (!modelName && !modelKey && !promptUsageId && !promptResolvedHash) {
       return undefined;
@@ -461,9 +459,7 @@ function parseFeedbackContext(text: string): FeedbackContext | undefined {
       modelKey,
       agentKey,
       promptUsageId,
-      promptOriginal,
       promptOriginalHash,
-      promptResolved,
       promptResolvedHash,
     };
   } catch {
