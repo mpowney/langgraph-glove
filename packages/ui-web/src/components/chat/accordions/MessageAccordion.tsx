@@ -113,6 +113,20 @@ export function MessageAccordion({
         <AccordionPanel>
           <div className={panelClassName}>
             {children}
+            {imagePayload && (
+              <>
+                <img
+                  className={styles.imagePreview}
+                  src={payloadToDataUri(imagePayload)}
+                  alt=""
+                />
+                {(imagePayload.width != null || imagePayload.height != null) && (
+                  <Text block className={styles.imageMeta}>
+                    {imagePayload.width != null ? imagePayload.width : "?"}×{imagePayload.height != null ? imagePayload.height : "?"} · {imagePayload.format}
+                  </Text>
+                )}
+              </>
+            )}
             <div className={styles.metadataSection}>
               <Text block className={styles.metadataLabel}>Underlying data</Text>
               <div className={styles.metadataBody}>{toDisplayJson(metadata, "")}</div>
