@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Serialized } from "@langchain/core/load/serializable";
 import { AIMessage, type BaseMessage } from "@langchain/core/messages";
@@ -27,16 +28,13 @@ export class LlmCallbackHandler extends BaseCallbackHandler {
   name = "LlmCallbackHandler";
   private readonly modelNameByRunId = new Map<string, string>();
   private readonly batchTotalByRunId = new Map<string, number>();
+  private readonly usageContextByRunBatch = new Map<string, PromptUsageCallbackResult>();
 
-  /**
-   * @param onPrompt  Optional callback invoked with the formatted prompt text
-   *                  for each model call.  Useful for forwarding prompts to
-   *                  observer channels in addition to the log.
-   */
   constructor(
     private readonly onPrompt?: (formatted: string) => void,
     private readonly onModelCall?: (payload: Record<string, unknown>) => void,
     private readonly onModelResponse?: (payload: Record<string, unknown>) => void,
+    private readonly context?: LlmCallbackContext,
   ) {
     super();
   }
@@ -79,10 +77,40 @@ export class LlmCallbackHandler extends BaseCallbackHandler {
       logger.verbose(text);
       this.onPrompt?.(text);
 
+      const promptResolved = extractSystemPrompt(batch);
+      const promptResolvedHash = promptResolved ? computePromptHash(promptResolved) : undefined;
+      const batchNumber = batchIndex + 1;
+      const usageContext = this.context?.onPromptUsage?.({
+        conversationId: this.context?.conversationId,
+        runId,
+        batchIndex: batchNumber,
+        modelName,
+        modelKey: this.context?.modelKey,
+        promptResolved,
+        promptResolvedHash,
+      }) ?? {
+        modelKey: this.context?.modelKey,
+        promptResolved,
+        promptResolvedHash,
+      };
+
+      if (typeof runId === "string") {
+        this.usageContextByRunBatch.set(runBatchKey(runId, batchNumber), usageContext);
+      }
+
       this.onModelCall?.({
+        runId,
+        conversationId: this.context?.conversationId,
+        agentKey: this.context?.agentKey,
         model: modelName,
+        modelKey: usageContext.modelKey ?? this.context?.modelKey,
+        promptUsageId: usageContext.usageId,
+        promptOriginal: usageContext.promptOriginal,
+        promptOriginalHash: usageContext.promptOriginalHash,
+        promptResolved: usageContext.promptResolved ?? promptResolved,
+        promptResolvedHash: usageContext.promptResolvedHash ?? promptResolvedHash,
         batch: {
-          index: batchIndex + 1,
+          index: batchNumber,
           total: messages.length,
         },
         invocation: redactSensitiveValue(extraParams ?? {}),
@@ -105,9 +133,19 @@ export class LlmCallbackHandler extends BaseCallbackHandler {
     const modelName = this.modelNameByRunId.get(runId) ?? "unknown";
     const outputBatches = Array.isArray(output.generations) ? output.generations.length : 0;
     const totalBatches = this.batchTotalByRunId.get(runId) ?? Math.max(outputBatches, 1);
+    const usageContext = this.usageContextByRunBatch.get(runBatchKey(runId, 1));
 
     this.onModelResponse({
+      runId,
+      conversationId: this.context?.conversationId,
+      agentKey: this.context?.agentKey,
       model: modelName,
+      modelKey: usageContext?.modelKey ?? this.context?.modelKey,
+      promptUsageId: usageContext?.usageId,
+      promptOriginal: usageContext?.promptOriginal,
+      promptOriginalHash: usageContext?.promptOriginalHash,
+      promptResolved: usageContext?.promptResolved,
+      promptResolvedHash: usageContext?.promptResolvedHash,
       batch: {
         index: 1,
         total: totalBatches,
@@ -127,7 +165,38 @@ export class LlmCallbackHandler extends BaseCallbackHandler {
   private cleanupRun(runId: string): void {
     this.modelNameByRunId.delete(runId);
     this.batchTotalByRunId.delete(runId);
+    for (const key of this.usageContextByRunBatch.keys()) {
+      if (key.startsWith(`${runId}:`)) {
+        this.usageContextByRunBatch.delete(key);
+      }
+    }
   }
+}
+
+export interface PromptUsageCallbackInput {
+  conversationId?: string;
+  runId?: string;
+  batchIndex: number;
+  modelName: string;
+  modelKey?: string;
+  promptResolved?: string;
+  promptResolvedHash?: string;
+}
+
+export interface PromptUsageCallbackResult {
+  usageId?: string;
+  modelKey?: string;
+  promptOriginal?: string;
+  promptOriginalHash?: string;
+  promptResolved?: string;
+  promptResolvedHash?: string;
+}
+
+export interface LlmCallbackContext {
+  conversationId?: string;
+  agentKey?: string;
+  modelKey?: string;
+  onPromptUsage?: (input: PromptUsageCallbackInput) => PromptUsageCallbackResult | undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +232,21 @@ function extractContent(content: MessageContent): string {
     return `[${block.type}]`;
   });
   return parts.join(" ");
+}
+
+function extractSystemPrompt(batch: BaseMessage[]): string | undefined {
+  const systemMessage = batch.find((msg) => msg.type === "system");
+  if (!systemMessage) return undefined;
+  const text = extractContent(systemMessage.content as MessageContent).trim();
+  return text || undefined;
+}
+
+function runBatchKey(runId: string, batchIndex: number): string {
+  return `${runId}:${batchIndex}`;
+}
+
+function computePromptHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 const REDACTED = "[REDACTED]";

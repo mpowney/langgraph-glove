@@ -25,7 +25,9 @@ import { AuthGate } from "./components/AuthGate";
 import { ControlPanel } from "./components/ControlPanel";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
+import { useFeedback, type FeedbackSignal } from "./hooks/useFeedback";
 import { createUuid } from "./uuid";
+import type { ChatEntry, BrowserMessage } from "./types";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
@@ -79,6 +81,7 @@ function App() {
   const adminApiBaseUrl = import.meta.env.DEV ? "" : resolvedAdminApiBaseUrl;
   const authApiBaseUrl = adminApiBaseUrl;
   const auth = useAuth(authApiBaseUrl);
+  const { submitFeedback } = useFeedback(adminApiBaseUrl, auth.token ?? undefined);
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
@@ -284,6 +287,38 @@ function App() {
     setPendingConversationSwitchId(null);
   }, []);
 
+  const handleSubmitLiveFeedback = useCallback(async (
+    entry: ChatEntry,
+    signal: FeedbackSignal,
+    sourceView: "live",
+  ) => {
+    await submitFeedback({
+      conversationId: entry.conversationId,
+      messageId: entry.id,
+      messageRole: entry.role,
+      signal,
+      checkpointId: entry.checkpoint?.id,
+      sourceView,
+      feedbackContext: entry.feedbackContext,
+    });
+  }, [submitFeedback]);
+
+  const handleSubmitHistoryFeedback = useCallback(async (
+    threadId: string,
+    message: BrowserMessage,
+    signal: FeedbackSignal,
+    sourceView: "history",
+  ) => {
+    await submitFeedback({
+      conversationId: threadId,
+      messageId: message.id,
+      messageRole: message.role,
+      signal,
+      sourceView,
+      feedbackContext: message.feedbackContext,
+    });
+  }, [submitFeedback]);
+
   if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup || auth.promptPrivilegeTokenSetup)
   ) {
     return (
@@ -341,6 +376,7 @@ function App() {
           showSystemMessages={showSystemMessages}
           onRequestSwitchConversation={handleSwitchConversation}
           modelContextWindowTokens={appInfo?.modelContextWindowTokens}
+          onSubmitFeedback={handleSubmitLiveFeedback}
         />
         <InputBar onSend={sendMessage} disabled={inputDisabled} />
         <ConversationBrowser
@@ -348,6 +384,11 @@ function App() {
           onClose={() => setBrowserOpen(false)}
           apiBaseUrl={adminApiBaseUrl}
           authToken={auth.token ?? undefined}
+          onSubmitFeedback={handleSubmitHistoryFeedback}
+          defaultFeedbackContext={{
+            modelName: appInfo?.modelKey ?? "unknown",
+            modelKey: appInfo?.modelKey,
+          }}
         />
         <ToolsPanel
           open={toolsPanelOpen}

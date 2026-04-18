@@ -15,7 +15,9 @@ import {
 } from "@fluentui/react-components";
 import { Dismiss24Regular, ArrowLeft24Regular, ArrowClockwise24Regular } from "@fluentui/react-icons";
 import { useConversationBrowser } from "../hooks/useConversationBrowser";
-import type { BrowserMessage } from "../types";
+import { ThumbLike24Regular, ThumbDislike24Regular } from "@fluentui/react-icons";
+import type { BrowserMessage, FeedbackContext } from "../types";
+import type { FeedbackSignal } from "../hooks/useFeedback";
 
 const useStyles = makeStyles({
   header: {
@@ -131,6 +133,11 @@ const useStyles = makeStyles({
     wordBreak: "break-all",
     padding: `0 ${tokens.spacingHorizontalM}`,
   },
+  feedbackRow: {
+    display: "flex",
+    gap: tokens.spacingHorizontalXS,
+    marginTop: tokens.spacingVerticalXS,
+  },
 });
 
 const ROLE_LABELS: Record<BrowserMessage["role"], string> = {
@@ -141,11 +148,26 @@ const ROLE_LABELS: Record<BrowserMessage["role"], string> = {
 };
 
 interface MessageViewProps {
+  threadId: string;
   message: BrowserMessage;
+  onSubmitFeedback?: (threadId: string, message: BrowserMessage, signal: FeedbackSignal, sourceView: "history") => Promise<void>;
 }
 
-function MessageView({ message }: MessageViewProps) {
+function MessageView({ threadId, message, onSubmitFeedback }: MessageViewProps) {
   const styles = useStyles();
+  const [selectedSignal, setSelectedSignal] = React.useState<FeedbackSignal | null>(null);
+  const [pending, setPending] = React.useState(false);
+
+  const handleFeedback = async (signal: FeedbackSignal): Promise<void> => {
+    if (!onSubmitFeedback || pending) return;
+    setPending(true);
+    try {
+      await onSubmitFeedback(threadId, message, signal, "history");
+      setSelectedSignal(signal);
+    } finally {
+      setPending(false);
+    }
+  };
   const roleClass =
     message.role === "human"
       ? styles.messageHuman
@@ -173,6 +195,26 @@ function MessageView({ message }: MessageViewProps) {
         </Text>
       )}
       <Text className={styles.messageContent}>{message.content || <em>(empty)</em>}</Text>
+      {message.role !== "human" && (
+        <div className={styles.feedbackRow}>
+          <Button
+            size="small"
+            appearance={selectedSignal === "like" ? "primary" : "subtle"}
+            icon={<ThumbLike24Regular />}
+            aria-label="Like this history message"
+            disabled={pending}
+            onClick={() => { void handleFeedback("like"); }}
+          />
+          <Button
+            size="small"
+            appearance={selectedSignal === "dislike" ? "primary" : "subtle"}
+            icon={<ThumbDislike24Regular />}
+            aria-label="Dislike this history message"
+            disabled={pending}
+            onClick={() => { void handleFeedback("dislike"); }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -184,6 +226,8 @@ export interface ConversationBrowserProps {
   apiBaseUrl?: string;
   /** Optional bearer token for protected admin API routes. */
   authToken?: string;
+  onSubmitFeedback?: (threadId: string, message: BrowserMessage, signal: FeedbackSignal, sourceView: "history") => Promise<void>;
+  defaultFeedbackContext?: FeedbackContext;
 }
 
 export function ConversationBrowser({
@@ -191,6 +235,8 @@ export function ConversationBrowser({
   onClose,
   apiBaseUrl = "",
   authToken,
+  onSubmitFeedback,
+  defaultFeedbackContext,
 }: ConversationBrowserProps) {
   const styles = useStyles();
   const {
@@ -205,6 +251,14 @@ export function ConversationBrowser({
     loadMessages,
     clearSelection,
   } = useConversationBrowser(apiBaseUrl);
+
+  const messagesWithFeedback = React.useMemo(
+    () => messages.map((message) => ({
+      ...message,
+      feedbackContext: message.feedbackContext ?? defaultFeedbackContext,
+    })),
+    [messages, defaultFeedbackContext],
+  );
 
   // Reload conversation list whenever the drawer opens
   useEffect(() => {
@@ -302,10 +356,14 @@ export function ConversationBrowser({
               {messagesState === "idle" && messages.length === 0 && (
                 <Text className={styles.empty}>No messages in this conversation.</Text>
               )}
-              {messages.map((msg, i) => (
+              {messagesWithFeedback.map((msg, i) => (
                 <React.Fragment key={msg.id || i}>
                   {i > 0 && <Divider />}
-                  <MessageView message={msg} />
+                  <MessageView
+                    threadId={selectedThreadId ?? ""}
+                    message={msg}
+                    onSubmitFeedback={onSubmitFeedback}
+                  />
                 </React.Fragment>
               ))}
             </>

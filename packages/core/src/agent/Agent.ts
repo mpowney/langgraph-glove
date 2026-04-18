@@ -2,7 +2,11 @@ import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
 import type { Channel, IncomingMessage, OutgoingStreamChunk, StreamSource } from "../channels/Channel";
 import { Logger } from "../logging/Logger";
-import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
+import {
+  LlmCallbackHandler,
+  type PromptUsageCallbackInput,
+  type PromptUsageCallbackResult,
+} from "../logging/LlmCallbackHandler";
 import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
 import { isGenericToolName, toolNameFromToolCallId, resolveToolName } from "./toolNameUtils.js";
 
@@ -337,6 +341,8 @@ export interface AgentConfig {
     sourceChannel: string;
     graphKey?: string;
   }) => void | Promise<void>;
+  /** Optional callback used to persist prompt usage records per model call. */
+  onPromptUsage?: (input: PromptUsageCallbackInput) => PromptUsageCallbackResult | undefined;
 }
 
 /**
@@ -899,7 +905,10 @@ export class GloveAgent {
           }
         }
       : undefined;
-    const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
+    const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse, {
+      conversationId: message.conversationId,
+      onPromptUsage: this.config.onPromptUsage,
+    });
 
     // Forward tool calls, results, and agent transfers to receiveAgentProcessing channels.
     const toolLookup = this.config.toolLookup;

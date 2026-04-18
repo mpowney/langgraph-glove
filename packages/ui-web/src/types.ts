@@ -37,6 +37,17 @@ export interface ToolEventMetadata {
   agentKey?: string;
 }
 
+export interface FeedbackContext {
+  modelName: string;
+  modelKey?: string;
+  agentKey?: string;
+  promptUsageId?: string;
+  promptOriginal?: string;
+  promptOriginalHash?: string;
+  promptResolved?: string;
+  promptResolvedHash?: string;
+}
+
 export type ServerMessage =
   | {
       type: "chunk";
@@ -123,6 +134,8 @@ export interface ChatEntry {
   toolEventMetadata?: ToolEventMetadata;
   /** Optional tool name extracted from the message for easy UI access. */
   toolName?: string;
+  /** Prompt/model context used to trace UI feedback signals. */
+  feedbackContext?: FeedbackContext;
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -144,6 +157,7 @@ export interface BrowserMessage {
   content: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
+  feedbackContext?: FeedbackContext;
 }
 
 // ---------------------------------------------------------------------------

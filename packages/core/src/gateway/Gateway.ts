@@ -35,12 +35,14 @@ import { RemoteTool } from "../tools/RemoteTool";
 import { getToolPayloadRefTool } from "../tools/ToolPayloadRefTool";
 import { AdminApi } from "../api/AdminApi";
 import { ConversationMetadataService } from "../api/ConversationMetadataService";
+import { FeedbackService } from "../api/FeedbackService";
 import { AuthService } from "../auth/AuthService";
 import type { Channel } from "../channels/Channel";
 import { WebChannel } from "../channels/WebChannel";
 import type { ToolDefinition, AgentCapabilityEntry } from "../rpc/RpcProtocol";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
+import type { PromptUsageCallbackInput, PromptUsageCallbackResult } from "../logging/LlmCallbackHandler";
 import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
 
 const logger = new Logger("Gateway");
@@ -89,6 +91,7 @@ export class Gateway extends EventEmitter {
   private adminApi: AdminApi | null = null;
   private authService: AuthService | null = null;
   private conversationMetadataService: ConversationMetadataService | null = null;
+  private feedbackService: FeedbackService | null = null;
   private readonly titleGenerationInFlight = new Set<string>();
   private shutdownHandlers: (() => void)[] = [];
   private shutdownSignal: NodeJS.Signals | null = null;
@@ -141,15 +144,19 @@ export class Gateway extends EventEmitter {
       this.updateWebChannelModelInfo(this.config, modelHealth);
 
       // 4. Persistence
-      const dbPath = this.config.gateway.dbPath ?? "data/checkpoints.sqlite";
-      this.checkpointer = SqliteSaver.fromConnString(dbPath);
-      this.conversationMetadataService = new ConversationMetadataService(dbPath);
+      const conversationDbPath = this.config.gateway.conversationDbPath ?? "data/checkpoints.sqlite";
+      const feedbackDbPath = this.config.gateway.feedbackDbPath ?? "data/feedback.sqlite";
+      this.checkpointer = SqliteSaver.fromConnString(conversationDbPath);
+      this.conversationMetadataService = new ConversationMetadataService(conversationDbPath);
       this.conversationMetadataService.ensureSchema();
-      logger.info(`SQLite persistence: ${dbPath}`);
+      this.feedbackService = new FeedbackService(feedbackDbPath);
+      this.feedbackService.ensureSchema();
+      logger.info(`Conversation SQLite persistence: ${conversationDbPath}`);
+      logger.info(`Feedback SQLite persistence: ${feedbackDbPath}`);
 
       // 5. Auth bootstrap
       this.authService = new AuthService({
-        dbPath,
+        dbPath: conversationDbPath,
         config: this.config.gateway.auth,
       });
       const setupToken = this.authService.ensureBootstrapToken();
@@ -195,6 +202,7 @@ export class Gateway extends EventEmitter {
             assistantResponse: assistantText,
           });
         },
+        onPromptUsage: (input) => this.recordPromptUsage(input),
       });
 
       // 8. Channels
@@ -226,7 +234,8 @@ export class Gateway extends EventEmitter {
       this.adminApi = new AdminApi({
         port: apiPort,
         host: apiHost,
-        dbPath: this.config.gateway.dbPath,
+        conversationDbPath: conversationDbPath,
+        feedbackDbPath: feedbackDbPath,
         authService: this.authService,
         config: this.config,
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
@@ -452,8 +461,16 @@ export class Gateway extends EventEmitter {
 
     if (subAgentKeys.length === 0) {
       // Single-agent mode — standard ReAct loop
-      const model = models.get(orchestratorEntry.modelKey ?? "default");
+      const modelKey = orchestratorEntry.modelKey ?? "default";
+      const model = models.get(modelKey);
       const scopedTools = this.scopeTools(allTools, this.resolveAllowedToolNames(orchestratorEntry));
+      const resolvedSystemPrompt = this.resolveSystemPrompt(orchestratorEntry.systemPrompt, scopedTools);
+      this.recordPromptCatalogEntry({
+        agentKey: orchestratorKey,
+        modelKey,
+        originalPrompt: orchestratorEntry.systemPrompt,
+        resolvedPrompt: resolvedSystemPrompt,
+      });
       const compression = this.resolveCompressionRuntimeConfig({
         allTools,
         agentEntry: orchestratorEntry,
@@ -471,7 +488,7 @@ export class Gateway extends EventEmitter {
       return buildSingleAgentGraph({
         model,
         tools: scopedTools,
-        systemPrompt: this.resolveSystemPrompt(orchestratorEntry.systemPrompt, scopedTools),
+        systemPrompt: resolvedSystemPrompt,
         compression,
         checkpointer,
       });
@@ -496,17 +513,34 @@ export class Gateway extends EventEmitter {
         description: entry.description ?? key,
         model: models.get(entry.modelKey ?? "default"),
         tools: scopedTools,
-        systemPrompt: this.resolveSystemPrompt(entry.systemPrompt, scopedTools),
+        systemPrompt: (() => {
+          const resolvedSystemPrompt = this.resolveSystemPrompt(entry.systemPrompt, scopedTools);
+          this.recordPromptCatalogEntry({
+            agentKey: key,
+            modelKey: entry.modelKey ?? "default",
+            originalPrompt: entry.systemPrompt,
+            resolvedPrompt: resolvedSystemPrompt,
+          });
+          return resolvedSystemPrompt;
+        })(),
         recursionLimit: entry.recursionLimit,
         compression,
       };
     });
 
-    const orchestratorModel = models.get(orchestratorEntry.modelKey ?? "default");
+    const orchestratorModelKey = orchestratorEntry.modelKey ?? "default";
+    const orchestratorModel = models.get(orchestratorModelKey);
     const orchestratorTools = this.scopeTools(
       allTools,
       this.resolveAllowedToolNames(orchestratorEntry),
     );
+    const orchestratorSystemPrompt = this.resolveSystemPrompt(orchestratorEntry.systemPrompt, orchestratorTools);
+    this.recordPromptCatalogEntry({
+      agentKey: orchestratorKey,
+      modelKey: orchestratorModelKey,
+      originalPrompt: orchestratorEntry.systemPrompt,
+      resolvedPrompt: orchestratorSystemPrompt,
+    });
 
     logger.info(
       `Graph "${graphKey}": multi-agent orchestrator mode with ${subAgents.length} sub-agent(s) [${subAgentKeys.join(", ")}]`,
@@ -526,7 +560,7 @@ export class Gateway extends EventEmitter {
     return buildOrchestratorGraph({
       orchestrator: {
         model: orchestratorModel,
-        systemPrompt: this.resolveSystemPrompt(orchestratorEntry.systemPrompt, orchestratorTools),
+        systemPrompt: orchestratorSystemPrompt,
         tools: orchestratorTools.length > 0 ? orchestratorTools : undefined,
       },
       subAgents,
@@ -628,6 +662,10 @@ export class Gateway extends EventEmitter {
         ? (payload: Record<string, unknown>) =>
             sendObservability("model-response", JSON.stringify(payload, null, 2))
         : undefined,
+      {
+        conversationId: params.conversationId,
+        onPromptUsage: (input) => this.recordPromptUsage(input),
+      },
     );
 
     const toolRunNameByRunId = new Map<string, string>();
@@ -960,6 +998,45 @@ export class Gateway extends EventEmitter {
       return `- ${t.name}: ${desc}`;
     });
     return systemPrompt.replace("{tool-descriptions}", `\n${lines.join("\n")}\n\n`);
+  }
+
+  private recordPromptCatalogEntry(params: {
+    agentKey: string;
+    modelKey: string;
+    originalPrompt?: string;
+    resolvedPrompt?: string;
+  }): void {
+    if (!this.feedbackService) return;
+    if (!params.originalPrompt || !params.resolvedPrompt) return;
+    this.feedbackService.logPromptCatalog({
+      agentKey: params.agentKey,
+      modelKey: params.modelKey,
+      promptOriginal: params.originalPrompt,
+      promptResolved: params.resolvedPrompt,
+    });
+  }
+
+  private recordPromptUsage(input: PromptUsageCallbackInput): PromptUsageCallbackResult | undefined {
+    if (!this.feedbackService) return undefined;
+
+    const usage = this.feedbackService.logPromptUsage({
+      conversationId: input.conversationId,
+      runId: input.runId,
+      batchIndex: input.batchIndex,
+      modelName: input.modelName,
+      modelKey: input.modelKey,
+      promptResolved: input.promptResolved,
+      promptResolvedHash: input.promptResolvedHash,
+    });
+
+    return {
+      usageId: usage.usageId,
+      modelKey: usage.modelKey,
+      promptOriginal: usage.promptOriginal,
+      promptOriginalHash: usage.promptOriginalHash,
+      promptResolved: usage.promptResolved,
+      promptResolvedHash: usage.promptResolvedHash,
+    };
   }
 
   /**

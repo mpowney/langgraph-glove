@@ -104,7 +104,7 @@ try {
     defaultModelKey,
   );
   defaultModelContextWindowTokens = defaultModel.contextWindowTokens;
-  checkpointDbPath = path.resolve(earlyConfig.gateway.dbPath ?? "data/checkpoints.sqlite");
+  checkpointDbPath = path.resolve(earlyConfig.gateway.conversationDbPath ?? "data/checkpoints.sqlite");
   const configuredApiHost = earlyConfig.gateway.apiHost ?? "localhost";
   const browserApiHost = configuredApiHost === "0.0.0.0" ? "localhost" : configuredApiHost;
   const configuredApiPort = earlyConfig.gateway.apiPort ?? 8081;
@@ -122,7 +122,7 @@ try {
 if (regenerateSetupToken) {
   const config = new ConfigLoader(configDir, secretsDir).load();
   const auth = new AuthService({
-    dbPath: config.gateway.dbPath ?? "data/checkpoints.sqlite",
+    dbPath: config.gateway.conversationDbPath ?? "data/checkpoints.sqlite",
     config: config.gateway.auth,
   });
 
@@ -140,7 +140,7 @@ if (regenerateSetupToken) {
 if (resetAuth) {
   const config = new ConfigLoader(configDir, secretsDir).load();
   const auth = new AuthService({
-    dbPath: config.gateway.dbPath ?? "data/checkpoints.sqlite",
+    dbPath: config.gateway.conversationDbPath ?? "data/checkpoints.sqlite",
     config: config.gateway.auth,
   });
 

@@ -357,8 +357,12 @@ export const GatewayConfigSchema = z.object({
   healthPort: z.number().int().positive().optional(),
   /** Host to bind the health server to. Defaults to "0.0.0.0". */
   healthHost: z.string().optional(),
-  /** Path to the SQLite database for checkpoint persistence. */
-  dbPath: z.string().optional(),
+  /** Path to the SQLite database for conversation checkpoint persistence. */
+  conversationDbPath: z.string().optional(),
+  /** Path to the SQLite database for prompt/feedback traceability records. */
+  feedbackDbPath: z.string().optional(),
+  /** Legacy key removed in favor of conversationDbPath. */
+  dbPath: z.never().optional(),
   /** Port for the AdminApi REST server. Defaults to 8081. */
   apiPort: z.number().int().positive().optional(),
   /** Host to bind the AdminApi server to. Defaults to "0.0.0.0". */

@@ -3,6 +3,7 @@ import { Button, makeStyles, tokens, Text } from "@fluentui/react-components";
 import { ChatMessage } from "./ChatMessage";
 import { formatMessageTimestamp } from "./utils/dataFormatters";
 import type { ChatEntry } from "../../types";
+import type { FeedbackSignal } from "../../hooks/useFeedback";
 
 const AUTO_SCROLL_LINE_THRESHOLD = 6;
 const DEFAULT_LINE_HEIGHT_PX = 24;
@@ -262,6 +263,7 @@ interface ChatAreaProps {
   showSystemMessages: boolean;
   onRequestSwitchConversation?: (conversationId: string) => void;
   modelContextWindowTokens?: number;
+  onSubmitFeedback?: (entry: ChatEntry, signal: FeedbackSignal, sourceView: "live") => Promise<void>;
 }
 
 function formatSessionLabel(conversationId: string): string {
@@ -280,6 +282,7 @@ export function ChatArea({
   showSystemMessages,
   onRequestSwitchConversation,
   modelContextWindowTokens,
+  onSubmitFeedback,
 }: ChatAreaProps) {
   const styles = useStyles();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -458,6 +461,7 @@ export function ChatArea({
                 chatGuid={isForeignConversation ? chatGuidByConversationId.get(entry.conversationId) : undefined}
                 onRequestSwitchConversation={onRequestSwitchConversation}
                 suppressTimestamp={hasStatusForThisEntry}
+                onSubmitFeedback={onSubmitFeedback}
               />
               {(() => {
                 const currentStatus = inlineProcessingStatus.get(entry.conversationId);

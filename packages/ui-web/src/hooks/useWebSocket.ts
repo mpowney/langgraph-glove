@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { ChatEntry, ClientMessage, ConnectionStatus, ServerMessage } from "../types";
+import type { ChatEntry, ClientMessage, ConnectionStatus, FeedbackContext, ServerMessage } from "../types";
 import { createUuid } from "../uuid";
 
 const RECONNECT_INITIAL_DELAY_MS = 5_000;
@@ -49,6 +49,7 @@ export function useWebSocket(
   const reconnectTimerRef = useRef<number | null>(null);
   const reconnectAttemptRef = useRef(0);
   const disconnectNoticeShownRef = useRef(false);
+  const latestFeedbackContextByConversationRef = useRef<Map<string, FeedbackContext>>(new Map());
   // Streaming state per conversationId: maps each conversation to its active
   // streaming entry ({ id, sourceKey }).  Keying by conversationId prevents a
   // chunk or done frame for conversation B from corrupting the streaming state
@@ -175,6 +176,7 @@ export function useWebSocket(
                 ...(msg.streamAgentKey ? { streamAgentKey: msg.streamAgentKey } : {}),
                 receivedAt,
                 checkpoint: msg.checkpoint,
+                feedbackContext: latestFeedbackContextByConversationRef.current.get(msg.conversationId),
               },
             ];
           });
@@ -207,6 +209,7 @@ export function useWebSocket(
               ...(msg.streamAgentKey ? { streamAgentKey: msg.streamAgentKey } : {}),
               receivedAt,
               checkpoint: msg.checkpoint,
+              feedbackContext: latestFeedbackContextByConversationRef.current.get(msg.conversationId),
             },
           ];
         });
@@ -221,6 +224,7 @@ export function useWebSocket(
             isStreaming: false,
             receivedAt,
             checkpoint: msg.checkpoint,
+            feedbackContext: latestFeedbackContextByConversationRef.current.get(msg.conversationId),
           },
         ]);
       } else if (msg.type === "done") {
@@ -241,6 +245,12 @@ export function useWebSocket(
           );
         }
       } else if (msg.type === "tool_event") {
+        const parsedContext = parseFeedbackContext(msg.text);
+        if (parsedContext) {
+          latestFeedbackContextByConversationRef.current.set(msg.conversationId, parsedContext);
+        }
+        const activeContext = parsedContext
+          ?? latestFeedbackContextByConversationRef.current.get(msg.conversationId);
         setMessages((prev) => [
           ...prev,
           {
@@ -253,6 +263,7 @@ export function useWebSocket(
             checkpoint: msg.checkpoint,
             ...(msg.toolEventMetadata ? { toolEventMetadata: msg.toolEventMetadata } : {}),
             ...(msg.toolName ? { toolName: msg.toolName } : {}),
+            ...(activeContext ? { feedbackContext: activeContext } : {}),
           },
         ]);
       } else if (msg.type === "error") {
@@ -273,6 +284,7 @@ export function useWebSocket(
             isStreaming: false,
             receivedAt,
             checkpoint: msg.checkpoint,
+            feedbackContext: latestFeedbackContextByConversationRef.current.get(msg.conversationId),
           },
         ]);
       } else if (msg.type === "conversation_metadata") {
@@ -292,6 +304,7 @@ export function useWebSocket(
             content: JSON.stringify(msg.metadata),
             isStreaming: false,
             receivedAt,
+            feedbackContext: latestFeedbackContextByConversationRef.current.get(msg.conversationId),
           },
         ]);
       }
@@ -426,4 +439,34 @@ export function useWebSocket(
   );
 
   return { messages, sendMessage, status, myConversationId: conversationId, conversationTitles };
+}
+
+function parseFeedbackContext(text: string): FeedbackContext | undefined {
+  try {
+    const parsed = JSON.parse(text) as Record<string, unknown>;
+    const modelNameRaw = parsed.model;
+    const modelName = typeof modelNameRaw === "string" ? modelNameRaw : undefined;
+    const modelKey = typeof parsed.modelKey === "string" ? parsed.modelKey : undefined;
+    const agentKey = typeof parsed.agentKey === "string" ? parsed.agentKey : undefined;
+    const promptUsageId = typeof parsed.promptUsageId === "string" ? parsed.promptUsageId : undefined;
+    const promptOriginal = typeof parsed.promptOriginal === "string" ? parsed.promptOriginal : undefined;
+    const promptOriginalHash = typeof parsed.promptOriginalHash === "string" ? parsed.promptOriginalHash : undefined;
+    const promptResolved = typeof parsed.promptResolved === "string" ? parsed.promptResolved : undefined;
+    const promptResolvedHash = typeof parsed.promptResolvedHash === "string" ? parsed.promptResolvedHash : undefined;
+    if (!modelName && !modelKey && !promptUsageId && !promptResolvedHash) {
+      return undefined;
+    }
+    return {
+      modelName: modelName ?? "unknown",
+      modelKey,
+      agentKey,
+      promptUsageId,
+      promptOriginal,
+      promptOriginalHash,
+      promptResolved,
+      promptResolvedHash,
+    };
+  } catch {
+    return undefined;
+  }
 }

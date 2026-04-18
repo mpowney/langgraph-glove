@@ -1,7 +1,8 @@
 {
   "healthPort": 9090,
   "healthHost": "0.0.0.0",
-  "dbPath": "./data/checkpoints.sqlite",
+  "conversationDbPath": "./data/checkpoints.sqlite",
+  "feedbackDbPath": "./data/feedback.sqlite",
   "apiPort": 8081,
   "apiHost": "0.0.0.0",
   "auth": {

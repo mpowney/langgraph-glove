@@ -4,6 +4,8 @@ import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
 import { ConversationMetadataService } from "./ConversationMetadataService.js";
+import { FeedbackService } from "./FeedbackService.js";
+import { registerFeedbackRoutes } from "./FeedbackRoutes.js";
 import { registerSecretsRoutes } from "./SecretsRoutes.js";
 import type {
   ToolServerEntry,
@@ -164,7 +166,8 @@ export interface AdminApiConfig {
    *  - `GET /api/conversations`           → ConversationSummary[]
    *  - `GET /api/conversations/:threadId` → BrowserMessage[]
    */
-  dbPath?: string;
+  conversationDbPath?: string;
+  feedbackDbPath?: string;
   /**
    * Origins allowed to call this API (CORS).
    * Defaults to `*` so the SPA served on a different port can reach it.
@@ -248,7 +251,8 @@ export interface AdminApiConfig {
 export class AdminApi {
   private readonly port: number;
   private readonly host: string;
-  private readonly dbPath?: string;
+  private readonly conversationDbPath?: string;
+  private readonly feedbackDbPath?: string;
   private readonly allowedOrigins: string;
   private readonly authService?: AuthService;
   private readonly toolsConfig: Record<string, ToolServerEntry>;
@@ -266,7 +270,8 @@ export class AdminApi {
   constructor(config: AdminApiConfig = {}) {
     this.port = config.port ?? 8081;
     this.host = config.host ?? "0.0.0.0";
-    this.dbPath = config.dbPath;
+    this.conversationDbPath = config.conversationDbPath;
+    this.feedbackDbPath = config.feedbackDbPath;
 
     const origins = config.allowedOrigins;
     this.allowedOrigins = Array.isArray(origins) ? origins.join(", ") : (origins ?? "*");
@@ -783,6 +788,15 @@ export class AdminApi {
       });
     }
 
+    if (this.feedbackDbPath) {
+      const feedbackService = new FeedbackService(this.feedbackDbPath);
+      feedbackService.ensureSchema();
+      registerFeedbackRoutes(this.app, {
+        feedbackService,
+        authService: this.authService,
+      });
+    }
+
     const proxyToolRequest = async (
       req: express.Request,
       res: express.Response,
@@ -934,8 +948,8 @@ export class AdminApi {
       void proxyToolRequest(req, res);
     });
 
-    if (this.dbPath) {
-      const dbPath = this.dbPath;
+    if (this.conversationDbPath) {
+      const dbPath = this.conversationDbPath;
       const conversationMetadataService = new ConversationMetadataService(dbPath);
       conversationMetadataService.ensureSchema();
 

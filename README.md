@@ -241,9 +241,13 @@ Set `"enabled": false` on any entry to skip it.
 {
   "healthPort": 9090,
   "healthHost": "0.0.0.0",
-  "dbPath": "data/checkpoints.sqlite"
+  "conversationDbPath": "data/checkpoints.sqlite",
+  "feedbackDbPath": "data/feedback.sqlite"
 }
 ```
+
+- `conversationDbPath` stores LangGraph checkpoints and conversation metadata.
+- `feedbackDbPath` stores prompt catalog entries, runtime prompt usage events, and `/api/feedback/*` UI feedback signals.
 
 ### `secrets/` directory
 

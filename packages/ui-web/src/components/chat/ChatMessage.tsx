@@ -3,7 +3,9 @@ import {
   makeStyles,
   tokens,
   Text,
+  Button,
 } from "@fluentui/react-components";
+import { ThumbLike24Regular, ThumbDislike24Regular } from "@fluentui/react-icons";
 import { MessageAccordion } from "./accordions/MessageAccordion";
 import { InlineContent } from "./content/InlineContent";
 import { ToolMetaSection } from "./metadata/ToolMetaSection";
@@ -19,6 +21,7 @@ import { estimatePromptContextUsage } from "./utils/promptAnalytics";
 import { splitContentWithImages } from "./utils/imageUtils";
 import { formatMessageTimestamp } from "./utils/dataFormatters";
 import type { ChatEntry } from "../../types";
+import type { FeedbackSignal } from "../../hooks/useFeedback";
 
 const useStyles = makeStyles({
   // ── Wrapper / alignment ───────────────────────────────────────────────────
@@ -194,6 +197,15 @@ const useStyles = makeStyles({
     paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
+  feedbackRow: {
+    display: "flex",
+    gap: tokens.spacingHorizontalXS,
+    marginTop: tokens.spacingVerticalXS,
+    alignItems: "center",
+  },
+  feedbackButton: {
+    minWidth: "unset",
+  },
 });
 
 interface ChatMessageProps {
@@ -214,6 +226,7 @@ interface ChatMessageProps {
   modelContextWindowTokens?: number;
   /** Suppress timestamp rendering (e.g., when status message will show it instead). */
   suppressTimestamp?: boolean;
+  onSubmitFeedback?: (entry: ChatEntry, signal: FeedbackSignal, sourceView: "live") => Promise<void>;
 }
 
 export function ChatMessage({
@@ -226,11 +239,60 @@ export function ChatMessage({
   onRequestSwitchConversation,
   modelContextWindowTokens,
   suppressTimestamp,
+  onSubmitFeedback,
 }: ChatMessageProps) {
   const styles = useStyles();
   const isSubAgentEntry = entry.role === "agent" && entry.streamSource === "sub-agent";
   const subAgentAccordionValue = useMemo(() => `sub-agent-${entry.id}`, [entry.id]);
   const [isSubAgentOpen, setIsSubAgentOpen] = useState<boolean>(Boolean(entry.isStreaming));
+  const [feedbackSignal, setFeedbackSignal] = useState<FeedbackSignal | null>(null);
+  const [feedbackPending, setFeedbackPending] = useState(false);
+
+  const feedbackAllowed = (
+    entry.role === "agent"
+    || entry.role === "tool-call"
+    || entry.role === "tool-result"
+    || entry.role === "model-call"
+    || entry.role === "model-response"
+    || entry.role === "agent-transfer"
+  ) && !entry.isStreaming;
+
+  const submitFeedback = async (signal: FeedbackSignal): Promise<void> => {
+    if (!onSubmitFeedback || feedbackPending) return;
+    setFeedbackPending(true);
+    try {
+      await onSubmitFeedback(entry, signal, "live");
+      setFeedbackSignal(signal);
+    } finally {
+      setFeedbackPending(false);
+    }
+  };
+
+  const renderFeedbackButtons = () => {
+    if (!feedbackAllowed) return null;
+    return (
+      <div className={styles.feedbackRow}>
+        <Button
+          size="small"
+          className={styles.feedbackButton}
+          appearance={feedbackSignal === "like" ? "primary" : "subtle"}
+          icon={<ThumbLike24Regular />}
+          aria-label="Like this message"
+          disabled={feedbackPending}
+          onClick={() => { void submitFeedback("like"); }}
+        />
+        <Button
+          size="small"
+          className={styles.feedbackButton}
+          appearance={feedbackSignal === "dislike" ? "primary" : "subtle"}
+          icon={<ThumbDislike24Regular />}
+          aria-label="Dislike this message"
+          disabled={feedbackPending}
+          onClick={() => { void submitFeedback("dislike"); }}
+        />
+      </div>
+    );
+  };
 
   useEffect(() => {
     if (!isSubAgentEntry) return;
@@ -375,6 +437,7 @@ export function ChatMessage({
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
           </MessageAccordion>
+          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -415,6 +478,7 @@ export function ChatMessage({
           >
             {modelCallContent}
           </MessageAccordion>
+          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -550,6 +614,7 @@ export function ChatMessage({
           >
             {modelResponseContent}
           </MessageAccordion>
+          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -608,6 +673,7 @@ export function ChatMessage({
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
           </MessageAccordion>
+          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -638,6 +704,7 @@ export function ChatMessage({
           >
             {request ?? ""}
           </MessageAccordion>
+          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -689,6 +756,7 @@ export function ChatMessage({
           <InlineContent content={entry.content} />
           {entry.isStreaming && <span className={styles.cursor} aria-hidden />}
         </div>
+        {renderFeedbackButtons()}
         {timestamp && <Text block className={styles.messageTimestamp}>{timestamp}</Text>}
       </div>
     </div>
