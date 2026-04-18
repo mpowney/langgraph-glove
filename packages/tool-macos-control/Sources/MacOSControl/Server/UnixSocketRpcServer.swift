@@ -245,7 +245,10 @@ final class UnixSocketRpcServer {
         if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
             let upstreamName = String(req.method.dropFirst(9)) // Remove "peekaboo_" prefix
             do {
-                let result = try await bridge.callTool(toolName: upstreamName, arguments: req.params)
+                let result = try await runWithTimeout(
+                    milliseconds: requestTimeoutMs,
+                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: req.params) }
+                )
                 return RpcResponse(id: req.id, result: result, error: nil)
             } catch {
                 return RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
