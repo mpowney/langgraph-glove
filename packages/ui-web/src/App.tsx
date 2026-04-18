@@ -21,6 +21,7 @@ import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { ConfigAdmin } from "./components/ConfigAdmin";
+import { PromptDiagnosisPanel } from "./components/promptEngineering/PromptDiagnosisPanel";
 import { AuthGate } from "./components/AuthGate";
 import { ControlPanel } from "./components/ControlPanel";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
@@ -115,6 +116,7 @@ function App() {
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [configAdminOpen, setConfigAdminOpen] = useState(false);
+  const [promptDiagnosisOpen, setPromptDiagnosisOpen] = useState(false);
   const [controlPanelOpen, setControlPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [pendingConversationSwitchId, setPendingConversationSwitchId] = useState<string | null>(null);
@@ -299,6 +301,7 @@ function App() {
       signal,
       checkpointId: entry.checkpoint?.id,
       sourceView,
+      note: entry.content,
       feedbackContext: entry.feedbackContext,
     });
   }, [submitFeedback]);
@@ -315,6 +318,7 @@ function App() {
       messageRole: message.role,
       signal,
       sourceView,
+      note: message.content,
       feedbackContext: message.feedbackContext,
     });
   }, [submitFeedback]);
@@ -421,6 +425,13 @@ function App() {
           authError={auth.error}
           passkeyEnabled={auth.passkeyRegistered}
         />
+        <PromptDiagnosisPanel
+          open={promptDiagnosisOpen}
+          onClose={() => setPromptDiagnosisOpen(false)}
+          apiBaseUrl={adminApiBaseUrl}
+          authToken={auth.token ?? undefined}
+          conversationId={conversationId}
+        />
         <ControlPanel
           open={controlPanelOpen}
           onClose={() => setControlPanelOpen(false)}
@@ -437,6 +448,7 @@ function App() {
           onOpenToolsPanel={() => setToolsPanelOpen(true)}
           onOpenConfigAdmin={() => setConfigAdminOpen(true)}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
+          onOpenPromptDiagnosis={() => setPromptDiagnosisOpen(true)}
           memoryAdminEnabled={memoryAvailable}
         />
       </div>

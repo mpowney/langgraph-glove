@@ -794,6 +794,7 @@ export class AdminApi {
       registerFeedbackRoutes(this.app, {
         feedbackService,
         authService: this.authService,
+        invokeAgent: this.invokeAgent,
       });
     }
 

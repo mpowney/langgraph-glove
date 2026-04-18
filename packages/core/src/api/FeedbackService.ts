@@ -52,6 +52,21 @@ export interface FeedbackEventInput {
   userId?: string;
 }
 
+export interface PromptDiagnosisRow {
+  promptResolvedHash: string;
+  promptText: string;
+  likeCount: number;
+  dislikeCount: number;
+  signalCount: number;
+  latestDislikedMessage: string;
+  latestFeedbackAt: string;
+}
+
+export interface PromptDiagnosisSummary {
+  mostLiked: PromptDiagnosisRow[];
+  mostDisliked: PromptDiagnosisRow[];
+}
+
 interface PromptCatalogRow {
   id: string;
   agent_key: string;
@@ -93,6 +108,16 @@ interface FeedbackEventRow {
   note: string | null;
   user_id: string | null;
   created_at: string;
+}
+
+interface PromptDiagnosisSqlRow {
+  prompt_resolved_hash: string;
+  prompt_text: string;
+  like_count: number;
+  dislike_count: number;
+  signal_count: number;
+  latest_disliked_message: string | null;
+  latest_feedback_at: string;
 }
 
 export class FeedbackService {
@@ -471,6 +496,75 @@ export class FeedbackService {
     } finally {
       db.close();
     }
+  }
+
+  getPromptDiagnosisSummary(limit = 10): PromptDiagnosisSummary {
+    const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.floor(limit)) : 10;
+    const db = new Database(this.dbPath, { readonly: true, fileMustExist: true });
+    try {
+      const mostLiked = this.queryPromptDiagnosisBySignal(db, "like", safeLimit);
+      const mostDisliked = this.queryPromptDiagnosisBySignal(db, "dislike", safeLimit);
+      return { mostLiked, mostDisliked };
+    } finally {
+      db.close();
+    }
+  }
+
+  private queryPromptDiagnosisBySignal(
+    db: Database.Database,
+    signal: FeedbackSignal,
+    limit: number,
+  ): PromptDiagnosisRow[] {
+    const rows = db
+      .prepare<[FeedbackSignal, number], PromptDiagnosisSqlRow>(
+        `
+        SELECT
+          events.prompt_resolved_hash,
+          (
+            SELECT pue.prompt_resolved
+            FROM prompt_usage_events AS pue
+            WHERE pue.prompt_resolved_hash = events.prompt_resolved_hash
+              AND pue.prompt_resolved IS NOT NULL
+              AND TRIM(pue.prompt_resolved) <> ''
+            ORDER BY pue.created_at DESC
+            LIMIT 1
+          ) AS prompt_text,
+          SUM(CASE WHEN events.signal = 'like' THEN 1 ELSE 0 END) AS like_count,
+          SUM(CASE WHEN events.signal = 'dislike' THEN 1 ELSE 0 END) AS dislike_count,
+          SUM(CASE WHEN events.signal = ? THEN 1 ELSE 0 END) AS signal_count,
+          (
+            SELECT disliked.note
+            FROM ui_feedback_events AS disliked
+            WHERE disliked.prompt_resolved_hash = events.prompt_resolved_hash
+              AND disliked.signal = 'dislike'
+              AND disliked.note IS NOT NULL
+              AND TRIM(disliked.note) <> ''
+            ORDER BY disliked.created_at DESC
+            LIMIT 1
+          ) AS latest_disliked_message,
+          MAX(events.created_at) AS latest_feedback_at
+        FROM ui_feedback_events AS events
+        WHERE events.prompt_resolved_hash IS NOT NULL
+          AND TRIM(events.prompt_resolved_hash) <> ''
+        GROUP BY events.prompt_resolved_hash
+        HAVING signal_count > 0
+          AND prompt_text IS NOT NULL
+          AND TRIM(prompt_text) <> ''
+        ORDER BY signal_count DESC, latest_feedback_at DESC
+        LIMIT ?
+        `,
+      )
+      .all(signal, limit);
+
+    return rows.map((row) => ({
+      promptResolvedHash: row.prompt_resolved_hash,
+      promptText: row.prompt_text,
+      likeCount: row.like_count,
+      dislikeCount: row.dislike_count,
+      signalCount: row.signal_count,
+      latestDislikedMessage: row.latest_disliked_message?.trim() ?? "",
+      latestFeedbackAt: row.latest_feedback_at,
+    }));
   }
 }
 

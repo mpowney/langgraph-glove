@@ -46,6 +46,33 @@ export interface FeedbackContext {
   promptResolvedHash?: string;
 }
 
+export interface PromptDiagnosisItem {
+  promptResolvedHash: string;
+  promptText: string;
+  likeCount: number;
+  dislikeCount: number;
+  signalCount: number;
+  latestDislikedMessage: string;
+  latestFeedbackAt: string;
+}
+
+export interface PromptDiagnosisSummary {
+  mostLiked: PromptDiagnosisItem[];
+  mostDisliked: PromptDiagnosisItem[];
+}
+
+export interface ImprovePromptRequest {
+  conversationId?: string;
+  promptText: string;
+  dislikedMessageText: string;
+  userRequest: string;
+}
+
+export interface ImprovePromptResponse {
+  conversationId: string;
+  improvedPrompt: string;
+}
+
 export type ServerMessage =
   | {
       type: "chunk";

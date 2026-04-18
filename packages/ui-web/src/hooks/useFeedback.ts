@@ -10,6 +10,7 @@ export interface SubmitFeedbackInput {
   signal: FeedbackSignal;
   checkpointId?: string;
   sourceView: "live" | "history";
+  note?: string;
   feedbackContext?: FeedbackContext;
 }
 
@@ -36,6 +37,7 @@ export function useFeedback(apiBaseUrl = "", authToken?: string) {
           promptResolvedHash: input.feedbackContext?.promptResolvedHash,
           checkpointId: input.checkpointId,
           sourceView: input.sourceView,
+          note: input.note,
         }),
       });
 

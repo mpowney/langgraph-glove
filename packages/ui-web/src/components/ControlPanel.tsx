@@ -75,6 +75,7 @@ interface ControlPanelProps {
   onOpenToolsPanel: () => void;
   onOpenConfigAdmin: () => void;
   onOpenMemoryAdmin: () => void;
+  onOpenPromptDiagnosis: () => void;
   memoryAdminEnabled: boolean;
 }
 
@@ -94,6 +95,7 @@ export function ControlPanel({
   onOpenToolsPanel,
   onOpenConfigAdmin,
   onOpenMemoryAdmin,
+  onOpenPromptDiagnosis,
   memoryAdminEnabled,
 }: ControlPanelProps) {
   const styles = useStyles();
@@ -217,6 +219,18 @@ export function ControlPanel({
                 className={styles.panelButton}
               >
                 Configuration
+              </CompoundButton>
+              <CompoundButton
+                appearance="subtle"
+                icon={<DocumentEdit24Regular />}
+                secondaryContent="Diagnose most liked and disliked prompts"
+                onClick={() => {
+                  onClose();
+                  onOpenPromptDiagnosis();
+                }}
+                className={styles.panelButton}
+              >
+                Prompt diagnosis
               </CompoundButton>
               <CompoundButton
                 appearance="subtle"
