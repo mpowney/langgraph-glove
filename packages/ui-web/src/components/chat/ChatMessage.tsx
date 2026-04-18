@@ -5,7 +5,7 @@ import {
   Text,
   Button,
 } from "@fluentui/react-components";
-import { ThumbLike24Regular, ThumbDislike24Regular } from "@fluentui/react-icons";
+import { ThumbLike16Regular, ThumbDislike16Regular } from "@fluentui/react-icons";
 import { MessageAccordion } from "./accordions/MessageAccordion";
 import { InlineContent } from "./content/InlineContent";
 import { ToolMetaSection } from "./metadata/ToolMetaSection";
@@ -120,7 +120,7 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorNeutralStroke2}`,
     backgroundColor: tokens.colorNeutralBackground2,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   promptPanel: {
@@ -137,28 +137,28 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteYellowBorder1}`,
     backgroundColor: tokens.colorPaletteYellowBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   toolResultAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteGreenBorder1}`,
     backgroundColor: tokens.colorPaletteGreenBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   agentTransferAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteBerryBorder1}`,
     backgroundColor: tokens.colorPaletteBerryBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   errorAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteRedBorder1}`,
     backgroundColor: tokens.colorPaletteRedBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   toolPanel: {
@@ -180,31 +180,33 @@ const useStyles = makeStyles({
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteDarkOrangeBorder1}`,
     backgroundColor: tokens.colorPaletteDarkOrangeBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   modelResponseAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteMarigoldBorder1}`,
     backgroundColor: tokens.colorPaletteMarigoldBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   conversationMetadataAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteLightGreenBorder1}`,
     backgroundColor: tokens.colorPaletteLightGreenBackground1,
-    paddingRight: tokens.spacingHorizontalM,
+    // paddingRight: tokens.spacingHorizontalM,
     overflow: "hidden",
   },
   feedbackRow: {
     display: "flex",
-    gap: tokens.spacingHorizontalXS,
-    marginTop: tokens.spacingVerticalXS,
+    gap: "2px",
     alignItems: "center",
   },
   feedbackButton: {
     minWidth: "unset",
+    padding: "0 1px",
+    height: "13px",
+    width: "auto",
   },
 });
 
@@ -276,7 +278,7 @@ export function ChatMessage({
           size="small"
           className={styles.feedbackButton}
           appearance={feedbackSignal === "like" ? "primary" : "subtle"}
-          icon={<ThumbLike24Regular />}
+          icon={<ThumbLike16Regular style={{ width: "13px", height: "13px" }} />}
           aria-label="Like this message"
           disabled={feedbackPending}
           onClick={() => { void submitFeedback("like"); }}
@@ -285,7 +287,7 @@ export function ChatMessage({
           size="small"
           className={styles.feedbackButton}
           appearance={feedbackSignal === "dislike" ? "primary" : "subtle"}
-          icon={<ThumbDislike24Regular />}
+          icon={<ThumbDislike16Regular style={{ width: "13px", height: "13px" }} />}
           aria-label="Dislike this message"
           disabled={feedbackPending}
           onClick={() => { void submitFeedback("dislike"); }}
@@ -430,6 +432,7 @@ export function ChatMessage({
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
+            headerActions={renderFeedbackButtons()}
           >
             <Text block className={styles.toolMetaDesc}>{toolNameDebugLine}</Text>
             {toolArgs}
@@ -437,7 +440,6 @@ export function ChatMessage({
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
           </MessageAccordion>
-          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -475,10 +477,10 @@ export function ChatMessage({
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
+            headerActions={renderFeedbackButtons()}
           >
             {modelCallContent}
           </MessageAccordion>
-          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -611,10 +613,10 @@ export function ChatMessage({
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
+            headerActions={renderFeedbackButtons()}
           >
             {modelResponseContent}
           </MessageAccordion>
-          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -655,6 +657,7 @@ export function ChatMessage({
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
+            headerActions={renderFeedbackButtons()}
           >
             <Text block className={styles.toolMetaDesc}>{toolNameDebugLine}</Text>
             {splitContentWithImages(toolContent).map((segment, i) =>
@@ -673,7 +676,6 @@ export function ChatMessage({
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
           </MessageAccordion>
-          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -701,10 +703,10 @@ export function ChatMessage({
             rawPayload={entry.content}
             receivedAt={entry.receivedAt}
             checkpoint={entry.checkpoint}
+            headerActions={renderFeedbackButtons()}
           >
             {request ?? ""}
           </MessageAccordion>
-          {renderFeedbackButtons()}
         </div>
       </div>
     );
@@ -756,8 +758,12 @@ export function ChatMessage({
           <InlineContent content={entry.content} />
           {entry.isStreaming && <span className={styles.cursor} aria-hidden />}
         </div>
-        {renderFeedbackButtons()}
-        {timestamp && <Text block className={styles.messageTimestamp}>{timestamp}</Text>}
+          {(timestamp || feedbackAllowed) && (
+            <div className={styles.feedbackRow} style={{ marginTop: tokens.spacingVerticalXXS }}>
+              {timestamp && <Text className={styles.messageTimestamp}>{timestamp}</Text>}
+              {renderFeedbackButtons()}
+            </div>
+          )}
       </div>
     </div>
   );

@@ -70,6 +70,7 @@ export interface MessageAccordionProps {
   itemValue: string;
   headerText: string;
   headerPreTimestampText?: string;
+  headerActions?: React.ReactNode;
   panelClassName: string;
   rawPayload: unknown;
   receivedAt?: string;
@@ -82,6 +83,7 @@ export function MessageAccordion({
   itemValue,
   headerText,
   headerPreTimestampText,
+  headerActions,
   panelClassName,
   rawPayload,
   receivedAt,
@@ -108,6 +110,7 @@ export function MessageAccordion({
             <span className={styles.accordionTimestamp}>
               {resolveDisplayTimestamp(checkpoint, receivedAt)}
             </span>
+            {headerActions ?? null}
           </span>
         </AccordionHeader>
         <AccordionPanel>
