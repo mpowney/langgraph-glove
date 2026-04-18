@@ -44,6 +44,8 @@ final class UnixSocketRpcServer {
     /// Active client Tasks — cancelled when the server stops.
     private var clientTasks: [Task<Void, Never>] = []
     private let taskLock = NSLock()
+    private var peekabooMcpBridge: PeekabooMcpBridge?
+    private var peekabooBaseCommand: String?
 
     /// Called on a background Task when a client connects.
     var onConnectionOpened: (() -> Void)?
@@ -52,9 +54,11 @@ final class UnixSocketRpcServer {
     /// Called on a background Task each time a JSON-RPC request is handled.
     var onRequestHandled: (() -> Void)?
 
-    init(name: String, registry: ToolRegistry) {
+    init(name: String, registry: ToolRegistry, peekabooMcpBridge: PeekabooMcpBridge? = nil, peekabooBaseCommand: String? = nil) {
         self.socketPath = socketPathForTool(name)
         self.registry = registry
+        self.peekabooMcpBridge = peekabooMcpBridge
+        self.peekabooBaseCommand = peekabooBaseCommand
         let rawTimeout = ProcessInfo.processInfo.environment["MACOS_CONTROL_RPC_TIMEOUT_MS"]
         let parsedTimeout = rawTimeout.flatMap(UInt64.init) ?? 30_000
         self.requestTimeoutMs = max(1_000, parsedTimeout)
@@ -221,9 +225,37 @@ final class UnixSocketRpcServer {
 
     private func dispatch(_ req: RpcRequest) async -> RpcResponse {
         onRequestHandled?()
+        
+        // Merge native and Peekaboo tools for introspection
         if req.method == "__introspect__" {
-            return RpcResponse(id: req.id, result: registry.allMetadata(), error: nil)
+            var allMetadata = registry.allMetadata()
+            if let bridge = peekabooMcpBridge, let baseCmd = peekabooBaseCommand {
+                do {
+                    let peekabooTools = try await bridge.getToolsForIntrospect(baseCommand: baseCmd)
+                    allMetadata.append(contentsOf: peekabooTools)
+                } catch {
+                    // Log error but continue with native tools only
+                    print("Error fetching Peekaboo tools for introspection: \(error)")
+                }
+            }
+            return RpcResponse(id: req.id, result: allMetadata, error: nil)
         }
+        
+        // Forward Peekaboo tool calls to the MCP bridge
+        if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
+            let upstreamName = String(req.method.dropFirst(9)) // Remove "peekaboo_" prefix
+            do {
+                let result = try await runWithTimeout(
+                    milliseconds: requestTimeoutMs,
+                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: req.params) }
+                )
+                return RpcResponse(id: req.id, result: result, error: nil)
+            } catch {
+                return RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
+            }
+        }
+        
+        // Dispatch native tools via registry
         guard let handler = registry.handler(for: req.method) else {
             return RpcResponse(id: req.id, result: nil, error: "Unknown method: \(req.method)")
         }

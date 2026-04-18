@@ -98,10 +98,19 @@ export const AgentEntrySchema = z.object({
   description: z.string().optional(),
   /** Tool names this agent is allowed to use. Missing = all tools, empty = no tools. */
   tools: z.array(z.string()).optional(),
+  /** Tool-server keys (from tools.json) whose discovered tools are auto-allowed for this agent. */
+  autoToolDiscovery: z.array(z.string()).optional(),
   /** Maximum ReAct loop steps before aborting. */
   recursionLimit: z.number().int().positive().optional(),
   /** Optional subgraph key that defines this agent's default context compression behavior. */
   compressionSubgraph: z.string().optional(),
+  /**
+   * Maximum bytes allowed for an inline tool result returned to the LLM.
+   * Results exceeding this limit are replaced with a truncation notice.
+   * Defaults to 2 MB. Increase this when tools like `peekaboo_see` return
+   * large payloads that should not be truncated.
+   */
+  maxInlineToolResultBytes: z.number().int().positive().optional(),
 });
 export type AgentEntry = z.infer<typeof AgentEntrySchema>;
 

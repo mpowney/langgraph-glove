@@ -46,6 +46,15 @@
     "temperature": 1,
     "apiVersion": "2024-05-01-preview"
   },
+  "azure-gpt-5.4": {
+    "provider": "openai",
+    "apiKey": "{SECRET:azure-key}",
+    "baseUrl": "{SECRET:azure-openai-endpoint}",
+    "model": "gpt-5.4",
+    "deploymentName": "gpt-5.4",
+    "temperature": 0,
+    "apiVersion": "2024-04-01-preview"
+  },
   "ollama-vision": {
     "provider": "ollama",
     "model": "ibm/granite3.3-vision:2b",

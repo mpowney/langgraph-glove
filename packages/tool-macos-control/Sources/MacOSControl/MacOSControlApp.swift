@@ -69,7 +69,7 @@ struct MacOSControlApp: App {
                 .environmentObject(appState)
         }
         .windowResizability(.contentSize)
-        .defaultSize(width: 440, height: 520)
+        .defaultSize(width: 440, height: 900)
 
         // ── Tool request log window ──────────────────────────────────────
         Window("Tool Request Log", id: "tool-log") {

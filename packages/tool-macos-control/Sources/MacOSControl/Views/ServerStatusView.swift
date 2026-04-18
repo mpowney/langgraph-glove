@@ -31,6 +31,30 @@ struct ServerStatusView: View {
                     unixSocketConfigRow
                 }
 
+                Divider()
+
+                HStack {
+                    Toggle("Enable default macOS tools", isOn: $appState.macosToolsEnabled)
+                        .onChange(of: appState.macosToolsEnabled) { _ in
+                            appState.saveSettings()
+                            if appState.serverRunning {
+                                appState.restartServer()
+                            }
+                        }
+                    Spacer()
+                }
+
+                HStack {
+                    Toggle("Enable Peekaboo tools via Node, npx, and MCP", isOn: $appState.peekabooEnabled)
+                        .onChange(of: appState.peekabooEnabled) { _ in
+                            appState.saveSettings()
+                            if appState.serverRunning {
+                                appState.restartServer()
+                            }
+                        }
+                    Spacer()
+                }
+
                 // ── Status + start/stop ──────────────────────────────────
                 HStack {
                     Circle()
