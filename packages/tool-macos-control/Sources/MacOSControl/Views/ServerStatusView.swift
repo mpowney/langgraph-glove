@@ -45,7 +45,7 @@ struct ServerStatusView: View {
                 }
 
                 HStack {
-                    Toggle("Enable Peekaboo tools via Node, npx, and MCP ", isOn: $appState.peekabooEnabled)
+                    Toggle("Enable Peekaboo tools via Node, npx, and MCP", isOn: $appState.peekabooEnabled)
                         .onChange(of: appState.peekabooEnabled) { _ in
                             appState.saveSettings()
                             if appState.serverRunning {
