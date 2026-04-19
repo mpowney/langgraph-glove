@@ -13,6 +13,7 @@ import { SubAgentMessageRenderer } from "./subagent/SubAgentMessageRenderer";
 import {
   isEmptyPayload,
   isObject,
+  reorderModelResponsePayload,
   isSpecificToolName,
   toDisplayJson,
   tryFormatJsonString,
@@ -597,7 +598,7 @@ export function ChatMessage({
       if (isObject(parsed) && typeof parsed.model === "string") {
         modelName = parsed.model;
       }
-      modelResponseContent = toDisplayJson(parsed, entry.content);
+      modelResponseContent = toDisplayJson(reorderModelResponsePayload(parsed), entry.content);
     } catch {
       // leave raw content as-is
     }

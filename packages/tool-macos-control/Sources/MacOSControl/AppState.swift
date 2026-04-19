@@ -231,7 +231,8 @@ final class AppState: ObservableObject {
                     port: UInt16(clamping: serverPort),
                     registry: registry,
                     peekabooMcpBridge: peekabooEnabled ? peekabooMcpBridge : nil,
-                    peekabooBaseCommand: baseCommand
+                    peekabooBaseCommand: baseCommand,
+                    toolLogManager: toolLogManager
                 )
                 s.onRequestHandled = { [weak self] in
                     Task { @MainActor [weak self] in self?.lastRequestDate = Date() }
@@ -244,7 +245,8 @@ final class AppState: ObservableObject {
                     name: socketName,
                     registry: registry,
                     peekabooMcpBridge: peekabooEnabled ? peekabooMcpBridge : nil,
-                    peekabooBaseCommand: baseCommand
+                    peekabooBaseCommand: baseCommand,
+                    toolLogManager: toolLogManager
                 )
                 s.onConnectionOpened = { [weak self] in
                     Task { @MainActor [weak self] in
@@ -351,7 +353,32 @@ final class AppState: ObservableObject {
             }
 
             do {
-                let discovered = try await peekabooMcpBridge.discoverTools(baseCommand: baseCommand)
+                let providerKey = peekabooProviderKeyForDiagnostics()
+                let providerTest = try await peekabooMcpBridge.testProvider(
+                    baseCommand: baseCommand,
+                    providerKey: providerKey
+                )
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Provider test command: \(providerTest.commandDescription)"))
+                lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "Provider test: \(providerTest.exitCode == 0 ? "passed" : "failed")"))
+
+                let providerStdout = providerTest.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !providerStdout.isEmpty {
+                    for line in summarizeDiagnosticText(providerStdout, prefix: "provider-test stdout") {
+                        lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: line))
+                    }
+                }
+
+                let providerStderr = providerTest.stderr.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !providerStderr.isEmpty {
+                    for line in summarizeDiagnosticText(providerStderr, prefix: "provider-test stderr") {
+                        lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: line))
+                    }
+                }
+
+                let discovered = try await peekabooMcpBridge.discoverTools(
+                    baseCommand: baseCommand,
+                    context: peekabooDiscoveryContext()
+                )
                 self.setPeekabooDiscoveredTools(discovered)
                 self.peekabooLastError = nil
                 lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "MCP handshake: successful"))
@@ -493,12 +520,33 @@ final class AppState: ObservableObject {
 
     private func refreshPeekabooDiscoveredTools(baseCommand: String) async {
         do {
-            let discovered = try await peekabooMcpBridge.discoverTools(baseCommand: baseCommand)
+            let discovered = try await peekabooMcpBridge.discoverTools(
+                baseCommand: baseCommand,
+                context: peekabooDiscoveryContext()
+            )
             setPeekabooDiscoveredTools(discovered)
             peekabooLastError = nil
         } catch {
             peekabooDiscoveredTools = []
             peekabooLastError = error.localizedDescription
         }
+    }
+
+    private func peekabooProviderKeyForDiagnostics() -> String {
+        let stored = UserDefaults.standard.string(forKey: "peekaboo.providerKey")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let stored, !stored.isEmpty {
+            return stored
+        }
+        return "ollama-vision"
+    }
+
+    private func peekabooDiscoveryContext() -> [String: Any] {
+        [
+            "macosControl": [
+                "peekabooConfig": [
+                    "providerKey": peekabooProviderKeyForDiagnostics()
+                ]
+            ]
+        ]
     }
 }

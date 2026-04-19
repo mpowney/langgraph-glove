@@ -35,6 +35,7 @@ func socketPathForTool(_ name: String) -> String {
 final class UnixSocketRpcServer {
     let socketPath: String
     private let registry: ToolRegistry
+    private let toolLogManager: ToolRequestLogManager?
     private var serverFd: Int32 = -1
     private let requestTimeoutMs: UInt64
     private let acceptQueue = DispatchQueue(
@@ -54,9 +55,16 @@ final class UnixSocketRpcServer {
     /// Called on a background Task each time a JSON-RPC request is handled.
     var onRequestHandled: (() -> Void)?
 
-    init(name: String, registry: ToolRegistry, peekabooMcpBridge: PeekabooMcpBridge? = nil, peekabooBaseCommand: String? = nil) {
+    init(
+        name: String,
+        registry: ToolRegistry,
+        peekabooMcpBridge: PeekabooMcpBridge? = nil,
+        peekabooBaseCommand: String? = nil,
+        toolLogManager: ToolRequestLogManager? = nil
+    ) {
         self.socketPath = socketPathForTool(name)
         self.registry = registry
+        self.toolLogManager = toolLogManager
         self.peekabooMcpBridge = peekabooMcpBridge
         self.peekabooBaseCommand = peekabooBaseCommand
         let rawTimeout = ProcessInfo.processInfo.environment["MACOS_CONTROL_RPC_TIMEOUT_MS"]
@@ -244,14 +252,18 @@ final class UnixSocketRpcServer {
         // Forward Peekaboo tool calls to the MCP bridge
         if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
             let upstreamName = String(req.method.dropFirst(9)) // Remove "peekaboo_" prefix
+            await toolLogManager?.logToolCall(toolName: req.method, payload: req.params)
             do {
                 let result = try await runWithTimeout(
                     milliseconds: requestTimeoutMs,
                     operation: { try await bridge.callTool(toolName: upstreamName, arguments: req.params) }
                 )
+                await toolLogManager?.logToolResult(toolName: req.method, response: result)
                 return RpcResponse(id: req.id, result: result, error: nil)
             } catch {
-                return RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
+                let enrichedMessage = enrichPeekabooError(toolName: req.method, message: error.localizedDescription)
+                await toolLogManager?.logToolError(toolName: req.method, error: ToolError.failed(enrichedMessage))
+                return RpcResponse(id: req.id, result: nil, error: enrichedMessage)
             }
         }
         

@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
 import { ConversationMetadataService } from "./ConversationMetadataService.js";
+import { ConversationProcessingLogService } from "./ConversationProcessingLogService.js";
 import { FeedbackService } from "./FeedbackService.js";
 import { registerFeedbackRoutes } from "./FeedbackRoutes.js";
 import { registerSecretsRoutes } from "./SecretsRoutes.js";
@@ -62,8 +63,22 @@ interface ConversationRow {
 /** A single decoded message in a conversation. */
 export interface BrowserMessage {
   id: string;
-  role: "human" | "ai" | "tool" | "system";
+  role:
+    | "human"
+    | "ai"
+    | "tool"
+    | "system"
+    | "prompt"
+    | "tool-call"
+    | "tool-result"
+    | "agent-transfer"
+    | "model-call"
+    | "model-response"
+    | "graph-definition"
+    | "system-event";
   content: string;
+  receivedAt?: string;
+  toolName?: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
 }
@@ -952,7 +967,9 @@ export class AdminApi {
     if (this.conversationDbPath) {
       const dbPath = this.conversationDbPath;
       const conversationMetadataService = new ConversationMetadataService(dbPath);
+      const conversationProcessingLogService = new ConversationProcessingLogService(dbPath);
       conversationMetadataService.ensureSchema();
+      conversationProcessingLogService.ensureSchema();
 
       // List all conversation threads
       this.app.get("/api/conversations", (req, res) => {
@@ -1011,7 +1028,12 @@ export class AdminApi {
             res.status(404).json({ error: "Conversation not found" });
             return;
           }
-          res.json(extractMessages(row.checkpoint as unknown as string));
+          const checkpointMessages = extractMessages(row.checkpoint as unknown as string);
+          const processingMessages = conversationProcessingLogService.list(threadId);
+          res.json([
+            ...checkpointMessages,
+            ...processingMessages,
+          ]);
         } catch (err) {
           res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
         }

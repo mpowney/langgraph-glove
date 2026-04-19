@@ -178,8 +178,22 @@ export interface ConversationSummary {
 
 export interface BrowserMessage {
   id: string;
-  role: "human" | "ai" | "tool" | "system";
+  role:
+    | "human"
+    | "ai"
+    | "tool"
+    | "system"
+    | "prompt"
+    | "tool-call"
+    | "tool-result"
+    | "agent-transfer"
+    | "model-call"
+    | "model-response"
+    | "graph-definition"
+    | "system-event";
   content: string;
+  receivedAt?: string;
+  toolName?: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
   feedbackContext?: FeedbackContext;

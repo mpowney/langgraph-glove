@@ -13,6 +13,22 @@ export function toDisplayJson(value: unknown, fallback: string): string {
   }
 }
 
+export function reorderModelResponsePayload(value: unknown): unknown {
+  if (!isObject(value)) return value;
+  if (!Object.prototype.hasOwnProperty.call(value, "response")) return value;
+
+  const reordered: Record<string, unknown> = {
+    response: value.response,
+  };
+
+  for (const [key, payload] of Object.entries(value)) {
+    if (key === "response") continue;
+    reordered[key] = payload;
+  }
+
+  return reordered;
+}
+
 export function isEmptyPayload(value: unknown): boolean {
   if (value == null) return true;
   if (typeof value === "string") return value.trim().length === 0;

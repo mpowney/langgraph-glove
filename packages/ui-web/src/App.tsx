@@ -17,7 +17,7 @@ import { useTheme } from "./hooks/useTheme";
 import { AppHeader } from "./components/AppHeader";
 import { ChatArea } from "./components/chat/ChatArea";
 import { InputBar } from "./components/chat/InputBar";
-import { ConversationBrowser } from "./components/ConversationBrowser";
+import { ConversationBrowser } from "./components/conversations";
 import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { ConfigAdmin } from "./components/ConfigAdmin";

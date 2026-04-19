@@ -35,7 +35,7 @@
     "enabled": true
   },
   "macos-control": {
-    "transport": "http",
+    "transport": "unix-socket",
     "url": "{SECRET:macos-tool-endpoint}",
     "socketName": "macos-control",
     "enabled": true

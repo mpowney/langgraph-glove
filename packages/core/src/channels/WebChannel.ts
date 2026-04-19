@@ -12,6 +12,7 @@ import { Channel } from "./Channel";
 import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk, StreamSource } from "./Channel";
 import type { AuthService } from "../auth/AuthService";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
+import { ConversationProcessingLogService } from "../api/ConversationProcessingLogService";
 
 export const WebChannelSettingsSchema = z.object({
   port: z.number().int().positive().optional(),
@@ -174,6 +175,7 @@ export class WebChannel extends Channel {
   private appInfo: Required<NonNullable<WebChannelConfig["appInfo"]>>;
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
+  private processingLogService?: ConversationProcessingLogService;
   private authService?: AuthService;
 
   constructor(config: WebChannelConfig = {}) {
@@ -197,9 +199,12 @@ export class WebChannel extends Channel {
           readonly: true,
           fileMustExist: true,
         });
+        this.processingLogService = new ConversationProcessingLogService(this.checkpointDbPath);
+        this.processingLogService.ensureSchema();
       } catch {
         // Checkpoint metadata enrichment is optional for websocket payloads.
         this.checkpointDb = undefined;
+        this.processingLogService = undefined;
       }
     }
 
@@ -304,6 +309,11 @@ export class WebChannel extends Channel {
   /** Sends a complete message to all WebSocket clients that share the conversationId. */
   async sendMessage(message: OutgoingMessage): Promise<void> {
     if (message.role === "prompt") {
+      this.processingLogService?.append({
+        threadId: message.conversationId,
+        role: "prompt",
+        content: message.text,
+      });
       const payload: ServerMessage = {
         type: "prompt",
         text: message.text,
@@ -353,6 +363,12 @@ export class WebChannel extends Channel {
       || message.role === "graph-definition"
       || message.role === "system-event"
     ) {
+      this.processingLogService?.append({
+        threadId: message.conversationId,
+        role: message.role,
+        content: message.text,
+        ...(message.toolName ? { toolName: message.toolName } : {}),
+      });
       const payload: ServerMessage = {
         type: "tool_event",
         role: message.role,
