@@ -28,8 +28,16 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalM,
+    flex: 1,
     height: "100%",
-    overflowY: "auto",
+    minHeight: 0,
+    overflow: "hidden",
+  },
+  headerBlock: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalM,
+    flexShrink: 0,
   },
   topBar: {
     display: "flex",
@@ -39,11 +47,15 @@ const useStyles = makeStyles({
   },
   sections: {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
+    gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)",
     gap: tokens.spacingHorizontalM,
+    flex: 1,
+    height: "100%",
     minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
     "@media (max-width: 1100px)": {
-      gridTemplateColumns: "1fr",
+      gridTemplateColumns: "minmax(0, 1fr)",
     },
   },
   section: {
@@ -53,7 +65,10 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalS,
+    height: "100%",
     minHeight: 0,
+    minWidth: 0,
+    overflowX: "hidden",
   },
   sectionTitleRow: {
     display: "flex",
@@ -64,6 +79,11 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXS,
+    flex: 1,
+    minHeight: 0,
+    minWidth: 0,
+    overflowY: "auto",
+    paddingRight: tokens.spacingHorizontalXS,
   },
   row: {
     border: `1px solid ${tokens.colorNeutralStroke1}`,
@@ -72,6 +92,8 @@ const useStyles = makeStyles({
     display: "flex",
     flexDirection: "column",
     gap: tokens.spacingVerticalXS,
+    minWidth: 0,
+    overflowX: "hidden",
   },
   rowHeader: {
     display: "flex",
@@ -85,6 +107,8 @@ const useStyles = makeStyles({
     gap: tokens.spacingHorizontalXS,
   },
   promptSingleLine: {
+    display: "block",
+    width: "100%",
     whiteSpace: "nowrap",
     textOverflow: "ellipsis",
     overflow: "hidden",
@@ -198,22 +222,24 @@ export function PromptDiagnosisPanel({
 
         <DrawerBody>
           <div className={styles.body}>
-            <div className={styles.topBar}>
-              <Text size={300} weight="semibold">
-                Diagnose liked and disliked prompt outcomes
-              </Text>
-              <Button
-                appearance="secondary"
-                icon={summaryState === "loading" ? <Spinner size="tiny" /> : <ArrowClockwise24Regular />}
-                onClick={() => { void loadSummary(10); }}
-                disabled={summaryState === "loading"}
-              >
-                Refresh
-              </Button>
-            </div>
+            <div className={styles.headerBlock}>
+              <div className={styles.topBar}>
+                <Text size={300} weight="semibold">
+                  Diagnose liked and disliked prompt outcomes
+                </Text>
+                <Button
+                  appearance="secondary"
+                  icon={summaryState === "loading" ? <Spinner size="tiny" /> : <ArrowClockwise24Regular />}
+                  onClick={() => { void loadSummary(10); }}
+                  disabled={summaryState === "loading"}
+                >
+                  Refresh
+                </Button>
+              </div>
 
-            {summaryError ? <Text className={styles.error}>{summaryError}</Text> : null}
-            <Divider />
+              {summaryError ? <Text className={styles.error}>{summaryError}</Text> : null}
+              <Divider />
+            </div>
 
             <div className={styles.sections}>
               {sections.map((section) => (
