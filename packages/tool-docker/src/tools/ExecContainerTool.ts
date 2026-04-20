@@ -10,14 +10,14 @@ export const execContainerToolMetadata: ToolMetadata = {
   name: "docker_exec",
   description:
     "Use {name} to execute a command inside a running docker container. " +
-    "The container must have been created with docker_create_container and referenced by its GUID. " +
+    "The container must have been created with docker_create_container and referenced by its tool-managed reference. " +
     "stdout and stderr are both captured and returned.",
   parameters: {
     type: "object",
     properties: {
       containerId: {
         type: "string",
-        description: "The container GUID returned by docker_create_container.",
+        description: "The tool-managed container reference returned by docker_create_container.",
       },
       command: {
         type: "string",
@@ -56,7 +56,7 @@ export async function handleExecContainer(
   const record = containerManager.get(containerId);
   if (!record) {
     throw new Error(
-      `docker_exec: no container found with GUID "${containerId}". ` +
+      `docker_exec: no container found with reference "${containerId}". ` +
       "It may have expired or been stopped. Use docker_list_containers to see available containers.",
     );
   }
@@ -101,11 +101,20 @@ export async function handleExecContainer(
       reject(new Error(`docker_exec: failed to run command — ${err.message}`));
     });
 
-    child.on("close", (code) => {
+    child.on("close", async (code) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       const output = Buffer.concat(chunks).toString("utf8");
+      if (code !== 0 && output.includes("No such container:")) {
+        await containerManager.remove(containerId);
+        reject(
+          new Error(
+            `docker_exec: container reference "${containerId}" is stale because the underlying container no longer exists. Create a new container and retry.`,
+          ),
+        );
+        return;
+      }
       const truncationNote = truncated ? `\n[Output truncated at ${MAX_OUTPUT_BYTES / 1024} KiB]` : "";
       const exitNote = code !== 0 ? `\n[Exit code: ${code}]` : "";
       resolve(output + truncationNote + exitNote);

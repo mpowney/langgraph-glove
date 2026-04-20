@@ -1,5 +1,6 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
 import { containerManager, TTL_INDEFINITE } from "../ContainerManager.js";
+import { isDockerContainerPresent } from "./DockerContainerState.js";
 
 export const containerTtlToolMetadata: ToolMetadata = {
   name: "docker_container_ttl",
@@ -11,7 +12,7 @@ export const containerTtlToolMetadata: ToolMetadata = {
     properties: {
       containerId: {
         type: "string",
-        description: "The container GUID returned by docker_create_container.",
+        description: "The tool-managed container reference returned by docker_create_container.",
       },
     },
     required: ["containerId"],
@@ -29,8 +30,17 @@ export async function handleContainerTtl(
   const record = containerManager.get(containerId);
   if (!record) {
     throw new Error(
-      `docker_container_ttl: no container found with GUID "${containerId}". ` +
+      `docker_container_ttl: no container found with reference "${containerId}". ` +
       "It may have expired or been stopped. Use docker_list_containers to see available containers.",
+    );
+  }
+
+  const present = await isDockerContainerPresent(record.dockerId);
+  if (!present) {
+    await containerManager.remove(containerId);
+    throw new Error(
+      `docker_container_ttl: container reference "${containerId}" is stale because the underlying container no longer exists. ` +
+      "Use docker_list_containers to refresh references or create a new container.",
     );
   }
 
@@ -39,8 +49,7 @@ export async function handleContainerTtl(
   const lines = [
     "## Container TTL",
     "",
-    `- **Container GUID:** ${containerId}`,
-    `- **Docker ID:** ${record.dockerId}`,
+    `- **Container Reference:** ${containerId}`,
     `- **Image:** ${record.image}`,
   ];
 

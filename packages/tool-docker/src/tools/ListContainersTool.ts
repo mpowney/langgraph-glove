@@ -1,5 +1,6 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
 import { containerManager, TTL_INDEFINITE } from "../ContainerManager.js";
+import { isDockerContainerPresent } from "./DockerContainerState.js";
 
 export const listContainersToolMetadata: ToolMetadata = {
   name: "docker_list_containers",
@@ -15,17 +16,44 @@ export const listContainersToolMetadata: ToolMetadata = {
 export async function handleListContainers(
   _params: Record<string, unknown>,
 ): Promise<string> {
-  const records = containerManager.list();
+  const allRecords = containerManager.list();
+  const staleIds: string[] = [];
+  const records = (
+    await Promise.all(
+      allRecords.map(async (record) => {
+        const present = await isDockerContainerPresent(record.dockerId);
+        if (!present) {
+          staleIds.push(record.id);
+          return null;
+        }
+        return record;
+      }),
+    )
+  ).filter((record): record is (typeof allRecords)[number] => record !== null);
+
+  if (staleIds.length > 0) {
+    await Promise.all(staleIds.map((id) => containerManager.remove(id)));
+  }
 
   if (records.length === 0) {
-    return [
+    const lines = [
       "## Managed Docker Containers",
       "",
       "No containers are currently running.",
-    ].join("\n");
+    ];
+    if (staleIds.length > 0) {
+      lines.push("");
+      lines.push(`Pruned ${staleIds.length} stale container reference${staleIds.length === 1 ? "" : "s"}.`);
+    }
+    return lines.join("\n");
   }
 
   const lines = ["## Managed Docker Containers", ""];
+
+  if (staleIds.length > 0) {
+    lines.push(`Pruned ${staleIds.length} stale container reference${staleIds.length === 1 ? "" : "s"}.`);
+    lines.push("");
+  }
 
   for (const record of records) {
     const remaining = containerManager.remainingMs(record.id);
@@ -43,7 +71,7 @@ export async function handleListContainers(
     }
 
     lines.push(`### ${record.id}`);
-    lines.push(`- **Docker ID:** ${record.dockerId}`);
+    lines.push(`- **Container Reference:** ${record.id}`);
     lines.push(`- **Image:** ${record.image}`);
     lines.push(`- **TTL:** ${ttlDesc}`);
     lines.push(`- **Created:** ${new Date(record.createdAt).toISOString()}`);

@@ -10,6 +10,7 @@ const execFileAsync = promisify(execFile);
 
 const DEFAULT_TTL_MINUTES = 10;
 const MAX_TTL_MINUTES = 1440; // 24 hours
+const KEEPALIVE_COMMAND = "trap 'exit 0' TERM INT; while :; do sleep 3600; done";
 
 /**
  * CLI flags that grant the container elevated access to the host.
@@ -43,7 +44,8 @@ export const createContainerToolMetadata: ToolMetadata = {
   description:
     "Use {name} to start a new docker container from any docker image. " +
     "Docker Hub is the default registry and requires no authentication. " +
-    "Returns a container GUID that must be used with other docker_* tools. " +
+    "Returns a tool-managed container reference that must be used with other docker_* tools. " +
+    "For direct docker run usage, the tool keeps the container alive for later docker_exec calls. " +
     "Containers are automatically stopped and removed when their TTL expires. " +
     "Use ttl=0 for an indefinite container. " +
     "Providing CLI parameters that grant the container elevated host access (e.g. --privileged, " +
@@ -70,7 +72,8 @@ export const createContainerToolMetadata: ToolMetadata = {
         items: { type: "string" },
         description:
           "Additional docker run CLI flags, e.g. ['-e', 'MY_VAR=hello', '-p', '8080:80']. " +
-          "Flags that grant elevated host access require privileged access.",
+          "Flags that grant elevated host access require privileged access. For non-compose containers, " +
+          "the tool injects a keepalive shell by default unless you override the entrypoint yourself.",
       },
       compose: {
         type: "string",
@@ -141,19 +144,34 @@ export async function handleCreateContainer(
   return [
     "## Container Created",
     "",
-    `- **Container GUID:** ${record.id}`,
-    `- **Docker ID:** ${dockerId}`,
+    `- **Container Reference:** ${record.id}`,
     `- **Image:** ${image}`,
     `- **TTL:** ${ttlDesc}`,
     ...(cliParams.length > 0 ? [`- **CLI params:** ${cliParams.join(" ")}`] : []),
     ...(composeUsed ? ["- **Created via:** docker compose"] : []),
     "",
-    "Use the container GUID with other docker_* tools.",
+    "Use the container reference with other docker_* tools.",
   ].join("\n");
 }
 
 async function runContainer(image: string, cliParams: string[]): Promise<string> {
-  const args = ["run", "-d", "--rm", ...cliParams, image];
+  const hasEntrypointOverride = cliParams.some((param, index) =>
+    param === "--entrypoint" ||
+    param.startsWith("--entrypoint=") ||
+    (param === "--" && cliParams[index + 1] === "--entrypoint")
+  );
+  const args = ["run", "-d", "--rm", ...cliParams];
+
+  if (!hasEntrypointOverride) {
+    args.push("--entrypoint", "/bin/sh");
+  }
+
+  args.push(image);
+
+  if (!hasEntrypointOverride) {
+    args.push("-lc", KEEPALIVE_COMMAND);
+  }
+
   let stdout: string;
   try {
     ({ stdout } = await execFileAsync("docker", args));
@@ -161,7 +179,27 @@ async function runContainer(image: string, cliParams: string[]): Promise<string>
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`docker_create_container: failed to start container — ${msg}`);
   }
-  return stdout.trim().slice(0, 12);
+
+  const dockerId = stdout.trim().slice(0, 12);
+
+  try {
+    const { stdout: inspectStdout } = await execFileAsync("docker", [
+      "inspect",
+      "--format",
+      "{{.State.Running}}",
+      dockerId,
+    ]);
+    if (inspectStdout.trim() !== "true") {
+      throw new Error("container is not running");
+    }
+  } catch {
+    throw new Error(
+      "docker_create_container: container exited before it became ready for docker_exec. " +
+      "Use an image that can run a shell, or provide cliParams that keep the container alive.",
+    );
+  }
+
+  return dockerId;
 }
 
 async function runWithCompose(compose: string, image: string): Promise<string> {
