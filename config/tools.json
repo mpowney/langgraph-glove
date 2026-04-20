@@ -69,6 +69,7 @@
   "docker": {
     "transport": "unix-socket",
     "url": "http://localhost:3018",
-    "socketName": "docker"
+    "socketName": "docker",
+    "enabled": true
   }
 }

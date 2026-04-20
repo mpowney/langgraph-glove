@@ -4,8 +4,6 @@ import { v4 as uuidv4 } from "uuid";
 
 const execFileAsync = promisify(execFile);
 
-const DEFAULT_TTL_MS = 10 * 60 * 1_000; // 10 minutes
-
 export const TTL_INDEFINITE = 0;
 
 export interface ContainerRecord {

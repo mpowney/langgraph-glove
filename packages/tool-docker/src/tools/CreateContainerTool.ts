@@ -126,7 +126,7 @@ export async function handleCreateContainer(
 
   if (compose) {
     composeUsed = true;
-    dockerId = await runWithCompose(compose, image, cliParams);
+    dockerId = await runWithCompose(compose, image);
   } else {
     dockerId = await runContainer(image, cliParams);
   }
@@ -164,7 +164,7 @@ async function runContainer(image: string, cliParams: string[]): Promise<string>
   return stdout.trim().slice(0, 12);
 }
 
-async function runWithCompose(compose: string, image: string, _cliParams: string[]): Promise<string> {
+async function runWithCompose(compose: string, image: string): Promise<string> {
   const composePath = join(tmpdir(), `glove-docker-compose-${Date.now()}.yml`);
   try {
     await writeFile(composePath, compose, "utf8");
