@@ -1,9 +1,24 @@
 import React from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import rehypeSanitize from "rehype-sanitize";
+import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { makeStyles, tokens } from "@fluentui/react-components";
 import { LinkPill } from "./LinkPill";
+
+const sanitizeSchema = {
+  ...defaultSchema,
+  protocols: {
+    ...(defaultSchema.protocols ?? {}),
+    href: [...(defaultSchema.protocols?.href ?? []), "sandbox"],
+  },
+};
+
+function urlTransform(url: string): string {
+  if (url.startsWith("sandbox:/mnt/data/")) {
+    return url;
+  }
+  return defaultUrlTransform(url);
+}
 
 const useStyles = makeStyles({
   root: {
@@ -88,7 +103,8 @@ export function MarkdownContent({ content }: MarkdownContentProps) {
     <div className={styles.root}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeSanitize]}
+        rehypePlugins={[[rehypeSanitize, sanitizeSchema]]}
+        urlTransform={urlTransform}
         components={{
           // Replace standard <a> with LinkPill
           a({ href, children }) {
