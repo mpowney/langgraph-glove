@@ -29,6 +29,8 @@ export interface AgentCapabilityEntry {
 export interface AgentCapabilityRegistry {
   agents: AgentCapabilityEntry[];
   tools: Record<string, ToolDefinition>;
+  /** Filtered tool definitions for explicitly configured or auto-discovered agent tools. */
+  toolDefinitions: Record<string, ToolDefinition>;
 }
 
 /** Lightweight tool event metadata attached to live tool-call/tool-result entries. */

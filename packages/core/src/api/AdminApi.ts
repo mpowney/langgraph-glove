@@ -941,9 +941,23 @@ export class AdminApi {
       for (const t of this.toolRegistry) {
         toolsByName[t.name] = t;
       }
+      const configuredToolNames = new Set<string>();
+      for (const agent of this.agentCapabilities) {
+        for (const toolName of agent.tools ?? []) {
+          configuredToolNames.add(toolName);
+        }
+      }
+      const toolDefinitions: Record<string, ToolDefinition> = {};
+      for (const toolName of configuredToolNames) {
+        const definition = toolsByName[toolName];
+        if (definition) {
+          toolDefinitions[toolName] = definition;
+        }
+      }
       const payload: AgentCapabilityRegistry = {
         agents: this.agentCapabilities,
         tools: toolsByName,
+        toolDefinitions,
       };
       res.json(payload);
     });

@@ -105,6 +105,11 @@ export interface AgentCapabilityRegistry {
   agents: AgentCapabilityEntry[];
   /** Full tool definitions keyed by name, for convenient cross-referencing. */
   tools: Record<string, ToolDefinition>;
+  /**
+   * Filtered tool definitions keyed by name for tools explicitly configured on
+   * agents or added via `autoToolDiscovery` expansion.
+   */
+  toolDefinitions: Record<string, ToolDefinition>;
 }
 
 /**

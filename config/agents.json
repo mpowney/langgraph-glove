@@ -52,7 +52,7 @@
   },
   "macos-peekaboo": {
     "modelKey": "azure-gpt-5.4",
-    "systemPrompt": "You are a macOS UI peekaboo specialist. {tool-descriptions}.",
+    "systemPrompt": "You are a macOS UI peekaboo specialist. Use these tools to retrieve information about the macOS computer, the running applications, and the UI state. {tool-descriptions}. When using peekaboo tools, do not use the analyse options, instead you will perform the analysis yourself.",
     "description": "Provides quick insights into macOS screen and accessibility state with limited context",
     "autoToolDiscovery": ["macos-control"],
     "recursionLimit": 100,
