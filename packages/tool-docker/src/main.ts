@@ -14,6 +14,7 @@ import { execContainerToolMetadata, handleExecContainer } from "./tools/ExecCont
 import { containerTtlToolMetadata, handleContainerTtl } from "./tools/ContainerTtlTool.js";
 import { stopContainerToolMetadata, handleStopContainer } from "./tools/StopContainerTool.js";
 import { listContainersToolMetadata, handleListContainers } from "./tools/ListContainersTool.js";
+import { uploadTmpFileToolMetadata, handleUploadTmpFile } from "./tools/UploadTmpFileTool.js";
 import { containerManager } from "./ContainerManager.js";
 
 const adminApiUrl = process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081";
@@ -27,6 +28,7 @@ const server = await launchToolServer({
     server.register(containerTtlToolMetadata, handleContainerTtl);
     server.register(stopContainerToolMetadata, handleStopContainer);
     server.register(listContainersToolMetadata, handleListContainers);
+    server.register(uploadTmpFileToolMetadata, handleUploadTmpFile);
   },
 });
 

@@ -7,6 +7,7 @@ export const screenshotToolMetadata: ToolMetadata = {
     "Use {name} to take a screenshot of a web page at the given URL. Returns the screenshot as a " +
     "base64-encoded image string. Useful for visually inspecting a page or capturing its " +
     "current state.",
+  supportsContentUpload: true,
   parameters: {
     type: "object",
     properties: {

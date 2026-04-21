@@ -9,7 +9,15 @@ import type { ChannelEntry } from "@langgraph-glove/config";
 import { distPath } from "@langgraph-glove/ui-web";
 import { z } from "zod";
 import { Channel } from "./Channel";
-import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler, OutgoingStreamChunk, StreamSource } from "./Channel";
+import type {
+  ChannelConfig,
+  IncomingMessage,
+  OutgoingMessage,
+  MessageHandler,
+  OutgoingStreamChunk,
+  StreamSource,
+  OutgoingContentItem,
+} from "./Channel";
 import type { AuthService } from "../auth/AuthService";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 
@@ -101,6 +109,8 @@ type ServerMessage =
       toolEventMetadata?: ToolEventMetadata;
       /** Optional tool name extracted from the message for UI access. */
       toolName?: string;
+      /** Optional uploaded content references associated with this tool event. */
+      contentItems?: OutgoingContentItem[];
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
@@ -361,6 +371,9 @@ export class WebChannel extends Channel {
         checkpoint: this.lookupCheckpointMetadata(message.conversationId),
         ...(message.toolEventMetadata ? { toolEventMetadata: message.toolEventMetadata } : {}),
         ...(message.toolName ? { toolName: message.toolName } : {}),
+        ...(message.contentItems && message.contentItems.length > 0
+          ? { contentItems: message.contentItems }
+          : {}),
       };
       this.broadcast(message.conversationId, payload);
       return;

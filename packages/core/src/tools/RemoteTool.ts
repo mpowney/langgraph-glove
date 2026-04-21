@@ -3,7 +3,7 @@ import type { RunnableConfig } from "@langchain/core/runnables";
 import type { CallbackManagerForToolRun } from "@langchain/core/callbacks/manager";
 import { z } from "zod";
 import type { RpcClient } from "../rpc/RpcClient";
-import type { ToolMetadata } from "../rpc/RpcProtocol";
+import type { ContentUploadAuthPayload, ToolMetadata } from "../rpc/RpcProtocol";
 
 const DEFAULT_MAX_INLINE_TOOL_RESULT_BYTES = 2_000_000;
 
@@ -66,6 +66,42 @@ export interface RemoteToolConfig {
    * injected from LangGraph configurable at execution time.
    */
   requiresPrivilegedAccess?: boolean;
+  /**
+   * When true, runtime can inject short-lived upload credentials to allow
+   * this tool to push generated content back to the gateway.
+   */
+  supportsContentUpload?: boolean;
+}
+
+function readUploadAuthForTool(
+  configurable: Record<string, unknown>,
+  toolName: string,
+): ContentUploadAuthPayload | undefined {
+  const raw = configurable["contentUploadAuthByTool"];
+  if (!raw || typeof raw !== "object") return undefined;
+
+  const byTool = raw as Record<string, unknown>;
+  const candidate = byTool[toolName];
+  if (!candidate || typeof candidate !== "object") return undefined;
+
+  const payload = candidate as Record<string, unknown>;
+  if (typeof payload.token !== "string") return undefined;
+  if (typeof payload.expiresAt !== "string") return undefined;
+  if (payload.transport !== "http" && payload.transport !== "unix-socket") {
+    return undefined;
+  }
+
+  return {
+    token: payload.token,
+    expiresAt: payload.expiresAt,
+    transport: payload.transport,
+    ...(typeof payload.gatewayBaseUrl === "string"
+      ? { gatewayBaseUrl: payload.gatewayBaseUrl }
+      : {}),
+    ...(typeof payload.socketName === "string"
+      ? { socketName: payload.socketName }
+      : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +191,7 @@ export class RemoteTool extends StructuredTool {
   readonly description: string;
   readonly schema: z.ZodObject<z.ZodRawShape>;
   readonly requiresPrivilegedAccess: boolean;
+  readonly supportsContentUpload: boolean;
 
   constructor(
     private readonly rpcClient: RpcClient,
@@ -165,6 +202,7 @@ export class RemoteTool extends StructuredTool {
     this.description = config.description;
     this.schema = config.schema;
     this.requiresPrivilegedAccess = config.requiresPrivilegedAccess ?? false;
+    this.supportsContentUpload = config.supportsContentUpload ?? false;
   }
 
   protected async _call(
@@ -209,6 +247,20 @@ export class RemoteTool extends StructuredTool {
 
       if (resolvedConversationId) {
         args.conversationId = resolvedConversationId;
+      }
+    }
+
+    if (
+      this.supportsContentUpload &&
+      typeof config?.configurable === "object" &&
+      config.configurable !== null
+    ) {
+      const uploadAuth = readUploadAuthForTool(
+        config.configurable as Record<string, unknown>,
+        this.name,
+      );
+      if (uploadAuth) {
+        args.contentUploadAuth = uploadAuth;
       }
     }
 
@@ -287,6 +339,7 @@ export class RemoteTool extends StructuredTool {
           description: meta.description,
           schema: jsonSchemaToZodObject(meta.parameters),
           requiresPrivilegedAccess: meta.requiresPrivilegedAccess,
+          supportsContentUpload: meta.supportsContentUpload,
         }),
     );
   }

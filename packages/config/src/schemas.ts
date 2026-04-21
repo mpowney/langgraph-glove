@@ -359,6 +359,15 @@ export const GatewayConfigSchema = z.object({
   healthHost: z.string().optional(),
   /** Path to the SQLite database for checkpoint persistence. */
   dbPath: z.string().optional(),
+  /** Path to the dedicated SQLite database for uploaded tool content. */
+  contentDbPath: z.string().optional(),
+  /** Short-lived content upload token TTL in seconds. Defaults to 300. */
+  contentUploadTokenTtlSeconds: z.number().int().positive().optional(),
+  /**
+   * Optional externally reachable base URL for gateway API endpoints.
+   * Used when injecting upload hints into tool calls.
+   */
+  publicBaseUrl: z.string().url().optional(),
   /** Port for the AdminApi REST server. Defaults to 8081. */
   apiPort: z.number().int().positive().optional(),
   /** Host to bind the AdminApi server to. Defaults to "0.0.0.0". */

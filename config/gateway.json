@@ -2,6 +2,8 @@
   "healthPort": 9090,
   "healthHost": "0.0.0.0",
   "dbPath": "./data/checkpoints.sqlite",
+  "contentDbPath": "./data/content.sqlite",
+  "contentUploadTokenTtlSeconds": 300,
   "apiPort": 8081,
   "apiHost": "0.0.0.0",
   "auth": {

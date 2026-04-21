@@ -253,6 +253,7 @@ export function useWebSocket(
             checkpoint: msg.checkpoint,
             ...(msg.toolEventMetadata ? { toolEventMetadata: msg.toolEventMetadata } : {}),
             ...(msg.toolName ? { toolName: msg.toolName } : {}),
+            ...(msg.contentItems ? { contentItems: msg.contentItems } : {}),
           },
         ]);
       } else if (msg.type === "error") {

@@ -37,6 +37,15 @@ export interface ToolEventMetadata {
   agentKey?: string;
 }
 
+export interface ContentItem {
+  contentRef: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength?: number;
+  downloadPath?: string;
+  previewPath?: string;
+}
+
 export type ServerMessage =
   | {
       type: "chunk";
@@ -57,6 +66,8 @@ export type ServerMessage =
       toolEventMetadata?: ToolEventMetadata;
       /** Optional tool name extracted from the message for UI access. */
       toolName?: string;
+      /** Optional uploaded content references associated with the tool event. */
+      contentItems?: ContentItem[];
     }
   | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
@@ -123,6 +134,8 @@ export interface ChatEntry {
   toolEventMetadata?: ToolEventMetadata;
   /** Optional tool name extracted from the message for easy UI access. */
   toolName?: string;
+  /** Optional uploaded content references associated with this entry. */
+  contentItems?: ContentItem[];
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -144,6 +157,29 @@ export interface BrowserMessage {
   content: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
+}
+
+export interface ContentItemView {
+  contentRef: string;
+  conversationId: string;
+  toolName: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength: number;
+  createdAt: string;
+  deletedAt?: string;
+  previewUrl?: string;
+  downloadUrl?: string;
+}
+
+export interface ContentListResponse {
+  items: ContentItemView[];
+  pagination: {
+    limit: number;
+    offset: number;
+    count: number;
+    hasMore: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------

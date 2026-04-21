@@ -4,10 +4,17 @@ import { v4 as uuidv4 } from "uuid";
 import type { ChannelEntry } from "@langgraph-glove/config";
 import { z } from "zod";
 import { Channel } from "./Channel";
-import type { ChannelConfig, IncomingMessage, OutgoingMessage, MessageHandler } from "./Channel";
+import type {
+  ChannelConfig,
+  IncomingMessage,
+  OutgoingMessage,
+  MessageHandler,
+  OutgoingContentItem,
+} from "./Channel";
 
 export const BlueBubblesChannelSettingsSchema = z.object({
   serverUrl: z.string().url(),
+  adminApiUrl: z.string().url().optional(),
   password: z.string().min(1).optional(),
   webhookPort: z.number().int().positive().optional(),
   webhookHost: z.string().min(1).optional(),
@@ -40,6 +47,7 @@ export function createBlueBubblesChannelFromConfig(entry: ChannelEntry | undefin
 
   return new BlueBubblesChannel({
     serverUrl: result.data.serverUrl,
+    adminApiUrl: result.data.adminApiUrl,
     password: result.data.password,
     webhookPort: result.data.webhookPort,
     webhookHost: result.data.webhookHost,
@@ -64,6 +72,8 @@ interface BlueBubblesWebhookPayload {
 export interface BlueBubblesChannelConfig extends ChannelConfig {
   /** Base URL of the BlueBubbles server (e.g. `http://192.168.1.10:1234`). */
   serverUrl: string;
+  /** Base URL of the local gateway admin API used for internal content fetches. */
+  adminApiUrl?: string;
   /** BlueBubbles server password. */
   password?: string;
   /**
@@ -111,6 +121,7 @@ export class BlueBubblesChannel extends Channel {
   private webhookServer?: http.Server;
   private readonly serverUrl: string;
   private readonly password?: string;
+  private readonly adminApiUrl: string;
   private readonly webhookPort: number;
   private readonly webhookHost: string;
   /**
@@ -137,6 +148,7 @@ export class BlueBubblesChannel extends Channel {
     super(config);
     this.serverUrl = config.serverUrl.replace(/\/$/, "");
     this.password = config.password;
+    this.adminApiUrl = (config.adminApiUrl ?? process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081").replace(/\/$/, "");
     this.webhookPort = config.webhookPort ?? 5001;
     this.webhookHost = config.webhookHost ?? "0.0.0.0";
     this.conversationTtlMs = config.conversationTtlMs ?? 30 * 60 * 1000;
@@ -192,7 +204,6 @@ export class BlueBubblesChannel extends Channel {
    * via the reverse-lookup map before calling the API.
    */
   async sendMessage(message: OutgoingMessage): Promise<void> {
-    const url = `${this.serverUrl}/api/v1/message/text${this.password ? `?password=${encodeURIComponent(this.password)}` : ""}`;
     const plainText = this.stripMarkdown(message.text);
 
     // Translate internal thread ID → BlueBubbles chat GUID when needed.
@@ -200,6 +211,25 @@ export class BlueBubblesChannel extends Channel {
       this.conversationTtlMs === 0
         ? message.conversationId
         : (this.conversationToChatGuid.get(message.conversationId) ?? message.conversationId);
+
+    const contentItems = message.contentItems ?? [];
+    if (contentItems.length > 0) {
+      const sentWithAttachments = await this.trySendAttachments(chatGuid, plainText, contentItems);
+      if (sentWithAttachments) {
+        return;
+      }
+
+      const refs = contentItems.map((item) => item.contentRef).join(", ");
+      const fallbackText = `${plainText}\n\n[Attachments unavailable; content refs: ${refs}]`;
+      await this.sendTextMessage(chatGuid, fallbackText);
+      return;
+    }
+
+    await this.sendTextMessage(chatGuid, plainText);
+  }
+
+  private async sendTextMessage(chatGuid: string, plainText: string): Promise<void> {
+    const url = `${this.serverUrl}/api/v1/message/text${this.password ? `?password=${encodeURIComponent(this.password)}` : ""}`;
 
     const body = {
       chatGuid,
@@ -217,6 +247,94 @@ export class BlueBubblesChannel extends Channel {
       throw new Error(
         `[BlueBubblesChannel] Failed to send message: HTTP ${response.status}`,
       );
+    }
+  }
+
+  private async trySendAttachments(
+    chatGuid: string,
+    plainText: string,
+    contentItems: OutgoingContentItem[],
+  ): Promise<boolean> {
+    let first = true;
+
+    try {
+      for (const item of contentItems) {
+        const content = await this.fetchInternalContent(item.contentRef);
+        if (!content) continue;
+
+        await this.sendAttachmentMessage({
+          chatGuid,
+          message: first ? plainText : "",
+          fileName: content.fileName,
+          mimeType: content.mimeType,
+          bytes: content.bytes,
+        });
+        first = false;
+      }
+      return !first;
+    } catch (err) {
+      console.error("[BlueBubblesChannel] Attachment send failed, falling back to text:", err);
+      return false;
+    }
+  }
+
+  private async fetchInternalContent(contentRef: string): Promise<{
+    fileName: string;
+    mimeType: string;
+    bytes: Buffer;
+  } | undefined> {
+    const safeRef = encodeURIComponent(contentRef);
+    const metadataResponse = await fetch(`${this.adminApiUrl}/api/internal/content/${safeRef}`);
+    if (!metadataResponse.ok) {
+      return undefined;
+    }
+
+    const metadata = (await metadataResponse.json()) as {
+      fileName?: string;
+      mimeType?: string;
+    };
+
+    const downloadResponse = await fetch(`${this.adminApiUrl}/api/internal/content/${safeRef}/download`);
+    if (!downloadResponse.ok) {
+      return undefined;
+    }
+
+    const bytes = Buffer.from(await downloadResponse.arrayBuffer());
+    return {
+      fileName: metadata.fileName?.trim() || `${contentRef}.bin`,
+      mimeType: metadata.mimeType?.trim() || "application/octet-stream",
+      bytes,
+    };
+  }
+
+  private async sendAttachmentMessage(params: {
+    chatGuid: string;
+    message: string;
+    fileName: string;
+    mimeType: string;
+    bytes: Buffer;
+  }): Promise<void> {
+    const url = `${this.serverUrl}/api/v1/message/attachment${this.password ? `?password=${encodeURIComponent(this.password)}` : ""}`;
+
+    const formData = new FormData();
+    formData.append("chatGuid", params.chatGuid);
+    formData.append("tempGuid", uuidv4());
+    if (params.message.trim().length > 0) {
+      formData.append("message", params.message);
+    }
+    formData.append(
+      "attachment",
+      new Blob([params.bytes], { type: params.mimeType }),
+      params.fileName,
+    );
+
+    const response = await fetch(url, {
+      method: "POST",
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`[BlueBubblesChannel] Failed to send attachment: HTTP ${response.status}`);
     }
   }
 

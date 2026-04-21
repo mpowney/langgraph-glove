@@ -47,6 +47,17 @@ export { UnixSocketRpcClient } from "./rpc/UnixSocketRpcClient";
 export { HttpRpcClient } from "./rpc/HttpRpcClient";
 export type { RpcRequest, RpcResponse, ToolMetadata } from "./rpc/RpcProtocol";
 
+// Content upload + storage
+export { ContentStore } from "./content/ContentStore";
+export type { ContentStoreConfig } from "./content/ContentStore";
+export { ContentUploadTokenService } from "./content/ContentUploadTokenService";
+export type {
+  ContentUploadTokenClaims,
+  IssuedContentUploadToken,
+} from "./content/ContentUploadTokenService";
+export { GatewayContentUnixSocketServer, contentSocketPathForName } from "./content/GatewayContentUnixSocketServer";
+export type { GatewayContentUnixSocketServerConfig } from "./content/GatewayContentUnixSocketServer";
+
 // Tools
 export { RemoteTool } from "./tools/RemoteTool";
 export type { RemoteToolConfig } from "./tools/RemoteTool";

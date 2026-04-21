@@ -36,11 +36,41 @@ export interface ToolMetadata {
    */
   requiresPrivilegedAccess?: boolean;
   /**
+   * Optional execution hint: when true, runtime may inject short-lived
+   * content-upload credentials so this tool can push generated files back to
+   * the gateway content store.
+   */
+  supportsContentUpload?: boolean;
+  /**
    * JSON Schema object describing the tool's parameters.
    * Used for documentation / introspection; the Zod schema for the LangGraph
    * `RemoteTool` is defined separately by the agent developer.
    */
   parameters: Record<string, unknown>;
+}
+
+/** Reserved RPC method names for content upload flows. */
+export type ContentUploadRpcMethod =
+  | "__content_upload_init__"
+  | "__content_upload_chunk__"
+  | "__content_upload_finalize__"
+  | "__content_upload_abort__";
+
+/** Runtime-injected tool auth payload used for content upload. */
+export interface ContentUploadAuthPayload {
+  token: string;
+  expiresAt: string;
+  transport: "http" | "unix-socket";
+  /**
+   * For HTTP uploads, this is an absolute base URL to the gateway API.
+   * Example: "http://127.0.0.1:8081"
+   */
+  gatewayBaseUrl?: string;
+  /**
+   * For unix-socket uploads, this is the socket name/path exposed by the
+   * gateway content upload RPC server.
+   */
+  socketName?: string;
 }
 
 // ---------------------------------------------------------------------------

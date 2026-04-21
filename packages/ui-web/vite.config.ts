@@ -65,6 +65,18 @@ export default defineConfig({
               target: toolsTarget,
               changeOrigin: true,
             },
+            "/api/content": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+            "/api/topology": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
+            "/api/feedback": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
             "/api/internal": {
               target: toolsTarget,
               changeOrigin: true,

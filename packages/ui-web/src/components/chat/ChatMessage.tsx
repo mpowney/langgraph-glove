@@ -173,6 +173,35 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     marginBottom: tokens.spacingVerticalXS,
   },
+  contentRefsWrapper: {
+    marginTop: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalXS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  contentRefRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+    padding: `${tokens.spacingVerticalXXS} 0`,
+  },
+  contentRefLabel: {
+    fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
+    color: tokens.colorNeutralForeground2,
+  },
+  contentRefMeta: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+  },
+  contentRefLink: {
+    color: tokens.colorBrandForeground1,
+    textDecorationLine: "underline",
+    textUnderlineOffset: "2px",
+  },
+  contentRefLinksRow: {
+    display: "flex",
+    flexDirection: "row",
+    gap: tokens.spacingHorizontalS,
+  },
   modelCallAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteDarkOrangeBorder1}`,
@@ -578,6 +607,35 @@ export function ChatMessage({
           ? "payload.name"
           : "none"));
     const toolNameDebugLine = `[debug tool-result] source=${toolNameDebugSource} entry=${entry.toolName ?? "<empty>"} meta=${entry.toolEventMetadata?.tool?.name ?? "<empty>"} payload=${parsedToolName ?? "<empty>"}`;
+    const renderContentRefs = () => {
+      if (!entry.contentItems || entry.contentItems.length === 0) return null;
+      return (
+        <div className={styles.contentRefsWrapper}>
+          <Text block className={styles.toolMetaDesc}>Uploaded content</Text>
+          {entry.contentItems.map((item) => {
+            const href = item.downloadPath || `/api/content/${encodeURIComponent(item.contentRef)}/download`;
+            const previewHref = item.previewPath || `/api/content/${encodeURIComponent(item.contentRef)}/preview`;
+            return (
+              <div className={styles.contentRefRow} key={item.contentRef}>
+                <Text block className={styles.contentRefLabel}>{item.fileName || item.contentRef}</Text>
+                <Text block className={styles.contentRefMeta}>
+                  {item.mimeType || "application/octet-stream"}
+                  {typeof item.byteLength === "number" ? ` | ${item.byteLength} bytes` : ""}
+                </Text>
+                <div className={styles.contentRefLinksRow}>
+                  <a className={styles.contentRefLink} href={previewHref} target="_blank" rel="noreferrer">
+                    Preview
+                  </a>
+                  <a className={styles.contentRefLink} href={href} target="_blank" rel="noreferrer">
+                    Download
+                  </a>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
     return (
       <div className={styles.promptWrapper}>
         <div>
@@ -607,6 +665,7 @@ export function ChatMessage({
             {entry.toolEventMetadata && (
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
+            {renderContentRefs()}
           </MessageAccordion>
         </div>
       </div>

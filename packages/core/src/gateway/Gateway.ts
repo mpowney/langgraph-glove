@@ -1,4 +1,5 @@
 import { EventEmitter } from "node:events";
+import { randomUUID } from "node:crypto";
 import express from "express";
 import type { Server } from "node:http";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
@@ -36,9 +37,19 @@ import { getToolPayloadRefTool } from "../tools/ToolPayloadRefTool";
 import { AdminApi } from "../api/AdminApi";
 import { ConversationMetadataService } from "../api/ConversationMetadataService";
 import { AuthService } from "../auth/AuthService";
+import { ContentStore } from "../content/ContentStore";
+import { ContentUploadTokenService } from "../content/ContentUploadTokenService";
+import { GatewayContentUnixSocketServer } from "../content/GatewayContentUnixSocketServer";
 import type { Channel } from "../channels/Channel";
 import { WebChannel } from "../channels/WebChannel";
-import type { ToolDefinition, AgentCapabilityEntry } from "../rpc/RpcProtocol";
+import type { OutgoingContentItem } from "../channels/Channel";
+import type {
+  ToolDefinition,
+  AgentCapabilityEntry,
+  ContentUploadAuthPayload,
+  RpcRequest,
+  RpcResponse,
+} from "../rpc/RpcProtocol";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
@@ -88,6 +99,9 @@ export class Gateway extends EventEmitter {
   private healthServer: HealthServer | null = null;
   private adminApi: AdminApi | null = null;
   private authService: AuthService | null = null;
+  private contentStore: ContentStore | null = null;
+  private contentUnixSocketServer: GatewayContentUnixSocketServer | null = null;
+  private readonly contentUploadTokenService = new ContentUploadTokenService();
   private conversationMetadataService: ConversationMetadataService | null = null;
   private readonly titleGenerationInFlight = new Set<string>();
   private shutdownHandlers: (() => void)[] = [];
@@ -147,6 +161,19 @@ export class Gateway extends EventEmitter {
       this.conversationMetadataService.ensureSchema();
       logger.info(`SQLite persistence: ${dbPath}`);
 
+      const contentDbPath = this.config.gateway.contentDbPath ?? "data/content.sqlite";
+      this.contentStore = new ContentStore({ dbPath: contentDbPath });
+      this.contentStore.ensureSchema();
+      logger.info(`SQLite content store: ${contentDbPath}`);
+
+      const contentSocketName = process.env["GLOVE_GATEWAY_CONTENT_UPLOAD_SOCKET"] ?? "gateway_content_upload";
+      this.contentUnixSocketServer = new GatewayContentUnixSocketServer({
+        socketName: contentSocketName,
+        handler: async (request) => this.handleContentRpcRequest(request),
+      });
+      await this.contentUnixSocketServer.start();
+      logger.info(`Gateway content unix-socket RPC: ${contentSocketName}`);
+
       // 5. Auth bootstrap
       this.authService = new AuthService({
         dbPath,
@@ -180,6 +207,7 @@ export class Gateway extends EventEmitter {
       this.agent = new GloveAgent(graph, {
         recursionLimit: orchestratorEntry.recursionLimit,
         toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
+        getContentUploadAuthByTool: (conversationId) => this.buildContentUploadAuthByTool(conversationId),
         authService: this.authService ?? undefined,
         graphInfo: {
           graphKey: "default",
@@ -277,6 +305,44 @@ export class Gateway extends EventEmitter {
               );
           }
         },
+        handleContentRpc: async (request) => this.handleContentRpcRequest(request),
+        listContent: ({ conversationId, toolName, includeDeleted, limit, offset }) => {
+          const rows = this.contentStore?.listContentMetadata({
+            conversationId,
+            toolName,
+            includeDeleted,
+            limit,
+            offset,
+          }) ?? [];
+          return rows.map((item) => ({
+            contentRef: item.contentRef,
+            conversationId: item.conversationId,
+            toolName: item.toolName,
+            fileName: item.fileName,
+            mimeType: item.mimeType,
+            byteLength: item.byteLength,
+            createdAt: item.createdAt,
+            deletedAt: item.deletedAt,
+          }));
+        },
+        getContentByRef: (contentRef) => {
+          const item = this.contentStore?.getContentMetadata(contentRef);
+          if (!item) return undefined;
+          return {
+            contentRef: item.contentRef,
+            conversationId: item.conversationId,
+            toolName: item.toolName,
+            fileName: item.fileName,
+            mimeType: item.mimeType,
+            byteLength: item.byteLength,
+            createdAt: item.createdAt,
+            deletedAt: item.deletedAt,
+          };
+        },
+        getContentBytesByRef: (contentRef) => this.contentStore?.getContentBytes(contentRef),
+        deleteContentByRef: (contentRef) => {
+          this.contentStore?.deleteContent(contentRef);
+        },
       });
       await this.adminApi.listen();
       logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
@@ -317,6 +383,16 @@ export class Gateway extends EventEmitter {
     if (this.authService) {
       this.authService.close();
       this.authService = null;
+    }
+
+    if (this.contentUnixSocketServer) {
+      await this.contentUnixSocketServer.stop();
+      this.contentUnixSocketServer = null;
+    }
+
+    if (this.contentStore) {
+      this.contentStore.close();
+      this.contentStore = null;
     }
 
     // Stop agent + channels
@@ -560,6 +636,7 @@ export class Gateway extends EventEmitter {
       text: string,
       toolEventMetadata?: ToolEventMetadata,
       toolName?: string,
+      contentItems?: OutgoingContentItem[],
     ): void => {
       if (!observabilityEnabled) return;
       const resolvedToolName = (() => {
@@ -578,12 +655,15 @@ export class Gateway extends EventEmitter {
             role,
             ...(resolvedToolName ? { toolName: resolvedToolName } : {}),
             ...(toolEventMetadata ? { toolEventMetadata } : {}),
+            ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
           })
           .catch((err: unknown) =>
             logger.error(`Failed to send observability message to channel "${channel.name}"`, err),
           );
       }
     };
+
+    const contentUploadAuthByTool = this.buildContentUploadAuthByTool(params.conversationId);
 
     if (observabilityEnabled) {
       sendObservability(
@@ -694,7 +774,14 @@ export class Gateway extends EventEmitter {
               ? { tool: toolDef }
               : undefined;
             const content = typeof output === "string" ? output : safeStringify(output);
-            sendObservability("tool-result", JSON.stringify({ name: toolName, content }), meta, toolName);
+            const contentItems = this.resolveContentItemsFromToolOutput(content);
+            sendObservability(
+              "tool-result",
+              JSON.stringify({ name: toolName, content }),
+              meta,
+              toolName,
+              contentItems,
+            );
           },
           handleToolError: (_error, runId): void => {
             toolRunNameByRunId.delete(String(runId));
@@ -726,6 +813,9 @@ export class Gateway extends EventEmitter {
             taskId: params.observability?.taskId,
             scheduleType: params.observability?.scheduleType,
           },
+          ...(Object.keys(contentUploadAuthByTool).length > 0
+            ? { contentUploadAuthByTool }
+            : {}),
           ...(defaultOrchestratorEntry.maxInlineToolResultBytes !== undefined
             ? { maxInlineToolResultBytes: defaultOrchestratorEntry.maxInlineToolResultBytes }
             : {}),
@@ -759,6 +849,9 @@ export class Gateway extends EventEmitter {
           thread_id: params.conversationId,
           conversationId: params.conversationId,
           ...(params.personalToken ? { personalToken: params.personalToken } : {}),
+          ...(Object.keys(contentUploadAuthByTool).length > 0
+            ? { contentUploadAuthByTool }
+            : {}),
           ...(orchestratorEntry.maxInlineToolResultBytes !== undefined
             ? { maxInlineToolResultBytes: orchestratorEntry.maxInlineToolResultBytes }
             : {}),
@@ -1079,6 +1172,222 @@ export class Gateway extends EventEmitter {
     }));
   }
 
+  private resolveContentItemsFromToolOutput(content: string): OutgoingContentItem[] | undefined {
+    const refs = extractContentRefs(content);
+    if (refs.length === 0) return undefined;
+    if (!this.contentStore) return undefined;
+
+    const items: OutgoingContentItem[] = [];
+    for (const contentRef of refs) {
+      const meta = this.contentStore.getContentMetadata(contentRef);
+      if (!meta) continue;
+      items.push({
+        contentRef,
+        fileName: meta.fileName,
+        mimeType: meta.mimeType,
+        byteLength: meta.byteLength,
+        downloadPath: `/api/content/${encodeURIComponent(contentRef)}/download`,
+        previewPath: `/api/content/${encodeURIComponent(contentRef)}/preview`,
+      });
+    }
+
+    return items.length > 0 ? items : undefined;
+  }
+
+  private async handleContentRpcRequest(request: RpcRequest): Promise<RpcResponse> {
+    if (!this.contentStore) {
+      return { id: request.id, error: "Content store is not initialized" };
+    }
+
+    const params = request.params ?? {};
+    const readString = (key: string): string | undefined =>
+      typeof params[key] === "string" ? (params[key] as string) : undefined;
+    const readNumber = (key: string): number | undefined => {
+      const value = params[key];
+      return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+    };
+
+    const token = readString("token");
+    if (!token) {
+      return { id: request.id, error: "Missing content upload token" };
+    }
+
+    const claims = this.contentUploadTokenService.validate(token);
+    if (!claims) {
+      return { id: request.id, error: "Invalid or expired content upload token" };
+    }
+
+    try {
+      switch (request.method) {
+        case "__content_upload_init__": {
+          const expectedBytes = readNumber("expectedBytes");
+          const uploadId = randomUUID();
+          const contentRef = `content_${randomUUID()}`;
+
+          this.contentStore.createUploadSession({
+            uploadId,
+            contentRef,
+            conversationId: claims.conversationId,
+            toolName: claims.toolName,
+            fileName: readString("fileName"),
+            mimeType: readString("mimeType"),
+            expectedBytes,
+            systemPromptText: readString("systemPromptText"),
+            systemPromptHash: readString("systemPromptHash"),
+            expiresAt: claims.expiresAt,
+          });
+
+          return {
+            id: request.id,
+            result: {
+              uploadId,
+              contentRef,
+              expiresAt: claims.expiresAt,
+            },
+          };
+        }
+        case "__content_upload_chunk__": {
+          const uploadId = readString("uploadId");
+          const chunkIndex = readNumber("chunkIndex");
+          const dataBase64 = readString("dataBase64");
+          if (!uploadId || chunkIndex === undefined || !dataBase64) {
+            return {
+              id: request.id,
+              error: "uploadId, chunkIndex, and dataBase64 are required",
+            };
+          }
+
+          const session = this.contentStore.getUploadSession(uploadId);
+          if (!session) {
+            return { id: request.id, error: "Unknown upload session" };
+          }
+          if (session.conversationId !== claims.conversationId || session.toolName !== claims.toolName) {
+            return { id: request.id, error: "Upload session does not match token scope" };
+          }
+
+          const chunkBuffer = Buffer.from(dataBase64, "base64");
+          const receivedBytes = this.contentStore.appendUploadChunk(uploadId, chunkIndex, chunkBuffer);
+          return {
+            id: request.id,
+            result: {
+              uploadId,
+              receivedBytes,
+            },
+          };
+        }
+        case "__content_upload_finalize__": {
+          const uploadId = readString("uploadId");
+          if (!uploadId) {
+            return { id: request.id, error: "uploadId is required" };
+          }
+
+          const session = this.contentStore.getUploadSession(uploadId);
+          if (!session) {
+            return { id: request.id, error: "Unknown upload session" };
+          }
+          if (session.conversationId !== claims.conversationId || session.toolName !== claims.toolName) {
+            return { id: request.id, error: "Upload session does not match token scope" };
+          }
+
+          const metadata = this.contentStore.finalizeUploadSession(uploadId, readString("sha256"));
+          return {
+            id: request.id,
+            result: {
+              uploadId,
+              contentRef: metadata.contentRef,
+              byteLength: metadata.byteLength,
+              mimeType: metadata.mimeType,
+              fileName: metadata.fileName,
+            },
+          };
+        }
+        case "__content_upload_abort__": {
+          const uploadId = readString("uploadId");
+          if (!uploadId) {
+            return { id: request.id, error: "uploadId is required" };
+          }
+
+          const session = this.contentStore.getUploadSession(uploadId);
+          if (!session) {
+            return { id: request.id, error: "Unknown upload session" };
+          }
+          if (session.conversationId !== claims.conversationId || session.toolName !== claims.toolName) {
+            return { id: request.id, error: "Upload session does not match token scope" };
+          }
+
+          this.contentStore.abortUploadSession(uploadId);
+          return {
+            id: request.id,
+            result: { uploadId, aborted: true },
+          };
+        }
+        default:
+          return { id: request.id, error: `Unknown internal content RPC method: ${request.method}` };
+      }
+    } catch (err) {
+      return {
+        id: request.id,
+        error: err instanceof Error ? err.message : String(err),
+      };
+    }
+  }
+
+  private resolveGatewayPublicBaseUrl(): string {
+    const configured = this.config?.gateway.publicBaseUrl?.trim();
+    if (configured) return configured.replace(/\/$/, "");
+
+    const host = this.config?.gateway.apiHost ?? "127.0.0.1";
+    const safeHost = host === "0.0.0.0" ? "127.0.0.1" : host;
+    const port = this.config?.gateway.apiPort ?? 8081;
+    return `http://${safeHost}:${port}`;
+  }
+
+  private resolveToolServerEntryForTool(toolName: string): ToolServerEntry | undefined {
+    if (!this.config) return undefined;
+
+    for (const [serverKey, toolNames] of Object.entries(this.discoveredToolNamesByServer)) {
+      if (!toolNames.includes(toolName)) continue;
+      const entry = this.config.tools[serverKey] as ToolServerEntry | undefined;
+      if (entry && entry.enabled !== false) {
+        return entry;
+      }
+    }
+
+    return undefined;
+  }
+
+  private buildContentUploadAuthByTool(conversationId: string): Record<string, ContentUploadAuthPayload> {
+    const authByTool: Record<string, ContentUploadAuthPayload> = {};
+    const ttlSeconds = this.config?.gateway.contentUploadTokenTtlSeconds ?? 300;
+    const gatewayBaseUrl = this.resolveGatewayPublicBaseUrl();
+
+    for (const tool of this.toolRegistry) {
+      if (!tool.supportsContentUpload) continue;
+
+      const serverEntry = this.resolveToolServerEntryForTool(tool.name);
+      if (!serverEntry) continue;
+
+      const issued = this.contentUploadTokenService.issue(
+        {
+          conversationId,
+          toolName: tool.name,
+        },
+        ttlSeconds,
+      );
+
+      authByTool[tool.name] = {
+        token: issued.token,
+        expiresAt: issued.expiresAt,
+        transport: serverEntry.transport,
+        ...(serverEntry.transport === "http"
+          ? { gatewayBaseUrl }
+          : { socketName: process.env["GLOVE_GATEWAY_CONTENT_UPLOAD_SOCKET"] ?? "gateway_content_upload" }),
+      };
+    }
+
+    return authByTool;
+  }
+
   /**
    * Log a startup summary of configured tools that were not discovered.
    *
@@ -1170,6 +1479,49 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value);
   }
+}
+
+function extractContentRefs(value: unknown): string[] {
+  const refs = new Set<string>();
+
+  const collect = (input: unknown): void => {
+    if (!input) return;
+
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (/^content_[a-f0-9-]+$/i.test(trimmed)) {
+        refs.add(trimmed);
+      }
+      const parsed = parseJsonMaybe(trimmed);
+      if (parsed !== input) {
+        collect(parsed);
+      }
+      return;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) collect(item);
+      return;
+    }
+
+    if (typeof input === "object") {
+      const record = input as Record<string, unknown>;
+      if (typeof record["contentRef"] === "string") {
+        refs.add(record["contentRef"] as string);
+      }
+      if (Array.isArray(record["contentRefs"])) {
+        for (const ref of record["contentRefs"] as unknown[]) {
+          if (typeof ref === "string") refs.add(ref);
+        }
+      }
+      for (const nested of Object.values(record)) {
+        collect(nested);
+      }
+    }
+  };
+
+  collect(value);
+  return [...refs];
 }
 
 function normalizeConversationTitle(value: string): string | undefined {

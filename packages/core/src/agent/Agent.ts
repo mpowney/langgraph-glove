@@ -322,6 +322,11 @@ export interface AgentConfig {
    */
   authService?: PrivilegeGrantChecker;
   /**
+   * Optional provider for runtime content upload auth payloads keyed by tool
+   * name. Called per turn so short-lived upload tokens stay fresh.
+   */
+  getContentUploadAuthByTool?: (conversationId: string) => Record<string, unknown>;
+  /**
   * Optional static graph metadata emitted to `receiveAgentProcessing` channels when a
    * message is dispatched, so observers can see which graph processed it.
    */
@@ -1011,6 +1016,14 @@ export class GloveAgent {
       sourceChannel: sourceChannel.name,
       sourceConversationId: message.conversationId,
       sourceMetadata: safeSourceMetadata,
+      ...(typeof this.config.getContentUploadAuthByTool === "function"
+        ? (() => {
+            const byTool = this.config.getContentUploadAuthByTool(message.conversationId);
+            return byTool && Object.keys(byTool).length > 0
+              ? { contentUploadAuthByTool: byTool }
+              : {};
+          })()
+        : {}),
     };
 
     const emitTurnComplete = (assistantText: string): void => {
