@@ -18,7 +18,6 @@ import {
 import { SandboxArtifactPreviewDialog } from "./SandboxArtifactPreviewDialog";
 import {
   getSandboxFilename,
-  isImageArtifactFileName,
   isSafeHref,
   isSandboxArtifactHref,
 } from "./sandboxArtifactLink";
@@ -94,7 +93,6 @@ export function LinkPill({ href, children }: LinkPillProps) {
   const [artifactDialogOpen, setArtifactDialogOpen] = useState(false);
   const isSandboxArtifact = isSandboxArtifactHref(href);
   const fileName = useMemo(() => getSandboxFilename(href), [href]);
-  const isImageArtifact = useMemo(() => isImageArtifactFileName(fileName), [fileName]);
 
   if (!isSafeHref(href) && !isSandboxArtifact) {
     // Render as plain text for non-http(s) hrefs to prevent XSS
@@ -173,9 +171,7 @@ export function LinkPill({ href, children }: LinkPillProps) {
           open={artifactDialogOpen}
           href={href}
           fileName={fileName}
-          isImageArtifact={isImageArtifact}
           onClose={() => setArtifactDialogOpen(false)}
-          onCopyLink={copyLink}
         />
       )}
     </>

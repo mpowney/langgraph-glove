@@ -8,6 +8,7 @@ import {
   DialogActions,
   Button,
   Text,
+  Spinner,
   makeStyles,
   tokens,
 } from "@fluentui/react-components";
@@ -26,10 +27,32 @@ const useStyles = makeStyles({
   },
   previewImage: {
     maxWidth: "100%",
-    maxHeight: "65vh",
+    maxHeight: "60dvh",
     objectFit: "contain",
     borderRadius: tokens.borderRadiusMedium,
-    border: `1px solid ${tokens.colorNeutralStroke2}`,
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  previewFrame: {
+    width: "100%",
+    minHeight: "360px",
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground1,
+  },
+  previewText: {
+    margin: 0,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+    fontFamily: tokens.fontFamilyMonospace,
+    fontSize: tokens.fontSizeBase200,
+    color: tokens.colorNeutralForeground1,
+    border: `1px solid ${tokens.colorNeutralStroke1}`,
+    borderRadius: tokens.borderRadiusSmall,
+    backgroundColor: tokens.colorNeutralBackground1,
+    padding: tokens.spacingVerticalS,
+    maxHeight: "60dvh",
+    overflowY: "auto",
   },
   previewHint: {
     color: tokens.colorNeutralForeground3,
@@ -48,6 +71,7 @@ const CONVERSATION_ID_STORAGE_KEY = "glove_conversation_id";
 interface ContentListItem {
   contentRef: string;
   fileName?: string;
+  mimeType?: string;
   deletedAt?: string;
   previewUrl?: string;
 }
@@ -60,22 +84,22 @@ interface SandboxArtifactPreviewDialogProps {
   open: boolean;
   href: string;
   fileName: string;
-  isImageArtifact: boolean;
   onClose: () => void;
-  onCopyLink: () => void;
 }
 
 export function SandboxArtifactPreviewDialog({
   open,
   href,
   fileName,
-  isImageArtifact,
   onClose,
-  onCopyLink,
 }: SandboxArtifactPreviewDialogProps) {
   const styles = useStyles();
+  const [resolvedDownloadUrl, setResolvedDownloadUrl] = useState<string | null>(null);
   const [resolvedPreviewUrl, setResolvedPreviewUrl] = useState<string | null>(null);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
+  const [previewText, setPreviewText] = useState<string | null>(null);
+  const [previewMimeType, setPreviewMimeType] = useState<string | null>(null);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [isResolving, setIsResolving] = useState(false);
   const [resolveError, setResolveError] = useState<string | null>(null);
 
@@ -88,8 +112,12 @@ export function SandboxArtifactPreviewDialog({
   useEffect(() => {
     if (open) return;
     setResolvedPreviewUrl(null);
+    setResolvedDownloadUrl(null);
     setResolveError(null);
     setIsResolving(false);
+    setIsDownloading(false);
+    setPreviewText(null);
+    setPreviewMimeType(null);
     setPreviewObjectUrl((prev) => {
       if (prev) URL.revokeObjectURL(prev);
       return null;
@@ -105,7 +133,7 @@ export function SandboxArtifactPreviewDialog({
   }, [previewObjectUrl]);
 
   useEffect(() => {
-    if (!open || !isImageArtifact) return;
+    if (!open) return;
 
     const conversationId = localStorage.getItem(CONVERSATION_ID_STORAGE_KEY)?.trim() ?? "";
     const normalizedFileName = fileName.trim().toLowerCase();
@@ -137,6 +165,9 @@ export function SandboxArtifactPreviewDialog({
       setIsResolving(true);
       setResolveError(null);
       setResolvedPreviewUrl(null);
+      setResolvedDownloadUrl(null);
+      setPreviewText(null);
+      setPreviewMimeType(null);
       setPreviewObjectUrl((prev) => {
         if (prev) URL.revokeObjectURL(prev);
         return null;
@@ -163,6 +194,7 @@ export function SandboxArtifactPreviewDialog({
         }
 
         const previewUrl = match.previewUrl || `/api/content/${encodeURIComponent(match.contentRef)}/preview`;
+        const downloadUrl = `/api/content/${encodeURIComponent(match.contentRef)}/download`;
         const previewResponse = await fetch(previewUrl, {
           headers: authHeaders,
         });
@@ -178,12 +210,34 @@ export function SandboxArtifactPreviewDialog({
           }
           throw new Error(detail);
         }
+
+        const mimeType = (previewResponse.headers.get("content-type") || match.mimeType || "")
+          .split(";")[0]
+          .trim()
+          .toLowerCase();
+        if (active) {
+          setPreviewMimeType(mimeType || null);
+        }
+
+        if (
+          mimeType.startsWith("text/")
+          || mimeType === "application/json"
+          || mimeType.endsWith("+json")
+        ) {
+          const bodyText = await previewResponse.text();
+          if (!active) return;
+          setResolvedPreviewUrl(previewUrl);
+          setPreviewText(bodyText);
+          return;
+        }
+
         const previewBlob = await previewResponse.blob();
 
         if (!active) return;
 
         const objectUrl = URL.createObjectURL(previewBlob);
         setResolvedPreviewUrl(previewUrl);
+        setResolvedDownloadUrl(downloadUrl);
         setPreviewObjectUrl((prev) => {
           if (prev) URL.revokeObjectURL(prev);
           return objectUrl;
@@ -203,7 +257,42 @@ export function SandboxArtifactPreviewDialog({
     return () => {
       active = false;
     };
-  }, [open, fileName, isImageArtifact, authHeaders]);
+  }, [open, fileName, authHeaders]);
+
+  const handleDownload = async () => {
+    if (!resolvedDownloadUrl || isDownloading) return;
+    setIsDownloading(true);
+    try {
+      const response = await fetch(resolvedDownloadUrl, { headers: authHeaders });
+      if (!response.ok) {
+        let detail = `HTTP ${response.status}`;
+        try {
+          const payload = (await response.json()) as { error?: string };
+          if (payload.error) {
+            detail = payload.error;
+          }
+        } catch {
+          // Keep generic status when no JSON error payload is available.
+        }
+        throw new Error(detail);
+      }
+
+      const blob = await response.blob();
+      const tempUrl = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = tempUrl;
+      a.download = fileName;
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(tempUrl);
+    } catch (err) {
+      setResolveError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsDownloading(false);
+    }
+  };
 
   return (
     <Dialog
@@ -219,19 +308,25 @@ export function SandboxArtifactPreviewDialog({
           <DialogTitle>{fileName}</DialogTitle>
           <DialogContent>
             <div className={styles.previewContainer}>
-              {isImageArtifact ? (
-                isResolving ? (
-                  <Text className={styles.previewHint}>Resolving preview...</Text>
-                ) : previewObjectUrl ? (
-                  <img src={previewObjectUrl} alt={fileName} className={styles.previewImage} />
-                ) : (
-                  <Text className={styles.errorText}>
-                    {resolveError || "Preview could not be resolved."}
-                  </Text>
-                )
+              {isResolving ? (
+                <Spinner label="Loading preview..." />
+              ) : resolveError ? (
+                <Text className={styles.errorText}>
+                  {resolveError || "Preview could not be resolved."}
+                </Text>
+              ) : previewText !== null ? (
+                <pre className={styles.previewText}>{previewText || "(empty)"}</pre>
+              ) : previewObjectUrl && previewMimeType?.startsWith("image/") ? (
+                <img src={previewObjectUrl} alt={fileName} className={styles.previewImage} />
+              ) : previewObjectUrl ? (
+                <iframe
+                  src={previewObjectUrl}
+                  className={styles.previewFrame}
+                  title={`Preview ${fileName}`}
+                />
               ) : (
                 <Text className={styles.previewHint}>
-                  Preview is not available for this file type in the inline dialog.
+                  Preview is not available for this file.
                 </Text>
               )}
               <Text className={styles.previewHint}>{href}</Text>
@@ -241,7 +336,13 @@ export function SandboxArtifactPreviewDialog({
             </div>
           </DialogContent>
           <DialogActions>
-            <Button appearance="secondary" onClick={onCopyLink}>Copy link</Button>
+            <Button
+              appearance="secondary"
+              onClick={() => { void handleDownload(); }}
+              disabled={Boolean(resolveError) || isResolving || !resolvedDownloadUrl || isDownloading}
+            >
+              {isDownloading ? "Downloading..." : "Download"}
+            </Button>
             <Button appearance="primary" onClick={onClose}>Close</Button>
           </DialogActions>
         </DialogBody>
