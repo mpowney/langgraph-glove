@@ -14,6 +14,7 @@ struct SettingsView: View {
     @State private var editSocketName: String    = "macos-control"
     @State private var editPeekabooEnabled: Bool = false
     @State private var editPeekabooBaseCommand: String = "npx -y @steipete/peekaboo"
+    @State private var editPeekabooContentUploadToolNames: String = "image,see,clipboard"
     @State private var applyPending: Bool        = false
 
     var body: some View {
@@ -88,7 +89,19 @@ struct SettingsView: View {
                         .frame(width: 260)
                 }
 
+                HStack {
+                    Text("Upload-Capable Tools")
+                    Spacer()
+                    TextField("image,see,clipboard", text: $editPeekabooContentUploadToolNames)
+                        .multilineTextAlignment(.trailing)
+                        .frame(width: 260)
+                }
+
                 Text("When enabled, tool-macos-control starts '\(editPeekabooBaseCommand) mcp', discovers available MCP tools, and forwards calls with a peekaboo_ prefix.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("Comma-separated upstream Peekaboo tool names to advertise with supportsContentUpload (for example: image,see,clipboard).")
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
@@ -181,6 +194,7 @@ struct SettingsView: View {
             && editSocketName == appState.socketName
             && editPeekabooEnabled == appState.peekabooEnabled
             && editPeekabooBaseCommand == appState.peekabooBaseCommand
+            && editPeekabooContentUploadToolNames == appState.peekabooContentUploadToolNames
     }
 
     private var peekabooStatusText: String {
@@ -222,6 +236,7 @@ struct SettingsView: View {
         editSocketName = appState.socketName
         editPeekabooEnabled = appState.peekabooEnabled
         editPeekabooBaseCommand = appState.peekabooBaseCommand
+        editPeekabooContentUploadToolNames = appState.peekabooContentUploadToolNames
     }
 
     private func apply() {
@@ -235,6 +250,7 @@ struct SettingsView: View {
         appState.socketName = editSocketName
         appState.peekabooEnabled = editPeekabooEnabled
         appState.peekabooBaseCommand = editPeekabooBaseCommand
+        appState.peekabooContentUploadToolNames = editPeekabooContentUploadToolNames
         appState.saveSettings()
         appState.restartServer()
         // Brief visual feedback before re-enabling the button.

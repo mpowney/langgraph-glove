@@ -83,6 +83,27 @@ export function useContentBrowser(apiBaseUrl = "") {
     setDetailsError(null);
   }, []);
 
+  const deleteContent = useCallback(async (contentRef: string, authToken?: string) => {
+    const ref = contentRef.trim();
+    if (!ref) throw new Error("contentRef is required");
+
+    const res = await fetch(`${apiBaseUrl}/api/content/${encodeURIComponent(ref)}`, {
+      method: "DELETE",
+      headers: authHeaders(authToken),
+    });
+
+    if (!res.ok) {
+      let errorMessage = `HTTP ${res.status}`;
+      try {
+        const payload = (await res.json()) as { error?: string };
+        if (payload.error) errorMessage = payload.error;
+      } catch {
+        // Ignore JSON parsing errors for non-JSON responses.
+      }
+      throw new Error(errorMessage);
+    }
+  }, [apiBaseUrl]);
+
   return {
     items,
     selectedContentRef,
@@ -93,6 +114,7 @@ export function useContentBrowser(apiBaseUrl = "") {
     detailsError,
     loadList,
     loadContent,
+    deleteContent,
     clearSelection,
   };
 }

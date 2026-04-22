@@ -363,6 +363,8 @@ export const GatewayConfigSchema = z.object({
   contentDbPath: z.string().optional(),
   /** Short-lived content upload token TTL in seconds. Defaults to 300. */
   contentUploadTokenTtlSeconds: z.number().int().positive().optional(),
+  /** Hard-delete content rows/chunks once deleted_at is older than this many days. */
+  deletedContentRetentionDays: z.number().int().positive().optional(),
   /**
    * Optional externally reachable base URL for gateway API endpoints.
    * Used when injecting upload hints into tool calls.

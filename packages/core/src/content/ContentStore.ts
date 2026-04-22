@@ -413,6 +413,25 @@ export class ContentStore {
       .run(contentRef);
   }
 
+  purgeDeletedContentOlderThanDays(retentionDays: number): number {
+    if (!Number.isFinite(retentionDays) || retentionDays <= 0) {
+      return 0;
+    }
+
+    const sqliteModifier = `-${Math.trunc(retentionDays)} days`;
+    const result = this.db
+      .prepare(
+        `
+          DELETE FROM content_items
+          WHERE deleted_at IS NOT NULL
+            AND deleted_at <= (strftime('%Y-%m-%dT%H:%M:%fZ', 'now', ?))
+        `,
+      )
+      .run(sqliteModifier);
+
+    return result.changes;
+  }
+
   listContentMetadata(options: ListContentMetadataOptions = {}): ContentMetadata[] {
     const clauses: string[] = [];
     const params: unknown[] = [];

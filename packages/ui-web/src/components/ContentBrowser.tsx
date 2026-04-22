@@ -12,6 +12,13 @@ import {
   DrawerHeaderTitle,
   DrawerBody,
   Input,
+  MessageBar,
+  Dialog,
+  DialogSurface,
+  DialogBody as FluentDialogBody,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
 } from "@fluentui/react-components";
 import { Dismiss24Regular, ArrowLeft24Regular, ArrowClockwise24Regular } from "@fluentui/react-icons";
 import { useContentBrowser } from "../hooks/useContentBrowser";
@@ -49,6 +56,17 @@ const useStyles = makeStyles({
     ":hover": {
       backgroundColor: tokens.colorNeutralBackground1Hover,
     },
+  },
+  listHeader: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: tokens.spacingHorizontalS,
+  },
+  listActions: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalS,
   },
   listPrimary: {
     fontSize: tokens.fontSizeBase300,
@@ -190,11 +208,17 @@ export function ContentBrowser({
     detailsError,
     loadList,
     loadContent,
+    deleteContent,
     clearSelection,
   } = useContentBrowser(apiBaseUrl);
   const [refInput, setRefInput] = useState("");
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [pendingDeleteRef, setPendingDeleteRef] = useState<string | null>(null);
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [previewText, setPreviewText] = useState<string | null>(null);
   const [previewMimeType, setPreviewMimeType] = useState<string | null>(null);
@@ -231,6 +255,49 @@ export function ContentBrowser({
       URL.revokeObjectURL(previewObjectUrl);
     }
     setPreviewObjectUrl(null);
+  };
+
+  const clearActionMessages = () => {
+    setActionError(null);
+    setActionSuccess(null);
+  };
+
+  const openDeleteDialog = (contentRef: string) => {
+    if (deleting) return;
+    clearActionMessages();
+    setPendingDeleteRef(contentRef);
+    setDeleteDialogOpen(true);
+  };
+
+  const closeDeleteDialog = () => {
+    if (deleting) return;
+    setDeleteDialogOpen(false);
+    setPendingDeleteRef(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!pendingDeleteRef || deleting) return;
+
+    setDeleting(true);
+    clearActionMessages();
+
+    try {
+      await deleteContent(pendingDeleteRef, authToken);
+      clearPreview();
+      await Promise.all([
+        loadList({ authToken }),
+        ...(selectedContentRef === pendingDeleteRef || selectedItem?.contentRef === pendingDeleteRef
+          ? [loadContent(pendingDeleteRef, authToken)]
+          : []),
+      ]);
+      setActionSuccess("Content deleted.");
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+      setPendingDeleteRef(null);
+    }
   };
 
   const loadPreviewInline = async () => {
@@ -284,6 +351,7 @@ export function ContentBrowser({
 
   useEffect(() => {
     if (!open) return;
+    clearActionMessages();
     void loadList({ authToken });
     if (initialContentRef?.trim()) {
       void loadContent(initialContentRef, authToken);
@@ -396,6 +464,7 @@ export function ContentBrowser({
                   <div
                     className={styles.listItem}
                     onClick={() => {
+                      clearActionMessages();
                       clearPreview();
                       void loadContent(item.contentRef, authToken);
                       onSelectContentRef?.(item.contentRef);
@@ -404,12 +473,28 @@ export function ContentBrowser({
                     tabIndex={0}
                     onKeyDown={(e) => {
                       if (e.key !== "Enter") return;
+                      clearActionMessages();
                       clearPreview();
                       void loadContent(item.contentRef, authToken);
                       onSelectContentRef?.(item.contentRef);
                     }}
                   >
-                    <Text className={styles.listPrimary}>{item.fileName || item.contentRef}</Text>
+                    <div className={styles.listHeader}>
+                      <Text className={styles.listPrimary}>{item.fileName || item.contentRef}</Text>
+                      <div className={styles.listActions}>
+                        <Button
+                          size="small"
+                          appearance="subtle"
+                          disabled={Boolean(item.deletedAt) || deleting}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openDeleteDialog(item.contentRef);
+                          }}
+                        >
+                          Delete
+                        </Button>
+                      </div>
+                    </div>
                     <Text className={styles.listSecondary}>{item.contentRef}</Text>
                     <div className={styles.listMeta}>
                       <Badge appearance="tint" color="informative" size="small">
@@ -434,6 +519,16 @@ export function ContentBrowser({
               {detailsState === "error" && <Text className={styles.errorText}>{detailsError}</Text>}
               {detailsState === "idle" && selectedItem && (
                 <div className={styles.detailWrap}>
+                  {actionSuccess && (
+                    <MessageBar intent="success">
+                      {actionSuccess}
+                    </MessageBar>
+                  )}
+                  {actionError && (
+                    <MessageBar intent="error">
+                      {actionError}
+                    </MessageBar>
+                  )}
                   <Text className={styles.detailRef}>{selectedItem.contentRef}</Text>
                   <div className={styles.detailGrid}>
                     <Text className={styles.detailLabel}>File name</Text>
@@ -474,6 +569,16 @@ export function ContentBrowser({
                     >
                       Copy direct link
                     </Button>
+                    <Button
+                      appearance="secondary"
+                      disabled={Boolean(selectedItem.deletedAt) || deleting}
+                      onClick={() => {
+                        if (!selectedItem) return;
+                        openDeleteDialog(selectedItem.contentRef);
+                      }}
+                    >
+                      {deleting ? "Deleting…" : "Delete"}
+                    </Button>
                   </div>
 
                   {(previewLoading || previewError || previewText !== null || previewObjectUrl) && (
@@ -508,6 +613,24 @@ export function ContentBrowser({
           )}
         </div>
       </DrawerBody>
+      <Dialog open={deleteDialogOpen} onOpenChange={(_, data) => { if (!data.open) closeDeleteDialog(); }}>
+        <DialogSurface>
+          <FluentDialogBody>
+            <DialogTitle>Delete content</DialogTitle>
+            <DialogContent>
+              Delete content <Text className={styles.detailRef}>{pendingDeleteRef ?? ""}</Text>? This marks it as deleted and hides downloads and previews.
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={closeDeleteDialog} disabled={deleting}>
+                Cancel
+              </Button>
+              <Button appearance="primary" onClick={() => { void confirmDelete(); }} disabled={deleting}>
+                {deleting ? "Deleting…" : "Delete"}
+              </Button>
+            </DialogActions>
+          </FluentDialogBody>
+        </DialogSurface>
+      </Dialog>
     </OverlayDrawer>
   );
 }

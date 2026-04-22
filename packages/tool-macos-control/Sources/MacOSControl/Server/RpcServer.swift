@@ -14,15 +14,23 @@ final class RpcServer {
     private let requestTimeoutMs: UInt64
     private var peekabooMcpBridge: PeekabooMcpBridge?
     private var peekabooBaseCommand: String?
+    private let peekabooContentUploadToolNames: Set<String>
 
     /// Called on the server's internal queue each time a JSON-RPC request is handled.
     var onRequestHandled: (() -> Void)?
 
-    init(port: UInt16, registry: ToolRegistry, peekabooMcpBridge: PeekabooMcpBridge? = nil, peekabooBaseCommand: String? = nil) {
+    init(
+        port: UInt16,
+        registry: ToolRegistry,
+        peekabooMcpBridge: PeekabooMcpBridge? = nil,
+        peekabooBaseCommand: String? = nil,
+        peekabooContentUploadToolNames: Set<String> = []
+    ) {
         self.port = port
         self.registry = registry
         self.peekabooMcpBridge = peekabooMcpBridge
         self.peekabooBaseCommand = peekabooBaseCommand
+        self.peekabooContentUploadToolNames = peekabooContentUploadToolNames
         let rawTimeout = ProcessInfo.processInfo.environment["MACOS_CONTROL_RPC_TIMEOUT_MS"]
         let parsedTimeout = rawTimeout.flatMap(UInt64.init) ?? 30_000
         self.requestTimeoutMs = max(1_000, parsedTimeout)
@@ -217,7 +225,10 @@ final class RpcServer {
             var allMetadata = registry.allMetadata()
             if let bridge = peekabooMcpBridge, let baseCmd = peekabooBaseCommand {
                 do {
-                    let peekabooTools = try await bridge.getToolsForIntrospect(baseCommand: baseCmd)
+                    let peekabooTools = try await bridge.getToolsForIntrospect(
+                        baseCommand: baseCmd,
+                        contentUploadToolNames: peekabooContentUploadToolNames
+                    )
                     allMetadata.append(contentsOf: peekabooTools)
                 } catch {
                     // If Peekaboo discovery fails, just return registry tools
@@ -226,12 +237,18 @@ final class RpcServer {
             rpcResp = RpcResponse(id: req.id, result: allMetadata, error: nil)
         } else if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
             let upstreamName = String(req.method.dropFirst(9))
+            let splitArgs = splitPeekabooArguments(req.params)
             do {
                 let result = try await runWithTimeout(
                     milliseconds: requestTimeoutMs,
-                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: req.params) }
+                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: splitArgs.forwardedParams) }
                 )
-                rpcResp = RpcResponse(id: req.id, result: result, error: nil)
+                let transformed = await transformPeekabooResult(
+                    result,
+                    uploadAuth: splitArgs.uploadAuth,
+                    toolArguments: splitArgs.forwardedParams
+                )
+                rpcResp = RpcResponse(id: req.id, result: transformed, error: nil)
             } catch {
                 rpcResp = RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
             }

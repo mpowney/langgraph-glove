@@ -166,6 +166,34 @@ export class Gateway extends EventEmitter {
       this.contentStore.ensureSchema();
       logger.info(`SQLite content store: ${contentDbPath}`);
 
+      const deletedRetentionDays = this.config.gateway.deletedContentRetentionDays;
+      if (deletedRetentionDays && deletedRetentionDays > 0) {
+        const cleanupDeletedContent = () => {
+          if (!this.contentStore) return;
+          try {
+            const purged = this.contentStore.purgeDeletedContentOlderThanDays(deletedRetentionDays);
+            if (purged > 0) {
+              logger.info(
+                `Deleted-content retention cleanup purged ${purged} row(s) older than ${deletedRetentionDays} day(s)`,
+              );
+            }
+          } catch (err) {
+            logger.error("Deleted-content retention cleanup failed", err);
+          }
+        };
+
+        cleanupDeletedContent();
+
+        const cleanupIntervalMs = 60 * 60 * 1000;
+        const cleanupTimer = setInterval(cleanupDeletedContent, cleanupIntervalMs);
+        cleanupTimer.unref();
+        this.shutdownHandlers.push(() => clearInterval(cleanupTimer));
+
+        logger.info(
+          `Deleted-content retention enabled: ${deletedRetentionDays} day(s) (hourly cleanup)`,
+        );
+      }
+
       const contentSocketName = process.env["GLOVE_GATEWAY_CONTENT_UPLOAD_SOCKET"] ?? "gateway_content_upload";
       this.contentUnixSocketServer = new GatewayContentUnixSocketServer({
         socketName: contentSocketName,

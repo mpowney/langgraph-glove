@@ -46,6 +46,7 @@ final class UnixSocketRpcServer {
     private let taskLock = NSLock()
     private var peekabooMcpBridge: PeekabooMcpBridge?
     private var peekabooBaseCommand: String?
+    private let peekabooContentUploadToolNames: Set<String>
 
     /// Called on a background Task when a client connects.
     var onConnectionOpened: (() -> Void)?
@@ -54,11 +55,18 @@ final class UnixSocketRpcServer {
     /// Called on a background Task each time a JSON-RPC request is handled.
     var onRequestHandled: (() -> Void)?
 
-    init(name: String, registry: ToolRegistry, peekabooMcpBridge: PeekabooMcpBridge? = nil, peekabooBaseCommand: String? = nil) {
+    init(
+        name: String,
+        registry: ToolRegistry,
+        peekabooMcpBridge: PeekabooMcpBridge? = nil,
+        peekabooBaseCommand: String? = nil,
+        peekabooContentUploadToolNames: Set<String> = []
+    ) {
         self.socketPath = socketPathForTool(name)
         self.registry = registry
         self.peekabooMcpBridge = peekabooMcpBridge
         self.peekabooBaseCommand = peekabooBaseCommand
+        self.peekabooContentUploadToolNames = peekabooContentUploadToolNames
         let rawTimeout = ProcessInfo.processInfo.environment["MACOS_CONTROL_RPC_TIMEOUT_MS"]
         let parsedTimeout = rawTimeout.flatMap(UInt64.init) ?? 30_000
         self.requestTimeoutMs = max(1_000, parsedTimeout)
@@ -231,7 +239,10 @@ final class UnixSocketRpcServer {
             var allMetadata = registry.allMetadata()
             if let bridge = peekabooMcpBridge, let baseCmd = peekabooBaseCommand {
                 do {
-                    let peekabooTools = try await bridge.getToolsForIntrospect(baseCommand: baseCmd)
+                    let peekabooTools = try await bridge.getToolsForIntrospect(
+                        baseCommand: baseCmd,
+                        contentUploadToolNames: peekabooContentUploadToolNames
+                    )
                     allMetadata.append(contentsOf: peekabooTools)
                 } catch {
                     // Log error but continue with native tools only
@@ -244,12 +255,18 @@ final class UnixSocketRpcServer {
         // Forward Peekaboo tool calls to the MCP bridge
         if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
             let upstreamName = String(req.method.dropFirst(9)) // Remove "peekaboo_" prefix
+            let splitArgs = splitPeekabooArguments(req.params)
             do {
                 let result = try await runWithTimeout(
                     milliseconds: requestTimeoutMs,
-                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: req.params) }
+                    operation: { try await bridge.callTool(toolName: upstreamName, arguments: splitArgs.forwardedParams) }
                 )
-                return RpcResponse(id: req.id, result: result, error: nil)
+                let transformed = await transformPeekabooResult(
+                    result,
+                    uploadAuth: splitArgs.uploadAuth,
+                    toolArguments: splitArgs.forwardedParams
+                )
+                return RpcResponse(id: req.id, result: transformed, error: nil)
             } catch {
                 return RpcResponse(id: req.id, result: nil, error: error.localizedDescription)
             }
