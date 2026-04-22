@@ -16,6 +16,8 @@ import {
 import { Dismiss24Regular, ArrowLeft24Regular, ArrowClockwise24Regular } from "@fluentui/react-icons";
 import { useConversationBrowser } from "../hooks/useConversationBrowser";
 import type { BrowserMessage } from "../types";
+import { LinkPill } from "./chat/content/LinkPill";
+import { getContentItemDisplayName } from "./chat/content/sandboxArtifactLink";
 
 const useStyles = makeStyles({
   header: {
@@ -105,6 +107,22 @@ const useStyles = makeStyles({
     maxHeight: "200px",
     overflowY: "auto",
   },
+  messageAttachments: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+    marginTop: tokens.spacingVerticalXS,
+  },
+  messageAttachmentPills: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
+  },
+  messageAttachmentLabel: {
+    fontSize: tokens.fontSizeBase100,
+    color: tokens.colorNeutralForeground2,
+  },
   toolCallChip: {
     display: "inline-block",
     padding: `1px ${tokens.spacingHorizontalXS}`,
@@ -146,6 +164,14 @@ interface MessageViewProps {
 
 function MessageView({ message }: MessageViewProps) {
   const styles = useStyles();
+  const toSandboxArtifactHref = (fileName: string, contentRef?: string): string => {
+    const trimmed = fileName.trim().replace(/^\/+/, "");
+    if (!contentRef?.trim()) {
+      return `sandbox:/mnt/data/${trimmed}`;
+    }
+    const params = new URLSearchParams({ contentRef: contentRef.trim() });
+    return `sandbox:/mnt/data/${trimmed}?${params.toString()}`;
+  };
   const roleClass =
     message.role === "human"
       ? styles.messageHuman
@@ -173,6 +199,22 @@ function MessageView({ message }: MessageViewProps) {
         </Text>
       )}
       <Text className={styles.messageContent}>{message.content || <em>(empty)</em>}</Text>
+      {message.role === "ai" && message.contentItems && message.contentItems.length > 0 && (
+        <div className={styles.messageAttachments}>
+          <Text className={styles.messageAttachmentLabel}>Attached files</Text>
+          <div className={styles.messageAttachmentPills}>
+            {message.contentItems.map((item) => {
+              const href = toSandboxArtifactHref(item.fileName || "Attached file", item.contentRef);
+              const displayName = getContentItemDisplayName(item.fileName, href, "Attached file");
+              return (
+                <LinkPill key={item.contentRef} href={href}>
+                  {displayName}
+                </LinkPill>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

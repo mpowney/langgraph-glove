@@ -57,6 +57,7 @@ export type ServerMessage =
       streamSource?: "main" | "sub-agent";
       streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
+      contentItems?: ContentItem[];
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
@@ -71,7 +72,12 @@ export type ServerMessage =
       /** Optional uploaded content references associated with the tool event. */
       contentItems?: ContentItem[];
     }
-  | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
+  | {
+      type: "done";
+      conversationId: string;
+      checkpoint?: CheckpointMetadata;
+      contentItems?: ContentItem[];
+    }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
 
@@ -159,6 +165,7 @@ export interface BrowserMessage {
   content: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
+  contentItems?: ContentItem[];
 }
 
 export interface ContentItemView {

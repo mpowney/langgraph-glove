@@ -6,6 +6,8 @@ import {
 } from "@fluentui/react-components";
 import { MessageAccordion } from "./accordions/MessageAccordion";
 import { InlineContent } from "./content/InlineContent";
+import { LinkPill } from "./content/LinkPill";
+import { getContentItemDisplayName } from "./content/sandboxArtifactLink";
 import { ToolMetaSection } from "./metadata/ToolMetaSection";
 import { SubAgentMessageRenderer } from "./subagent/SubAgentMessageRenderer";
 import {
@@ -202,6 +204,12 @@ const useStyles = makeStyles({
     flexDirection: "row",
     gap: tokens.spacingHorizontalS,
   },
+  agentAttachmentPillRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
+  },
   modelCallAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteDarkOrangeBorder1}`,
@@ -258,6 +266,14 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const styles = useStyles();
   const isSubAgentEntry = entry.role === "agent" && entry.streamSource === "sub-agent";
+  const toSandboxArtifactHref = (fileName: string, contentRef?: string): string => {
+    const trimmed = fileName.trim().replace(/^\/+/, "");
+    if (!contentRef?.trim()) {
+      return `sandbox:/mnt/data/${trimmed}`;
+    }
+    const params = new URLSearchParams({ contentRef: contentRef.trim() });
+    return `sandbox:/mnt/data/${trimmed}?${params.toString()}`;
+  };
   const subAgentAccordionValue = useMemo(() => `sub-agent-${entry.id}`, [entry.id]);
   const [isSubAgentOpen, setIsSubAgentOpen] = useState<boolean>(Boolean(entry.isStreaming));
 
@@ -613,22 +629,17 @@ export function ChatMessage({
         <div className={styles.contentRefsWrapper}>
           <Text block className={styles.toolMetaDesc}>Uploaded content</Text>
           {entry.contentItems.map((item) => {
-            const href = item.downloadPath || `/api/content/${encodeURIComponent(item.contentRef)}/download`;
-            const previewHref = item.previewPath || `/api/content/${encodeURIComponent(item.contentRef)}/preview`;
+            const href = toSandboxArtifactHref(item.fileName || "Attached file", item.contentRef);
+            const displayName = getContentItemDisplayName(item.fileName, href, "Attached file");
             return (
               <div className={styles.contentRefRow} key={item.contentRef}>
-                <Text block className={styles.contentRefLabel}>{item.fileName || item.contentRef}</Text>
+                <Text block className={styles.contentRefLabel}>{displayName}</Text>
                 <Text block className={styles.contentRefMeta}>
                   {item.mimeType || "application/octet-stream"}
                   {typeof item.byteLength === "number" ? ` | ${item.byteLength} bytes` : ""}
                 </Text>
-                <div className={styles.contentRefLinksRow}>
-                  <a className={styles.contentRefLink} href={previewHref} target="_blank" rel="noreferrer">
-                    Preview
-                  </a>
-                  <a className={styles.contentRefLink} href={href} target="_blank" rel="noreferrer">
-                    Download
-                  </a>
+                <div className={styles.agentAttachmentPillRow}>
+                  <LinkPill href={href}>{displayName}</LinkPill>
                 </div>
               </div>
             );
@@ -747,6 +758,22 @@ export function ChatMessage({
         <div className={styles.agentBubble}>
           <InlineContent content={entry.content} />
           {entry.isStreaming && <span className={styles.cursor} aria-hidden />}
+          {entry.contentItems && entry.contentItems.length > 0 && (
+            <div className={styles.contentRefsWrapper}>
+              <Text block className={styles.toolMetaDesc}>Attached files</Text>
+              <div className={styles.agentAttachmentPillRow}>
+                {entry.contentItems.map((item) => {
+                  const href = toSandboxArtifactHref(item.fileName || "Attached file", item.contentRef);
+                  const displayName = getContentItemDisplayName(item.fileName, href, "Attached file");
+                  return (
+                    <LinkPill key={item.contentRef} href={href}>
+                      {displayName}
+                    </LinkPill>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
         {timestamp && <Text block className={styles.messageTimestamp}>{timestamp}</Text>}
       </div>

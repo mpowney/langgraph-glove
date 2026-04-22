@@ -1,6 +1,12 @@
 import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
-import type { Channel, IncomingMessage, OutgoingStreamChunk, StreamSource } from "../channels/Channel";
+import type {
+  Channel,
+  IncomingMessage,
+  OutgoingContentItem,
+  OutgoingStreamChunk,
+  StreamSource,
+} from "../channels/Channel";
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
@@ -51,6 +57,98 @@ function parseJsonMaybe(value: unknown): unknown {
   } catch {
     return value;
   }
+}
+
+function extractContentItems(value: unknown): OutgoingContentItem[] {
+  const itemsByRef = new Map<string, OutgoingContentItem>();
+
+  const ensureItem = (contentRef: string): OutgoingContentItem => {
+    const existing = itemsByRef.get(contentRef);
+    if (existing) return existing;
+    const created: OutgoingContentItem = {
+      contentRef,
+      downloadPath: `/api/content/${encodeURIComponent(contentRef)}/download`,
+      previewPath: `/api/content/${encodeURIComponent(contentRef)}/preview`,
+    };
+    itemsByRef.set(contentRef, created);
+    return created;
+  };
+
+  const readString = (record: Record<string, unknown>, key: string): string | undefined => {
+    const value = record[key];
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const readNumber = (record: Record<string, unknown>, key: string): number | undefined => {
+    const value = record[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  };
+
+  const collect = (input: unknown): void => {
+    if (!input) return;
+
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (/^content_[a-f0-9-]+$/i.test(trimmed)) {
+        ensureItem(trimmed);
+      }
+
+      const matches = trimmed.match(/content_[a-f0-9-]+/gi);
+      if (matches) {
+        for (const match of matches) ensureItem(match);
+      }
+
+      const parsed = parseJsonMaybe(trimmed);
+      if (parsed !== input) {
+        collect(parsed);
+      }
+      return;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) collect(item);
+      return;
+    }
+
+    if (typeof input === "object") {
+      const record = input as Record<string, unknown>;
+      if (typeof record["contentRef"] === "string") {
+        const contentRef = record["contentRef"] as string;
+        const item = ensureItem(contentRef);
+        item.fileName =
+          readString(record, "fileName")
+          ?? readString(record, "filename")
+          ?? readString(record, "name")
+          ?? item.fileName;
+        item.mimeType =
+          readString(record, "mimeType")
+          ?? readString(record, "mime")
+          ?? item.mimeType;
+        item.byteLength =
+          readNumber(record, "byteLength")
+          ?? readNumber(record, "size")
+          ?? item.byteLength;
+      }
+      if (Array.isArray(record["contentRefs"])) {
+        for (const ref of record["contentRefs"] as unknown[]) {
+          if (typeof ref === "string") ensureItem(ref);
+        }
+      }
+      for (const nested of Object.values(record)) {
+        collect(nested);
+      }
+    }
+  };
+
+  collect(value);
+  return [...itemsByRef.values()];
+}
+
+function buildOutgoingContentItemsFromToolOutput(content: string): OutgoingContentItem[] | undefined {
+  const items = extractContentItems(content);
+  return items.length > 0 ? items : undefined;
 }
 
 function redactSensitiveArgs(value: unknown): unknown {
@@ -517,7 +615,13 @@ export class GloveAgent {
     text: string,
     conversationId: string,
     callbacks: BaseCallbackHandler[] = [new LlmCallbackHandler()],
-    onToolEvent?: (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolName?: string, metadata?: ToolEventMetadata) => void,
+    onToolEvent?: (
+      role: "tool-call" | "tool-result" | "agent-transfer",
+      text: string,
+      toolName?: string,
+      metadata?: ToolEventMetadata,
+      contentItems?: OutgoingContentItem[],
+    ) => void,
     onToolNameHint?: (toolCallId: string, toolName: string) => void,
     personalToken?: string,
     privilegeGrantId?: string,
@@ -909,7 +1013,13 @@ export class GloveAgent {
     // Forward tool calls, results, and agent transfers to receiveAgentProcessing channels.
     const toolLookup = this.config.toolLookup;
     const onToolEvent = observabilityTargets.length
-      ? (role: "tool-call" | "tool-result" | "agent-transfer", text: string, toolName?: string, toolEventMetadata?: ToolEventMetadata): void => {
+      ? (
+          role: "tool-call" | "tool-result" | "agent-transfer",
+          text: string,
+          toolName?: string,
+          toolEventMetadata?: ToolEventMetadata,
+          contentItems?: OutgoingContentItem[],
+        ): void => {
           const resolvedToolName = (() => {
             if (toolName && !isGenericToolName(toolName)) return toolName;
             const metaToolName = toolEventMetadata?.tool?.name;
@@ -920,7 +1030,14 @@ export class GloveAgent {
           })();
           for (const ch of observabilityTargets) {
             ch
-              .sendMessage({ conversationId: message.conversationId, text, role, toolName: resolvedToolName, toolEventMetadata })
+              .sendMessage({
+                conversationId: message.conversationId,
+                text,
+                role,
+                toolName: resolvedToolName,
+                toolEventMetadata,
+                ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
+              })
               .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
           }
         }
@@ -990,7 +1107,14 @@ export class GloveAgent {
             const meta: ToolEventMetadata | undefined = toolDef
               ? { tool: toolDef }
               : undefined;
-            onToolEvent("tool-result", JSON.stringify({ name: toolName, content }), toolName, meta);
+            const contentItems = buildOutgoingContentItemsFromToolOutput(content);
+            onToolEvent(
+              "tool-result",
+              JSON.stringify({ name: toolName, content }),
+              toolName,
+              meta,
+              contentItems,
+            );
           },
           handleToolError: (_error, runId): void => {
             toolRunNameByRunId.delete(String(runId));

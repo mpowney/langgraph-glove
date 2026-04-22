@@ -24,6 +24,21 @@ function updateMessageToEnd(
   ];
 }
 
+function mergeContentItems(
+  first: ChatEntry["contentItems"],
+  second: ChatEntry["contentItems"],
+): ChatEntry["contentItems"] {
+  const merged = [...(first ?? []), ...(second ?? [])];
+  if (merged.length === 0) return undefined;
+  const unique = new Map<string, NonNullable<ChatEntry["contentItems"]>[number]>();
+  for (const item of merged) {
+    if (!unique.has(item.contentRef)) {
+      unique.set(item.contentRef, item);
+    }
+  }
+  return [...unique.values()];
+}
+
 function buildWsUrl(authToken?: string): string {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
   const base = envUrl ?? (() => {
@@ -236,6 +251,7 @@ export function useWebSocket(
                 ...message,
                 isStreaming: false,
                 checkpoint: msg.checkpoint ?? message.checkpoint,
+                contentItems: mergeContentItems(message.contentItems, msg.contentItems),
               }),
             ),
           );

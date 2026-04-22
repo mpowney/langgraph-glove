@@ -76,6 +76,10 @@ interface ContentListItem {
   previewUrl?: string;
 }
 
+interface ContentDetailItem extends ContentListItem {
+  downloadUrl?: string;
+}
+
 interface ContentListResponse {
   items: ContentListItem[];
 }
@@ -136,10 +140,19 @@ export function SandboxArtifactPreviewDialog({
     if (!open) return;
 
     const conversationId = localStorage.getItem(CONVERSATION_ID_STORAGE_KEY)?.trim() ?? "";
+    const contentRefFromHref = (() => {
+      try {
+        const parsed = new URL(href);
+        const candidate = parsed.searchParams.get("contentRef")?.trim();
+        return candidate && candidate.length > 0 ? candidate : undefined;
+      } catch {
+        return undefined;
+      }
+    })();
     const normalizedFileName = fileName.trim().toLowerCase();
-    if (!normalizedFileName) {
+    if (!contentRefFromHref && !normalizedFileName) {
       setResolvedPreviewUrl(null);
-      setResolveError("Unable to resolve preview: missing file name.");
+      setResolveError("Unable to resolve preview: missing file reference.");
       return;
     }
 
@@ -161,6 +174,20 @@ export function SandboxArtifactPreviewDialog({
       return data.items ?? [];
     };
 
+    const fetchByContentRef = async (contentRef: string): Promise<ContentDetailItem | null> => {
+      const response = await fetch(`/api/content/${encodeURIComponent(contentRef)}`, {
+        headers: authHeaders,
+      });
+      if (response.status === 404) {
+        return null;
+      }
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const item = (await response.json()) as ContentDetailItem;
+      return item;
+    };
+
     const resolvePreview = async () => {
       setIsResolving(true);
       setResolveError(null);
@@ -174,10 +201,21 @@ export function SandboxArtifactPreviewDialog({
       });
 
       try {
-        const scopedItems = await fetchList(true);
-        let match = scopedItems.find(
-          (item) => !item.deletedAt && item.fileName?.trim().toLowerCase() === normalizedFileName,
-        );
+        let match: ContentListItem | ContentDetailItem | undefined;
+
+        if (contentRefFromHref) {
+          const byRef = await fetchByContentRef(contentRefFromHref);
+          if (byRef && !byRef.deletedAt) {
+            match = byRef;
+          }
+        }
+
+        if (!match) {
+          const scopedItems = await fetchList(true);
+          match = scopedItems.find(
+            (item) => !item.deletedAt && item.fileName?.trim().toLowerCase() === normalizedFileName,
+          );
+        }
 
         if (!match) {
           const globalItems = await fetchList(false);
@@ -189,12 +227,16 @@ export function SandboxArtifactPreviewDialog({
         if (!active) return;
 
         if (!match) {
-          setResolveError(`No content record found for file \"${fileName}\".`);
+          setResolveError(contentRefFromHref
+            ? `No content record found for ref \"${contentRefFromHref}\".`
+            : `No content record found for file \"${fileName}\".`);
           return;
         }
 
         const previewUrl = match.previewUrl || `/api/content/${encodeURIComponent(match.contentRef)}/preview`;
-        const downloadUrl = `/api/content/${encodeURIComponent(match.contentRef)}/download`;
+        const downloadUrl = ("downloadUrl" in match && typeof match.downloadUrl === "string")
+          ? match.downloadUrl
+          : `/api/content/${encodeURIComponent(match.contentRef)}/download`;
         const previewResponse = await fetch(previewUrl, {
           headers: authHeaders,
         });
@@ -257,7 +299,7 @@ export function SandboxArtifactPreviewDialog({
     return () => {
       active = false;
     };
-  }, [open, fileName, authHeaders]);
+  }, [open, fileName, href, authHeaders]);
 
   const handleDownload = async () => {
     if (!resolvedDownloadUrl || isDownloading) return;

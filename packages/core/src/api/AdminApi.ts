@@ -64,6 +64,16 @@ export interface BrowserMessage {
   content: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
+  contentItems?: BrowserContentItem[];
+}
+
+export interface BrowserContentItem {
+  contentRef: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength?: number;
+  downloadPath?: string;
+  previewPath?: string;
 }
 
 /** Summary row returned by `GET /api/conversations`. */
@@ -135,11 +145,86 @@ function lcIdToRole(id: string[]): BrowserMessage["role"] {
   return "system";
 }
 
-function extractMessages(checkpointJson: string): BrowserMessage[] {
+function extractContentRefs(value: unknown): string[] {
+  const refs = new Set<string>();
+
+  const collect = (input: unknown): void => {
+    if (!input) return;
+
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (/^content_[a-f0-9-]+$/i.test(trimmed)) {
+        refs.add(trimmed);
+      }
+
+      const matches = trimmed.match(/content_[a-f0-9-]+/gi);
+      if (matches) {
+        for (const match of matches) refs.add(match);
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (parsed !== input) collect(parsed);
+      } catch {
+        // Non-JSON string payloads are expected.
+      }
+      return;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) collect(item);
+      return;
+    }
+
+    if (typeof input === "object") {
+      const record = input as Record<string, unknown>;
+      if (typeof record["contentRef"] === "string") {
+        refs.add(record["contentRef"] as string);
+      }
+      if (Array.isArray(record["contentRefs"])) {
+        for (const ref of record["contentRefs"] as unknown[]) {
+          if (typeof ref === "string") refs.add(ref);
+        }
+      }
+      for (const nested of Object.values(record)) {
+        collect(nested);
+      }
+    }
+  };
+
+  collect(value);
+  return [...refs];
+}
+
+function resolveBrowserContentItems(
+  refs: string[],
+  getContentByRef?: (contentRef: string) => ContentItemView | undefined,
+): BrowserContentItem[] | undefined {
+  if (!getContentByRef || refs.length === 0) return undefined;
+  const items: BrowserContentItem[] = [];
+  for (const contentRef of refs) {
+    const meta = getContentByRef(contentRef);
+    if (!meta || meta.deletedAt) continue;
+    items.push({
+      contentRef,
+      fileName: meta.fileName,
+      mimeType: meta.mimeType,
+      byteLength: meta.byteLength,
+      downloadPath: `/api/content/${encodeURIComponent(contentRef)}/download`,
+      previewPath: `/api/content/${encodeURIComponent(contentRef)}/preview`,
+    });
+  }
+  return items.length > 0 ? items : undefined;
+}
+
+function extractMessages(
+  checkpointJson: string,
+  getContentByRef?: (contentRef: string) => ContentItemView | undefined,
+): BrowserMessage[] {
   try {
     const cp = JSON.parse(checkpointJson) as { channel_values?: { messages?: LcMessage[] } };
     const raw = cp.channel_values?.messages ?? [];
-    return raw.map((m) => {
+    const baseMessages = raw.map((m) => {
       const role = lcIdToRole(m.id);
       const content =
         typeof m.kwargs.content === "string"
@@ -154,6 +239,49 @@ function extractMessages(checkpointJson: string): BrowserMessage[] {
         content,
         ...(tool_calls ? { tool_calls } : {}),
         ...(m.kwargs.tool_call_id ? { tool_call_id: m.kwargs.tool_call_id } : {}),
+      };
+    });
+
+    const pendingRefs: string[] = [];
+    const pendingSet = new Set<string>();
+
+    return baseMessages.map((message) => {
+      if (message.role === "tool") {
+        for (const ref of extractContentRefs(message.content)) {
+          if (pendingSet.has(ref)) continue;
+          pendingSet.add(ref);
+          pendingRefs.push(ref);
+        }
+        return message;
+      }
+
+      if (message.role !== "ai") {
+        return message;
+      }
+
+      const aiRefs: string[] = [];
+      const aiSet = new Set<string>();
+      for (const ref of extractContentRefs(message.content)) {
+        if (aiSet.has(ref)) continue;
+        aiSet.add(ref);
+        aiRefs.push(ref);
+      }
+
+      const combinedRefs: string[] = [];
+      const combinedSet = new Set<string>();
+      for (const ref of [...aiRefs, ...pendingRefs]) {
+        if (combinedSet.has(ref)) continue;
+        combinedSet.add(ref);
+        combinedRefs.push(ref);
+      }
+
+      pendingRefs.length = 0;
+      pendingSet.clear();
+
+      const contentItems = resolveBrowserContentItems(combinedRefs, getContentByRef);
+      return {
+        ...message,
+        ...(contentItems ? { contentItems } : {}),
       };
     });
   } catch {
@@ -1313,7 +1441,7 @@ export class AdminApi {
             res.status(404).json({ error: "Conversation not found" });
             return;
           }
-          res.json(extractMessages(row.checkpoint as unknown as string));
+          res.json(extractMessages(row.checkpoint as unknown as string, this.getContentByRef));
         } catch (err) {
           res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
         }

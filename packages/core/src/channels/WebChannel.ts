@@ -97,6 +97,7 @@ type ServerMessage =
       streamSource?: StreamSource;
       streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
+      contentItems?: OutgoingContentItem[];
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
@@ -112,7 +113,12 @@ type ServerMessage =
       /** Optional uploaded content references associated with this tool event. */
       contentItems?: OutgoingContentItem[];
     }
-  | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
+  | {
+      type: "done";
+      conversationId: string;
+      checkpoint?: CheckpointMetadata;
+      contentItems?: OutgoingContentItem[];
+    }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
 
@@ -185,6 +191,7 @@ export class WebChannel extends Channel {
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
   private authService?: AuthService;
+  private readonly pendingDefaultAgentContentItems = new Map<string, OutgoingContentItem[]>();
 
   constructor(config: WebChannelConfig = {}) {
     super(config);
@@ -376,20 +383,39 @@ export class WebChannel extends Channel {
           : {}),
       };
       this.broadcast(message.conversationId, payload);
+      if (
+        message.role === "tool-result"
+        && message.contentItems
+        && message.contentItems.length > 0
+        && this.isDefaultAgentToolEvent(message.toolEventMetadata)
+      ) {
+        this.addPendingDefaultAgentContentItems(message.conversationId, message.contentItems);
+      }
       return;
     }
+
+    const doneContentItems = this.mergeContentItems(
+      message.contentItems,
+      this.drainPendingDefaultAgentContentItems(message.conversationId),
+    );
     const payload: ServerMessage = {
       type: "chunk",
       text: message.text,
       conversationId: message.conversationId,
       role: message.role,
       checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+      ...(message.contentItems && message.contentItems.length > 0
+        ? { contentItems: message.contentItems }
+        : {}),
     };
     this.broadcast(message.conversationId, payload);
     this.broadcast(message.conversationId, {
       type: "done",
       conversationId: message.conversationId,
       checkpoint: this.lookupCheckpointMetadata(message.conversationId),
+      ...(doneContentItems && doneContentItems.length > 0
+        ? { contentItems: doneContentItems }
+        : {}),
     });
   }
 
@@ -412,11 +438,54 @@ export class WebChannel extends Channel {
         checkpoint: this.lookupCheckpointMetadata(conversationId),
       });
     }
+    const doneContentItems = this.drainPendingDefaultAgentContentItems(conversationId);
     this.broadcast(conversationId, {
       type: "done",
       conversationId,
       checkpoint: this.lookupCheckpointMetadata(conversationId),
+      ...(doneContentItems && doneContentItems.length > 0
+        ? { contentItems: doneContentItems }
+        : {}),
     });
+  }
+
+  private isDefaultAgentToolEvent(metadata?: ToolEventMetadata): boolean {
+    const agentKey = metadata?.agentKey?.trim();
+    return !agentKey || agentKey === "default";
+  }
+
+  private addPendingDefaultAgentContentItems(
+    conversationId: string,
+    items: OutgoingContentItem[],
+  ): void {
+    const existing = this.pendingDefaultAgentContentItems.get(conversationId) ?? [];
+    const merged = this.mergeContentItems(existing, items);
+    if (merged && merged.length > 0) {
+      this.pendingDefaultAgentContentItems.set(conversationId, merged);
+    }
+  }
+
+  private drainPendingDefaultAgentContentItems(
+    conversationId: string,
+  ): OutgoingContentItem[] | undefined {
+    const existing = this.pendingDefaultAgentContentItems.get(conversationId);
+    if (!existing || existing.length === 0) return undefined;
+    this.pendingDefaultAgentContentItems.delete(conversationId);
+    return existing;
+  }
+
+  private mergeContentItems(
+    first?: OutgoingContentItem[],
+    second?: OutgoingContentItem[],
+  ): OutgoingContentItem[] | undefined {
+    const merged: OutgoingContentItem[] = [];
+    const seenRefs = new Set<string>();
+    for (const item of [...(first ?? []), ...(second ?? [])]) {
+      if (seenRefs.has(item.contentRef)) continue;
+      seenRefs.add(item.contentRef);
+      merged.push(item);
+    }
+    return merged.length > 0 ? merged : undefined;
   }
 
   private handleConnection(ws: WebSocket): void {
