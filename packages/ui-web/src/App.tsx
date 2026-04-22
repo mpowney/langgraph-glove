@@ -21,6 +21,7 @@ import { ConversationBrowser } from "./components/ConversationBrowser";
 import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
 import { ConfigAdmin } from "./components/ConfigAdmin";
+import { ContentBrowser } from "./components/ContentBrowser";
 import { AuthGate } from "./components/AuthGate";
 import { ControlPanel } from "./components/ControlPanel";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
@@ -32,6 +33,44 @@ const CONVERSATION_ID_KEY = "glove_conversation_id";
 const SHOW_DETAILS_KEY = "glove_show_accordion_and_sub_agents";
 const SHOW_INLINE_PROCESSING_MESSAGES_KEY = "glove_show_inline_processing_messages";
 const SHOW_SYSTEM_MESSAGES_KEY = "glove_show_system_messages";
+
+function parseContentHashRoute(hash: string): { isContentRoute: boolean; contentRef: string | null } {
+  const raw = hash.startsWith("#") ? hash.slice(1) : hash;
+  const normalized = raw.trim();
+  if (!normalized.startsWith("/content")) {
+    return { isContentRoute: false, contentRef: null };
+  }
+
+  const remainder = normalized.slice("/content".length);
+  if (!remainder || remainder === "/") {
+    return { isContentRoute: true, contentRef: null };
+  }
+
+  if (!remainder.startsWith("/")) {
+    return { isContentRoute: true, contentRef: null };
+  }
+
+  try {
+    const decoded = decodeURIComponent(remainder.slice(1)).trim();
+    return { isContentRoute: true, contentRef: decoded || null };
+  } catch {
+    return { isContentRoute: true, contentRef: null };
+  }
+}
+
+function replaceWithContentHashRoute(contentRef: string | null): void {
+  const target = contentRef?.trim()
+    ? `#/content/${encodeURIComponent(contentRef.trim())}`
+    : "#/content";
+  if (window.location.hash === target) return;
+  window.history.replaceState(null, "", target);
+}
+
+function clearContentHashRouteIfActive(): void {
+  const route = parseContentHashRoute(window.location.hash);
+  if (!route.isContentRoute) return;
+  window.history.replaceState(null, "", `${window.location.pathname}${window.location.search}`);
+}
 
 function resolveAuthApiBaseUrl(rawApiUrl: string | undefined): string | null {
   if (!rawApiUrl?.trim()) return null;
@@ -112,6 +151,8 @@ function App() {
   const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [configAdminOpen, setConfigAdminOpen] = useState(false);
+  const [contentBrowserOpen, setContentBrowserOpen] = useState(false);
+  const [contentRouteRef, setContentRouteRef] = useState<string | null>(null);
   const [controlPanelOpen, setControlPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [pendingConversationSwitchId, setPendingConversationSwitchId] = useState<string | null>(null);
@@ -257,6 +298,25 @@ function App() {
     };
   }, [auth.token, auth.getPrivilegedAccessStatus, conversationId]);
 
+  useEffect(() => {
+    const syncFromHash = () => {
+      const route = parseContentHashRoute(window.location.hash);
+      if (route.isContentRoute) {
+        setContentBrowserOpen(true);
+        setContentRouteRef(route.contentRef);
+        return;
+      }
+      setContentBrowserOpen(false);
+      setContentRouteRef(null);
+    };
+
+    syncFromHash();
+    window.addEventListener("hashchange", syncFromHash);
+    return () => {
+      window.removeEventListener("hashchange", syncFromHash);
+    };
+  }, []);
+
   const visibleMessages = useMemo(
     () => showAll ? messages : messages.filter((m) => m.conversationId === myConversationId),
     [messages, showAll, myConversationId],
@@ -355,6 +415,21 @@ function App() {
           apiBaseUrl={adminApiBaseUrl}
           authToken={auth.token ?? undefined}
         />
+        <ContentBrowser
+          open={contentBrowserOpen}
+          onClose={() => {
+            setContentBrowserOpen(false);
+            setContentRouteRef(null);
+            clearContentHashRouteIfActive();
+          }}
+          apiBaseUrl={adminApiBaseUrl}
+          authToken={auth.token ?? undefined}
+          initialContentRef={contentRouteRef}
+          onSelectContentRef={(contentRef) => {
+            setContentRouteRef(contentRef);
+            replaceWithContentHashRoute(contentRef);
+          }}
+        />
         <MemoryAdmin
           open={memoryAdminOpen}
           onClose={() => setMemoryAdminOpen(false)}
@@ -393,6 +468,11 @@ function App() {
           onToggleShowSystemMessages={setShowSystemMessagesPersisted}
           onStartNewConversation={handleStartNewConversation}
           onOpenBrowser={() => setBrowserOpen(true)}
+          onOpenContentBrowser={() => {
+            setContentBrowserOpen(true);
+            setContentRouteRef(null);
+            replaceWithContentHashRoute(null);
+          }}
           onOpenToolsPanel={() => setToolsPanelOpen(true)}
           onOpenConfigAdmin={() => setConfigAdminOpen(true)}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}

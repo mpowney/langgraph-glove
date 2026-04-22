@@ -6,6 +6,8 @@ import {
 } from "@fluentui/react-components";
 import { MessageAccordion } from "./accordions/MessageAccordion";
 import { InlineContent } from "./content/InlineContent";
+import { LinkPill } from "./content/LinkPill";
+import { getContentItemDisplayName } from "./content/sandboxArtifactLink";
 import { ToolMetaSection } from "./metadata/ToolMetaSection";
 import { SubAgentMessageRenderer } from "./subagent/SubAgentMessageRenderer";
 import {
@@ -173,6 +175,41 @@ const useStyles = makeStyles({
     fontSize: tokens.fontSizeBase200,
     marginBottom: tokens.spacingVerticalXS,
   },
+  contentRefsWrapper: {
+    marginTop: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalXS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  contentRefRow: {
+    display: "flex",
+    flexDirection: "column",
+    gap: tokens.spacingVerticalXXS,
+    padding: `${tokens.spacingVerticalXXS} 0`,
+  },
+  contentRefLabel: {
+    fontFamily: "ui-monospace, 'Cascadia Code', 'Consolas', monospace",
+    color: tokens.colorNeutralForeground2,
+  },
+  contentRefMeta: {
+    color: tokens.colorNeutralForeground3,
+    fontSize: tokens.fontSizeBase100,
+  },
+  contentRefLink: {
+    color: tokens.colorBrandForeground1,
+    textDecorationLine: "underline",
+    textUnderlineOffset: "2px",
+  },
+  contentRefLinksRow: {
+    display: "flex",
+    flexDirection: "row",
+    gap: tokens.spacingHorizontalS,
+  },
+  agentAttachmentPillRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
+  },
   modelCallAccordion: {
     borderRadius: tokens.borderRadiusMedium,
     border: `1px solid ${tokens.colorPaletteDarkOrangeBorder1}`,
@@ -229,6 +266,14 @@ export function ChatMessage({
 }: ChatMessageProps) {
   const styles = useStyles();
   const isSubAgentEntry = entry.role === "agent" && entry.streamSource === "sub-agent";
+  const toSandboxArtifactHref = (fileName: string, contentRef?: string): string => {
+    const trimmed = fileName.trim().replace(/^\/+/, "");
+    if (!contentRef?.trim()) {
+      return `sandbox:/mnt/data/${trimmed}`;
+    }
+    const params = new URLSearchParams({ contentRef: contentRef.trim() });
+    return `sandbox:/mnt/data/${trimmed}?${params.toString()}`;
+  };
   const subAgentAccordionValue = useMemo(() => `sub-agent-${entry.id}`, [entry.id]);
   const [isSubAgentOpen, setIsSubAgentOpen] = useState<boolean>(Boolean(entry.isStreaming));
 
@@ -578,6 +623,30 @@ export function ChatMessage({
           ? "payload.name"
           : "none"));
     const toolNameDebugLine = `[debug tool-result] source=${toolNameDebugSource} entry=${entry.toolName ?? "<empty>"} meta=${entry.toolEventMetadata?.tool?.name ?? "<empty>"} payload=${parsedToolName ?? "<empty>"}`;
+    const renderContentRefs = () => {
+      if (!entry.contentItems || entry.contentItems.length === 0) return null;
+      return (
+        <div className={styles.contentRefsWrapper}>
+          <Text block className={styles.toolMetaDesc}>Uploaded content</Text>
+          {entry.contentItems.map((item) => {
+            const href = toSandboxArtifactHref(item.fileName || "Attached file", item.contentRef);
+            const displayName = getContentItemDisplayName(item.fileName, href, "Attached file");
+            return (
+              <div className={styles.contentRefRow} key={item.contentRef}>
+                <Text block className={styles.contentRefLabel}>{displayName}</Text>
+                <Text block className={styles.contentRefMeta}>
+                  {item.mimeType || "application/octet-stream"}
+                  {typeof item.byteLength === "number" ? ` | ${item.byteLength} bytes` : ""}
+                </Text>
+                <div className={styles.agentAttachmentPillRow}>
+                  <LinkPill href={href}>{displayName}</LinkPill>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      );
+    };
     return (
       <div className={styles.promptWrapper}>
         <div>
@@ -607,6 +676,7 @@ export function ChatMessage({
             {entry.toolEventMetadata && (
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
+            {renderContentRefs()}
           </MessageAccordion>
         </div>
       </div>
@@ -688,6 +758,22 @@ export function ChatMessage({
         <div className={styles.agentBubble}>
           <InlineContent content={entry.content} />
           {entry.isStreaming && <span className={styles.cursor} aria-hidden />}
+          {entry.contentItems && entry.contentItems.length > 0 && (
+            <div className={styles.contentRefsWrapper}>
+              <Text block className={styles.toolMetaDesc}>Attached files</Text>
+              <div className={styles.agentAttachmentPillRow}>
+                {entry.contentItems.map((item) => {
+                  const href = toSandboxArtifactHref(item.fileName || "Attached file", item.contentRef);
+                  const displayName = getContentItemDisplayName(item.fileName, href, "Attached file");
+                  return (
+                    <LinkPill key={item.contentRef} href={href}>
+                      {displayName}
+                    </LinkPill>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
         {timestamp && <Text block className={styles.messageTimestamp}>{timestamp}</Text>}
       </div>

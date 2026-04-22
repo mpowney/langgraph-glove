@@ -246,6 +246,7 @@ function normalizeToolArgs(args: unknown): Record<string, unknown> {
 interface ToolExecutionContext {
   conversationId?: string;
   privilegeGrantId?: string;
+  contentUploadAuthByTool?: Record<string, unknown>;
 }
 
 interface ToolCallLike {
@@ -266,13 +267,22 @@ function readToolExecutionContext(config: unknown): ToolExecutionContext {
   const conversationId = explicitConversationId ?? (threadId === "runtime" ? undefined : threadId);
   const privilegeGrantId =
     typeof typed.privilegeGrantId === "string" ? typed.privilegeGrantId : undefined;
+  const contentUploadAuthByTool =
+    typed.contentUploadAuthByTool && typeof typed.contentUploadAuthByTool === "object"
+      ? (typed.contentUploadAuthByTool as Record<string, unknown>)
+      : undefined;
 
-  return { conversationId, privilegeGrantId };
+  return { conversationId, privilegeGrantId, contentUploadAuthByTool };
 }
 
 function toolRequiresPrivilegedAccess(tool: StructuredToolInterface): boolean {
   if (!("requiresPrivilegedAccess" in tool)) return false;
   return (tool as { requiresPrivilegedAccess?: unknown }).requiresPrivilegedAccess === true;
+}
+
+function toolSupportsContentUpload(tool: StructuredToolInterface): boolean {
+  if (!("supportsContentUpload" in tool)) return false;
+  return (tool as { supportsContentUpload?: unknown }).supportsContentUpload === true;
 }
 
 function injectToolContextArgs(
@@ -299,6 +309,17 @@ function injectToolContextArgs(
     context.privilegeGrantId
   ) {
     args.privilegeGrantId = context.privilegeGrantId;
+  }
+
+  if (
+    toolSupportsContentUpload(tool)
+    && args.contentUploadAuth === undefined
+    && context.contentUploadAuthByTool
+  ) {
+    const uploadAuth = context.contentUploadAuthByTool[toolCall.name];
+    if (uploadAuth && typeof uploadAuth === "object") {
+      args.contentUploadAuth = uploadAuth;
+    }
   }
 
   return { ...toolCall, args };

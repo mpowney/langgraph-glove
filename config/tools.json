@@ -65,5 +65,11 @@
     "url": "http://localhost:3017",
     "socketName": "context-compression",
     "enabled": true
+  },
+  "docker": {
+    "transport": "unix-socket",
+    "url": "http://localhost:3018",
+    "socketName": "docker",
+    "enabled": true
   }
 }

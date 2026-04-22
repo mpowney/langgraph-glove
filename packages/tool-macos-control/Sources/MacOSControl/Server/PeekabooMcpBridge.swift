@@ -4,6 +4,7 @@ struct PeekabooDiscoveredTool {
     let proxyName: String
     let upstreamName: String
     let description: String
+    let supportsContentUpload: Bool
     let parameters: [String: Any]
     let commandTokens: [String]
 }
@@ -124,7 +125,7 @@ actor PeekabooMcpBridge {
         runningBaseCommand = nil
     }
 
-    func discoverTools(baseCommand: String) async throws -> [PeekabooDiscoveredTool] {
+    func discoverTools(baseCommand: String, contentUploadToolNames: Set<String> = []) async throws -> [PeekabooDiscoveredTool] {
         try await ensureConnected(baseCommand: baseCommand)
 
         let response = try await sendRequest(
@@ -143,6 +144,9 @@ actor PeekabooMcpBridge {
                   !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 return nil
             }
+
+            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let supportsContentUpload = contentUploadToolNames.contains(normalizedName)
 
             let desc = tool["description"] as? String ?? ""
             let inputSchema = tool["inputSchema"] as? [String: Any]
@@ -157,13 +161,14 @@ actor PeekabooMcpBridge {
                 proxyName: "peekaboo_\(sanitizeToolName(name))",
                 upstreamName: name,
                 description: desc,
+                supportsContentUpload: supportsContentUpload,
                 parameters: inputSchema,
                 commandTokens: commandTokens(for: name)
             )
         }
     }
 
-    func getToolsForIntrospect(baseCommand: String) async throws -> [[String: Any]] {
+    func getToolsForIntrospect(baseCommand: String, contentUploadToolNames: Set<String> = []) async throws -> [[String: Any]] {
         try await ensureConnected(baseCommand: baseCommand)
 
         let response = try await sendRequest(
@@ -183,6 +188,9 @@ actor PeekabooMcpBridge {
                 return nil
             }
 
+            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let supportsContentUpload = contentUploadToolNames.contains(normalizedName)
+
             let desc = tool["description"] as? String ?? ""
             let inputSchema = tool["inputSchema"] as? [String: Any]
                 ?? tool["parameters"] as? [String: Any]
@@ -193,11 +201,15 @@ actor PeekabooMcpBridge {
                 ]
 
             let proxyName = "peekaboo_\(sanitizeToolName(name))"
-            return [
+            var metadata: [String: Any] = [
                 "name": proxyName,
                 "description": "Peekaboo MCP tool '\(name)': \(desc)",
                 "parameters": inputSchema
             ]
+            if supportsContentUpload {
+                metadata["supportsContentUpload"] = true
+            }
+            return metadata
         }
     }
 

@@ -72,6 +72,7 @@ interface ControlPanelProps {
   onToggleShowSystemMessages: (value: boolean) => void;
   onStartNewConversation: () => void;
   onOpenBrowser: () => void;
+  onOpenContentBrowser: () => void;
   onOpenToolsPanel: () => void;
   onOpenConfigAdmin: () => void;
   onOpenMemoryAdmin: () => void;
@@ -91,6 +92,7 @@ export function ControlPanel({
   onToggleShowSystemMessages,
   onStartNewConversation,
   onOpenBrowser,
+  onOpenContentBrowser,
   onOpenToolsPanel,
   onOpenConfigAdmin,
   onOpenMemoryAdmin,
@@ -193,6 +195,18 @@ export function ControlPanel({
                 className={styles.panelButton}
               >
                 Conversations
+              </CompoundButton>
+              <CompoundButton
+                appearance="subtle"
+                icon={<DocumentEdit24Regular />}
+                secondaryContent="Browse uploaded content items"
+                onClick={() => {
+                  onClose();
+                  onOpenContentBrowser();
+                }}
+                className={styles.panelButton}
+              >
+                Content
               </CompoundButton>
               <CompoundButton
                 appearance="subtle"

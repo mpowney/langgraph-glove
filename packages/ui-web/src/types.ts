@@ -29,12 +29,23 @@ export interface AgentCapabilityEntry {
 export interface AgentCapabilityRegistry {
   agents: AgentCapabilityEntry[];
   tools: Record<string, ToolDefinition>;
+  /** Filtered tool definitions for explicitly configured or auto-discovered agent tools. */
+  toolDefinitions: Record<string, ToolDefinition>;
 }
 
 /** Lightweight tool event metadata attached to live tool-call/tool-result entries. */
 export interface ToolEventMetadata {
   tool: ToolDefinition;
   agentKey?: string;
+}
+
+export interface ContentItem {
+  contentRef: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength?: number;
+  downloadPath?: string;
+  previewPath?: string;
 }
 
 export type ServerMessage =
@@ -46,6 +57,7 @@ export type ServerMessage =
       streamSource?: "main" | "sub-agent";
       streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
+      contentItems?: ContentItem[];
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
@@ -57,8 +69,15 @@ export type ServerMessage =
       toolEventMetadata?: ToolEventMetadata;
       /** Optional tool name extracted from the message for UI access. */
       toolName?: string;
+      /** Optional uploaded content references associated with the tool event. */
+      contentItems?: ContentItem[];
     }
-  | { type: "done"; conversationId: string; checkpoint?: CheckpointMetadata }
+  | {
+      type: "done";
+      conversationId: string;
+      checkpoint?: CheckpointMetadata;
+      contentItems?: ContentItem[];
+    }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
 
@@ -123,6 +142,8 @@ export interface ChatEntry {
   toolEventMetadata?: ToolEventMetadata;
   /** Optional tool name extracted from the message for easy UI access. */
   toolName?: string;
+  /** Optional uploaded content references associated with this entry. */
+  contentItems?: ContentItem[];
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -144,6 +165,30 @@ export interface BrowserMessage {
   content: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
+  contentItems?: ContentItem[];
+}
+
+export interface ContentItemView {
+  contentRef: string;
+  conversationId: string;
+  toolName: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength: number;
+  createdAt: string;
+  deletedAt?: string;
+  previewUrl?: string;
+  downloadUrl?: string;
+}
+
+export interface ContentListResponse {
+  items: ContentItemView[];
+  pagination: {
+    limit: number;
+    offset: number;
+    count: number;
+    hasMore: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------

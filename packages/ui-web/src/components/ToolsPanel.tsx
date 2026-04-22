@@ -417,7 +417,6 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
   const [activeTab, setActiveTab] = useState<"catalog" | "agents" | "schedule">("catalog");
   const [filter, setFilter] = useState("");
 
-  const [tools, setTools] = useState<ToolDefinition[]>([]);
   const [registry, setRegistry] = useState<AgentCapabilityRegistry | null>(null);
   const [loadState, setLoadState] = useState<"idle" | "loading" | "error">("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -493,15 +492,9 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
       ? { Authorization: `Bearer ${authToken}` }
       : {};
     try {
-      const [toolsRes, capRes] = await Promise.all([
-        fetch(`${apiBaseUrl}/api/tools/registry`, { headers }),
-        fetch(`${apiBaseUrl}/api/agents/capabilities`, { headers }),
-      ]);
-      if (!toolsRes.ok) throw new Error(`Tools registry: HTTP ${toolsRes.status}`);
+      const capRes = await fetch(`${apiBaseUrl}/api/agents/capabilities`, { headers });
       if (!capRes.ok) throw new Error(`Capabilities: HTTP ${capRes.status}`);
-      const toolData = (await toolsRes.json()) as ToolDefinition[];
       const capData = (await capRes.json()) as AgentCapabilityRegistry;
-      setTools(toolData);
       setRegistry(capData);
       setLoadState("idle");
       void loadScheduleStatus();
@@ -529,6 +522,10 @@ export function ToolsPanel({ open, onClose, apiBaseUrl = "", authToken }: ToolsP
     };
   }, [open, loadScheduleStatus]);
 
+  const tools = useMemo(
+    () => Object.values(registry?.toolDefinitions ?? {}),
+    [registry],
+  );
   const toolCount = useMemo(() => tools.length, [tools]);
   const agentCount = useMemo(() => registry?.agents.length ?? 0, [registry]);
 

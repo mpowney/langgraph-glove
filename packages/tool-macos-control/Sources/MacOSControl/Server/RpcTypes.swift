@@ -40,11 +40,32 @@ struct RpcResponse {
 struct ToolMetadata {
     let name: String
     let description: String
+    let supportsContentUpload: Bool?
     /// JSON Schema object describing the `params` accepted by this tool.
     let parameters: [String: Any]
 
+    init(
+        name: String,
+        description: String,
+        supportsContentUpload: Bool? = nil,
+        parameters: [String: Any]
+    ) {
+        self.name = name
+        self.description = description
+        self.supportsContentUpload = supportsContentUpload
+        self.parameters = parameters
+    }
+
     func toJSON() -> [String: Any] {
-        ["name": name, "description": description, "parameters": parameters]
+        var json: [String: Any] = [
+            "name": name,
+            "description": description,
+            "parameters": parameters,
+        ]
+        if let supportsContentUpload {
+            json["supportsContentUpload"] = supportsContentUpload
+        }
+        return json
     }
 }
 

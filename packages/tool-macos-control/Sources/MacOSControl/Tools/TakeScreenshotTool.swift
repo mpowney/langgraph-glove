@@ -4,6 +4,7 @@ import CoreGraphics
 let takeScreenshotMetadata = ToolMetadata(
     name: "macos_take_screenshot",
     description: "Capture the screen and return a base64-encoded image payload. Defaults to bounded high-quality JPEG output. Requires Screen Recording permission.",
+    supportsContentUpload: true,
     parameters: [
         "type": "object",
         "properties": [

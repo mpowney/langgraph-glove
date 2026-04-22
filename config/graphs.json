@@ -12,7 +12,8 @@
       "macos-peekaboo",
       "admin",
       "datetime",
-      "scheduler"
+      "scheduler",
+      "docker"
     ]
   },
   "schedule-system": {

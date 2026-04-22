@@ -64,6 +64,9 @@ final class AppState: ObservableObject {
     /// The MCP server is started by appending `mcp`.
     @Published var peekabooBaseCommand: String = "npx -y @steipete/peekaboo"
 
+    /// Upstream Peekaboo tool names that should be marked with supportsContentUpload.
+    @Published var peekabooContentUploadToolNames: String = "image,see,clipboard"
+
     @Published var serverRunning: Bool = false
     @Published var serverError: String? = nil
 
@@ -133,6 +136,12 @@ final class AppState: ObservableObject {
            !baseCommand.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             peekabooBaseCommand = baseCommand
         }
+        if let contentUploadTools = UserDefaults.standard.string(forKey: "peekaboo.contentUploadToolNames") {
+            let normalized = normalizeToolNameCsv(contentUploadTools)
+            if !normalized.isEmpty {
+                peekabooContentUploadToolNames = normalized
+            }
+        }
         checkPermissions()
         Task { [weak self] in
             guard let self else { return }
@@ -158,6 +167,7 @@ final class AppState: ObservableObject {
         UserDefaults.standard.set(macosToolsEnabled, forKey: "macos.tools.enabled")
         UserDefaults.standard.set(peekabooEnabled, forKey: "peekaboo.enabled")
         UserDefaults.standard.set(peekabooBaseCommand, forKey: "peekaboo.baseCommand")
+        UserDefaults.standard.set(normalizeToolNameCsv(peekabooContentUploadToolNames), forKey: "peekaboo.contentUploadToolNames")
     }
 
     // MARK: - Permission management
@@ -223,6 +233,7 @@ final class AppState: ObservableObject {
         await registerAllTools(in: registry)
 
         let baseCommand = peekabooEnabled ? peekabooBaseCommand.trimmingCharacters(in: .whitespacesAndNewlines) : nil
+        let contentUploadToolNames = peekabooContentUploadToolSet()
 
         do {
             switch transport {
@@ -231,7 +242,8 @@ final class AppState: ObservableObject {
                     port: UInt16(clamping: serverPort),
                     registry: registry,
                     peekabooMcpBridge: peekabooEnabled ? peekabooMcpBridge : nil,
-                    peekabooBaseCommand: baseCommand
+                    peekabooBaseCommand: baseCommand,
+                    peekabooContentUploadToolNames: contentUploadToolNames
                 )
                 s.onRequestHandled = { [weak self] in
                     Task { @MainActor [weak self] in self?.lastRequestDate = Date() }
@@ -244,7 +256,8 @@ final class AppState: ObservableObject {
                     name: socketName,
                     registry: registry,
                     peekabooMcpBridge: peekabooEnabled ? peekabooMcpBridge : nil,
-                    peekabooBaseCommand: baseCommand
+                    peekabooBaseCommand: baseCommand,
+                    peekabooContentUploadToolNames: contentUploadToolNames
                 )
                 s.onConnectionOpened = { [weak self] in
                     Task { @MainActor [weak self] in
@@ -351,7 +364,10 @@ final class AppState: ObservableObject {
             }
 
             do {
-                let discovered = try await peekabooMcpBridge.discoverTools(baseCommand: baseCommand)
+                let discovered = try await peekabooMcpBridge.discoverTools(
+                    baseCommand: baseCommand,
+                    contentUploadToolNames: peekabooContentUploadToolSet()
+                )
                 self.setPeekabooDiscoveredTools(discovered)
                 self.peekabooLastError = nil
                 lines.append(PeekabooDiagnosticLine(id: UUID().uuidString, text: "MCP handshake: successful"))
@@ -493,12 +509,30 @@ final class AppState: ObservableObject {
 
     private func refreshPeekabooDiscoveredTools(baseCommand: String) async {
         do {
-            let discovered = try await peekabooMcpBridge.discoverTools(baseCommand: baseCommand)
+            let discovered = try await peekabooMcpBridge.discoverTools(
+                baseCommand: baseCommand,
+                contentUploadToolNames: peekabooContentUploadToolSet()
+            )
             setPeekabooDiscoveredTools(discovered)
             peekabooLastError = nil
         } catch {
             peekabooDiscoveredTools = []
             peekabooLastError = error.localizedDescription
         }
+    }
+
+    private func peekabooContentUploadToolSet() -> Set<String> {
+        Set(parseToolNameCsv(peekabooContentUploadToolNames).map { $0.lowercased() })
+    }
+
+    private func normalizeToolNameCsv(_ value: String) -> String {
+        parseToolNameCsv(value).joined(separator: ",")
+    }
+
+    private func parseToolNameCsv(_ value: String) -> [String] {
+        value
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
     }
 }

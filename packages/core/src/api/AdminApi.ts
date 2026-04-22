@@ -64,6 +64,16 @@ export interface BrowserMessage {
   content: string;
   tool_calls?: Array<{ name: string; id: string; args: unknown }>;
   tool_call_id?: string;
+  contentItems?: BrowserContentItem[];
+}
+
+export interface BrowserContentItem {
+  contentRef: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength?: number;
+  downloadPath?: string;
+  previewPath?: string;
 }
 
 /** Summary row returned by `GET /api/conversations`. */
@@ -112,6 +122,17 @@ export interface TopologyPayload {
   };
 }
 
+export interface ContentItemView {
+  contentRef: string;
+  conversationId: string;
+  toolName: string;
+  fileName?: string;
+  mimeType?: string;
+  byteLength: number;
+  createdAt: string;
+  deletedAt?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -124,11 +145,86 @@ function lcIdToRole(id: string[]): BrowserMessage["role"] {
   return "system";
 }
 
-function extractMessages(checkpointJson: string): BrowserMessage[] {
+function extractContentRefs(value: unknown): string[] {
+  const refs = new Set<string>();
+
+  const collect = (input: unknown): void => {
+    if (!input) return;
+
+    if (typeof input === "string") {
+      const trimmed = input.trim();
+      if (/^content_[a-f0-9-]+$/i.test(trimmed)) {
+        refs.add(trimmed);
+      }
+
+      const matches = trimmed.match(/content_[a-f0-9-]+/gi);
+      if (matches) {
+        for (const match of matches) refs.add(match);
+      }
+
+      try {
+        const parsed = JSON.parse(trimmed) as unknown;
+        if (parsed !== input) collect(parsed);
+      } catch {
+        // Non-JSON string payloads are expected.
+      }
+      return;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) collect(item);
+      return;
+    }
+
+    if (typeof input === "object") {
+      const record = input as Record<string, unknown>;
+      if (typeof record["contentRef"] === "string") {
+        refs.add(record["contentRef"] as string);
+      }
+      if (Array.isArray(record["contentRefs"])) {
+        for (const ref of record["contentRefs"] as unknown[]) {
+          if (typeof ref === "string") refs.add(ref);
+        }
+      }
+      for (const nested of Object.values(record)) {
+        collect(nested);
+      }
+    }
+  };
+
+  collect(value);
+  return [...refs];
+}
+
+function resolveBrowserContentItems(
+  refs: string[],
+  getContentByRef?: (contentRef: string) => ContentItemView | undefined,
+): BrowserContentItem[] | undefined {
+  if (!getContentByRef || refs.length === 0) return undefined;
+  const items: BrowserContentItem[] = [];
+  for (const contentRef of refs) {
+    const meta = getContentByRef(contentRef);
+    if (!meta || meta.deletedAt) continue;
+    items.push({
+      contentRef,
+      fileName: meta.fileName,
+      mimeType: meta.mimeType,
+      byteLength: meta.byteLength,
+      downloadPath: `/api/content/${encodeURIComponent(contentRef)}/download`,
+      previewPath: `/api/content/${encodeURIComponent(contentRef)}/preview`,
+    });
+  }
+  return items.length > 0 ? items : undefined;
+}
+
+function extractMessages(
+  checkpointJson: string,
+  getContentByRef?: (contentRef: string) => ContentItemView | undefined,
+): BrowserMessage[] {
   try {
     const cp = JSON.parse(checkpointJson) as { channel_values?: { messages?: LcMessage[] } };
     const raw = cp.channel_values?.messages ?? [];
-    return raw.map((m) => {
+    const baseMessages = raw.map((m) => {
       const role = lcIdToRole(m.id);
       const content =
         typeof m.kwargs.content === "string"
@@ -143,6 +239,49 @@ function extractMessages(checkpointJson: string): BrowserMessage[] {
         content,
         ...(tool_calls ? { tool_calls } : {}),
         ...(m.kwargs.tool_call_id ? { tool_call_id: m.kwargs.tool_call_id } : {}),
+      };
+    });
+
+    const pendingRefs: string[] = [];
+    const pendingSet = new Set<string>();
+
+    return baseMessages.map((message) => {
+      if (message.role === "tool") {
+        for (const ref of extractContentRefs(message.content)) {
+          if (pendingSet.has(ref)) continue;
+          pendingSet.add(ref);
+          pendingRefs.push(ref);
+        }
+        return message;
+      }
+
+      if (message.role !== "ai") {
+        return message;
+      }
+
+      const aiRefs: string[] = [];
+      const aiSet = new Set<string>();
+      for (const ref of extractContentRefs(message.content)) {
+        if (aiSet.has(ref)) continue;
+        aiSet.add(ref);
+        aiRefs.push(ref);
+      }
+
+      const combinedRefs: string[] = [];
+      const combinedSet = new Set<string>();
+      for (const ref of [...aiRefs, ...pendingRefs]) {
+        if (combinedSet.has(ref)) continue;
+        combinedSet.add(ref);
+        combinedRefs.push(ref);
+      }
+
+      pendingRefs.length = 0;
+      pendingSet.clear();
+
+      const contentItems = resolveBrowserContentItems(combinedRefs, getContentByRef);
+      return {
+        ...message,
+        ...(contentItems ? { contentItems } : {}),
       };
     });
   } catch {
@@ -217,6 +356,22 @@ export interface AdminApiConfig {
     role?: "agent" | "error";
     channelName?: string;
   }) => Promise<void>;
+  /** Optional callback for trusted services to execute internal content RPC calls. */
+  handleContentRpc?: (request: RpcRequest) => Promise<RpcResponse>;
+  /** Optional callback for content metadata lookup by content reference. */
+  getContentByRef?: (contentRef: string) => ContentItemView | undefined;
+  /** Optional callback for listing content metadata rows. */
+  listContent?: (options: {
+    conversationId?: string;
+    toolName?: string;
+    includeDeleted?: boolean;
+    limit?: number;
+    offset?: number;
+  }) => ContentItemView[];
+  /** Optional callback for content byte retrieval by content reference. */
+  getContentBytesByRef?: (contentRef: string) => Buffer | undefined;
+  /** Optional callback for explicit content deletion by content reference. */
+  deleteContentByRef?: (contentRef: string) => void;
   /**
    * Path to the secrets directory.
    *
@@ -258,6 +413,11 @@ export class AdminApi {
   private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
   private readonly sendSystemMessage?: AdminApiConfig["sendSystemMessage"];
   private readonly sendChannelMessage?: AdminApiConfig["sendChannelMessage"];
+  private readonly handleContentRpc?: AdminApiConfig["handleContentRpc"];
+  private readonly getContentByRef?: AdminApiConfig["getContentByRef"];
+  private readonly listContent?: AdminApiConfig["listContent"];
+  private readonly getContentBytesByRef?: AdminApiConfig["getContentBytesByRef"];
+  private readonly deleteContentByRef?: AdminApiConfig["deleteContentByRef"];
   private readonly secretsDir?: string;
   private readonly app: Express;
   private httpServer?: http.Server;
@@ -278,6 +438,11 @@ export class AdminApi {
     this.invokeAgent = config.invokeAgent;
     this.sendSystemMessage = config.sendSystemMessage;
     this.sendChannelMessage = config.sendChannelMessage;
+    this.handleContentRpc = config.handleContentRpc;
+    this.getContentByRef = config.getContentByRef;
+    this.listContent = config.listContent;
+    this.getContentBytesByRef = config.getContentBytesByRef;
+    this.deleteContentByRef = config.deleteContentByRef;
     this.secretsDir = config.secretsDir;
 
     this.app = express();
@@ -317,7 +482,7 @@ export class AdminApi {
     // CORS — allow the SPA (on a different origin/port) to call this API
     this.app.use((_req, res, next) => {
       res.setHeader("Access-Control-Allow-Origin", this.allowedOrigins);
-      res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
       res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Privilege-Grant-Id, X-Conversation-Id");
       if (_req.method === "OPTIONS") {
         res.sendStatus(204);
@@ -904,9 +1069,23 @@ export class AdminApi {
       for (const t of this.toolRegistry) {
         toolsByName[t.name] = t;
       }
+      const configuredToolNames = new Set<string>();
+      for (const agent of this.agentCapabilities) {
+        for (const toolName of agent.tools ?? []) {
+          configuredToolNames.add(toolName);
+        }
+      }
+      const toolDefinitions: Record<string, ToolDefinition> = {};
+      for (const toolName of configuredToolNames) {
+        const definition = toolsByName[toolName];
+        if (definition) {
+          toolDefinitions[toolName] = definition;
+        }
+      }
       const payload: AgentCapabilityRegistry = {
         agents: this.agentCapabilities,
         tools: toolsByName,
+        toolDefinitions,
       };
       res.json(payload);
     });
@@ -932,6 +1111,272 @@ export class AdminApi {
 
     this.app.all("/api/tools/:toolPath/*", (req, res) => {
       void proxyToolRequest(req, res);
+    });
+
+    this.app.post("/api/internal/content/rpc", (req, res) => {
+      void (async () => {
+        if (!isLoopbackAddress(req.socket.remoteAddress)) {
+          res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+          return;
+        }
+        if (!this.handleContentRpc) {
+          res.status(503).json({ error: "Content RPC handler is not available" });
+          return;
+        }
+
+        const body = req.body as Partial<RpcRequest> | undefined;
+        if (!body || typeof body.id !== "string" || typeof body.method !== "string") {
+          res.status(400).json({ error: "Invalid RPC request: missing id or method" });
+          return;
+        }
+
+        const params =
+          body.params && typeof body.params === "object" && !Array.isArray(body.params)
+            ? (body.params as Record<string, unknown>)
+            : {};
+
+        const rpcRequest: RpcRequest = {
+          id: body.id,
+          method: body.method,
+          params,
+        };
+
+        try {
+          const response = await this.handleContentRpc(rpcRequest);
+          res.json(response);
+        } catch (err) {
+          const response: RpcResponse = {
+            id: rpcRequest.id,
+            error: err instanceof Error ? err.message : String(err),
+          };
+          res.json(response);
+        }
+      })();
+    });
+
+    this.app.get("/api/content", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!this.listContent) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const conversationId = typeof req.query["conversationId"] === "string"
+        ? req.query["conversationId"].trim() || undefined
+        : undefined;
+      const toolName = typeof req.query["toolName"] === "string"
+        ? req.query["toolName"].trim() || undefined
+        : undefined;
+      const includeDeleted = String(req.query["includeDeleted"] ?? "").toLowerCase() === "true";
+
+      const parsedLimit = Number(req.query["limit"]);
+      const parsedOffset = Number(req.query["offset"]);
+      const limit = Number.isFinite(parsedLimit) ? Math.min(Math.max(Math.trunc(parsedLimit), 1), 500) : 100;
+      const offset = Number.isFinite(parsedOffset) ? Math.max(Math.trunc(parsedOffset), 0) : 0;
+
+      const items = this.listContent({
+        conversationId,
+        toolName,
+        includeDeleted,
+        limit,
+        offset,
+      });
+
+      res.json({
+        items,
+        pagination: {
+          limit,
+          offset,
+          count: items.length,
+          hasMore: items.length === limit,
+        },
+      });
+    });
+
+    this.app.get("/api/content/:contentRef", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!this.getContentByRef) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const contentRef = String(req.params["contentRef"] ?? "").trim();
+      if (!contentRef) {
+        res.status(400).json({ error: "contentRef is required" });
+        return;
+      }
+
+      const item = this.getContentByRef(contentRef);
+      if (!item) {
+        res.status(404).json({ error: "Content not found" });
+        return;
+      }
+
+      const pathRef = encodeURIComponent(contentRef);
+      const baseUrl = `${req.protocol}://${req.get("host") ?? "localhost"}`;
+      res.json({
+        ...item,
+        previewUrl: `${baseUrl}/api/content/${pathRef}/preview`,
+        downloadUrl: `${baseUrl}/api/content/${pathRef}/download`,
+      });
+    });
+
+    this.app.get("/api/content/:contentRef/preview", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!this.getContentByRef || !this.getContentBytesByRef) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const contentRef = String(req.params["contentRef"] ?? "").trim();
+      if (!contentRef) {
+        res.status(400).json({ error: "contentRef is required" });
+        return;
+      }
+
+      const item = this.getContentByRef(contentRef);
+      if (!item || item.deletedAt) {
+        res.status(404).json({ error: "Content not found" });
+        return;
+      }
+
+      const mimeType = item.mimeType?.trim() || "application/octet-stream";
+      if (!isInlineSafeMimeType(mimeType)) {
+        res.status(415).json({ error: `Preview not supported for MIME type: ${mimeType}` });
+        return;
+      }
+
+      const bytes = this.getContentBytesByRef(contentRef);
+      if (!bytes) {
+        res.status(404).json({ error: "Content bytes not found" });
+        return;
+      }
+
+      const fileName = item.fileName?.trim() || `${contentRef}.bin`;
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Length", String(bytes.byteLength));
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename="${fileName.replace(/\"/g, "")}"`,
+      );
+      res.status(200).send(bytes);
+    });
+
+    this.app.get("/api/content/:contentRef/download", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!this.getContentByRef || !this.getContentBytesByRef) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const contentRef = String(req.params["contentRef"] ?? "").trim();
+      if (!contentRef) {
+        res.status(400).json({ error: "contentRef is required" });
+        return;
+      }
+
+      const item = this.getContentByRef(contentRef);
+      if (!item || item.deletedAt) {
+        res.status(404).json({ error: "Content not found" });
+        return;
+      }
+
+      const bytes = this.getContentBytesByRef(contentRef);
+      if (!bytes) {
+        res.status(404).json({ error: "Content bytes not found" });
+        return;
+      }
+
+      const mimeType = item.mimeType?.trim() || "application/octet-stream";
+      const fileName = item.fileName?.trim() || `${contentRef}.bin`;
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Length", String(bytes.byteLength));
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileName.replace(/\"/g, "")}"`,
+      );
+      res.status(200).send(bytes);
+    });
+
+    this.app.delete("/api/content/:contentRef", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!this.deleteContentByRef) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const contentRef = String(req.params["contentRef"] ?? "").trim();
+      if (!contentRef) {
+        res.status(400).json({ error: "contentRef is required" });
+        return;
+      }
+
+      this.deleteContentByRef(contentRef);
+      res.status(204).send();
+    });
+
+    this.app.get("/api/internal/content/:contentRef", (req, res) => {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+        return;
+      }
+      if (!this.getContentByRef) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const contentRef = String(req.params["contentRef"] ?? "").trim();
+      if (!contentRef) {
+        res.status(400).json({ error: "contentRef is required" });
+        return;
+      }
+
+      const item = this.getContentByRef(contentRef);
+      if (!item || item.deletedAt) {
+        res.status(404).json({ error: "Content not found" });
+        return;
+      }
+
+      res.json(item);
+    });
+
+    this.app.get("/api/internal/content/:contentRef/download", (req, res) => {
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.status(403).json({ error: "Forbidden: only localhost callers are allowed" });
+        return;
+      }
+      if (!this.getContentByRef || !this.getContentBytesByRef) {
+        res.status(503).json({ error: "Content store is not available" });
+        return;
+      }
+
+      const contentRef = String(req.params["contentRef"] ?? "").trim();
+      if (!contentRef) {
+        res.status(400).json({ error: "contentRef is required" });
+        return;
+      }
+
+      const item = this.getContentByRef(contentRef);
+      if (!item || item.deletedAt) {
+        res.status(404).json({ error: "Content not found" });
+        return;
+      }
+
+      const bytes = this.getContentBytesByRef(contentRef);
+      if (!bytes) {
+        res.status(404).json({ error: "Content bytes not found" });
+        return;
+      }
+
+      const mimeType = item.mimeType?.trim() || "application/octet-stream";
+      const fileName = item.fileName?.trim() || `${contentRef}.bin`;
+      res.setHeader("Content-Type", mimeType);
+      res.setHeader("Content-Length", String(bytes.byteLength));
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${fileName.replace(/\"/g, "")}"`,
+      );
+      res.status(200).send(bytes);
     });
 
     if (this.dbPath) {
@@ -996,7 +1441,7 @@ export class AdminApi {
             res.status(404).json({ error: "Conversation not found" });
             return;
           }
-          res.json(extractMessages(row.checkpoint as unknown as string));
+          res.json(extractMessages(row.checkpoint as unknown as string, this.getContentByRef));
         } catch (err) {
           res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
         }
@@ -1300,6 +1745,7 @@ function buildTopologyPayload(params: {
       meta: {
         description: tool.description,
         requiresPrivilegedAccess: Boolean(tool.requiresPrivilegedAccess),
+        supportsContentUpload: Boolean(tool.supportsContentUpload),
       },
     });
   }
@@ -1385,4 +1831,21 @@ function getRpId(origin: string): string {
   } catch {
     return "localhost";
   }
+}
+
+function isLoopbackAddress(remoteAddress: string | undefined): boolean {
+  if (!remoteAddress) return false;
+  return (
+    remoteAddress === "127.0.0.1"
+    || remoteAddress === "::1"
+    || remoteAddress === "::ffff:127.0.0.1"
+  );
+}
+
+function isInlineSafeMimeType(mimeType: string): boolean {
+  const normalized = mimeType.toLowerCase().trim();
+  if (normalized.startsWith("image/")) return true;
+  return normalized === "application/pdf"
+    || normalized.startsWith("text/")
+    || normalized === "application/json";
 }
