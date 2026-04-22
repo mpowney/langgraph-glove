@@ -32,9 +32,7 @@ function mergeContentItems(
   if (merged.length === 0) return undefined;
   const unique = new Map<string, NonNullable<ChatEntry["contentItems"]>[number]>();
   for (const item of merged) {
-    if (!unique.has(item.contentRef)) {
-      unique.set(item.contentRef, item);
-    }
+    unique.set(item.contentRef, item);
   }
   return [...unique.values()];
 }
