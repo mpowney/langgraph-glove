@@ -135,6 +135,7 @@
       "vector": {
         "embeddingModelKey": "imap-embed",
         "indexingStrategy": "immediate",
+        "embeddingBatchSize": 4,
         "chunking": {
           "chunkSize": 900,
           "chunkOverlap": 140
@@ -172,6 +173,7 @@
       "vector": {
         "embeddingModelKey": "imap-embed",
         "indexingStrategy": "immediate",
+        "embeddingBatchSize": 4,
         "chunking": {
           "chunkSize": 900,
           "chunkOverlap": 140

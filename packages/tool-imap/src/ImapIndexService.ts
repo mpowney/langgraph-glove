@@ -59,6 +59,7 @@ interface ResolvedImapSettings {
   pollIntervalMs: number;
   chunkSize: number;
   chunkOverlap: number;
+  embeddingBatchSize: number;
   embeddingModelKey: string;
   indexingStrategy: "immediate" | "deferred";
   indexDbPath: string;
@@ -121,6 +122,12 @@ interface ChunkRecord {
   startOffset: number;
   endOffset: number;
   content: string;
+}
+
+interface CrawlProgressState {
+  startedAtMs: number;
+  lastLoggedAtMs: number;
+  changedEmails: number;
 }
 
 export class ImapIndexService {
@@ -208,6 +215,7 @@ export class ImapIndexService {
       embeddings: {
         modelKey: this.settings.embeddingModelKey,
         indexingStrategy: this.settings.indexingStrategy,
+        embeddingBatchSize: this.settings.embeddingBatchSize,
       },
       totals: {
         emails: messageCount.count,
@@ -231,9 +239,19 @@ export class ImapIndexService {
     let crawledCount = 0;
     let indexedCount = 0;
     const folderSummaries: Array<Record<string, unknown>> = [];
+    const progress: CrawlProgressState = {
+      startedAtMs: Date.now(),
+      lastLoggedAtMs: Date.now(),
+      changedEmails: 0,
+    };
 
     try {
       folders = await this.resolveFoldersToCrawl(client, input.folder);
+
+      console.log(
+        `[tool-imap] crawl started tool=${this.settings.toolKey} folders=${folders.length} `
+        + `indexingStrategy=${this.settings.indexingStrategy} embeddingModel=${this.settings.embeddingModelKey}`,
+      );
 
       for (const folder of folders) {
         await client.mailboxOpen(folder);
@@ -280,10 +298,21 @@ export class ImapIndexService {
           crawledCount += 1;
 
           if (changed) {
+            progress.changedEmails += 1;
             const chunks = await this.reindexEmail(parsed.id);
             folderIndexed += chunks;
             indexedCount += chunks;
           }
+
+          this.maybeLogCrawlProgress(progress, {
+            folder,
+            foldersCompleted: folderSummaries.length,
+            totalFolders: folders.length,
+            crawledCount,
+            changedEmails: progress.changedEmails,
+            indexedCount,
+            force: false,
+          });
 
           newestUid = Math.max(newestUid, parsed.uid);
 
@@ -294,6 +323,15 @@ export class ImapIndexService {
 
         this.upsertFolderState(folder, newestUid, null);
         folderSummaries.push({ folder, crawled: folderCrawled, indexed: folderIndexed, lastUid: newestUid });
+        this.maybeLogCrawlProgress(progress, {
+          folder,
+          foldersCompleted: folderSummaries.length,
+          totalFolders: folders.length,
+          crawledCount,
+          changedEmails: progress.changedEmails,
+          indexedCount,
+          force: true,
+        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -667,8 +705,15 @@ export class ImapIndexService {
     }
 
     const embeddings = this.embeddingRegistry.get(this.settings.embeddingModelKey);
-    const vectors = await embeddings.embedDocuments(chunks.map((chunk) => chunk.content));
-    return vectors.map((vector) => [...vector]);
+    const vectors: number[][] = [];
+    for (let index = 0; index < chunks.length; index += this.settings.embeddingBatchSize) {
+      const batch = chunks.slice(index, index + this.settings.embeddingBatchSize);
+      const batchVectors = await embeddings.embedDocuments(batch.map((chunk) => chunk.content));
+      for (const vector of batchVectors) {
+        vectors.push([...vector]);
+      }
+    }
+    return vectors;
   }
 
   private async getQueryEmbedding(query: string, rows: ChunkRow[]): Promise<number[] | null> {
@@ -844,6 +889,7 @@ export class ImapIndexService {
       pollIntervalMs: entry.crawl?.pollIntervalMs ?? 5 * 60 * 1000,
       chunkSize: entry.vector?.chunking?.chunkSize ?? 800,
       chunkOverlap: entry.vector?.chunking?.chunkOverlap ?? 120,
+      embeddingBatchSize: entry.vector?.embeddingBatchSize ?? 8,
       embeddingModelKey: entry.vector?.embeddingModelKey ?? "default",
       indexingStrategy: entry.vector?.indexingStrategy ?? "immediate",
       indexDbPath: entry.indexDbPath ?? `data/imap-${slugify(toolKey)}.sqlite`,
@@ -874,6 +920,40 @@ export class ImapIndexService {
   private resolveProjectPath(targetPath: string): string {
     if (path.isAbsolute(targetPath)) return targetPath;
     return path.resolve(this.configDir, "..", targetPath);
+  }
+
+  private maybeLogCrawlProgress(
+    progress: CrawlProgressState,
+    details: {
+      folder: string;
+      foldersCompleted: number;
+      totalFolders: number;
+      crawledCount: number;
+      changedEmails: number;
+      indexedCount: number;
+      force: boolean;
+    },
+  ): void {
+    const now = Date.now();
+    const elapsedMs = now - progress.startedAtMs;
+    const shouldLog = details.force
+      || details.crawledCount === 1
+      || details.crawledCount % 25 === 0
+      || now - progress.lastLoggedAtMs >= 15000;
+
+    if (!shouldLog) {
+      return;
+    }
+
+    progress.lastLoggedAtMs = now;
+    const embeddingStatus = this.settings.indexingStrategy === "immediate" ? "indexed" : "pending";
+    console.log(
+      `[tool-imap] crawl progress tool=${this.settings.toolKey} `
+      + `folder=${details.folder} folders=${details.foldersCompleted}/${details.totalFolders} `
+      + `emails=${details.crawledCount} changed=${details.changedEmails} `
+      + `chunks=${details.indexedCount} embeddings=${embeddingStatus} `
+      + `model=${this.settings.embeddingModelKey} elapsedMs=${elapsedMs}`,
+    );
   }
 
   private renderItemUrl(metadata: Record<string, string | number | null | undefined>): string | null {
