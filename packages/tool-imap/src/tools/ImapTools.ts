@@ -117,5 +117,56 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
       },
       handler: async () => service.status(),
     },
+    {
+      metadata: {
+        name: "imap_estimate_remaining",
+        description: "Estimate how many emails remain to be crawled by querying IMAP folder UIDs.",
+        parameters: {
+          type: "object",
+          properties: {
+            forceRefreshEstimate: {
+              type: "boolean",
+              description: "When true, bypass cached estimate and refresh from IMAP immediately.",
+            },
+          },
+        },
+      },
+      handler: async (params: Record<string, unknown>) => service.remainingEstimate({
+        forceRefreshEstimate: params["forceRefreshEstimate"] as boolean | undefined,
+      }),
+    },
+    {
+      metadata: {
+        name: "imap_stop_crawl",
+        description: "Stop the currently running IMAP crawl. Has no effect if no crawl is active.",
+        parameters: {
+          type: "object",
+          properties: {},
+        },
+      },
+      handler: async () => service.stopCrawl(),
+    },
+    {
+      metadata: {
+        name: "imap_start_crawl",
+        description: "Start an incremental IMAP crawl in the background. Has no effect if a crawl is already running.",
+        parameters: {
+          type: "object",
+          properties: {},
+        },
+      },
+      handler: async () => service.startCrawl(),
+    },
+    {
+      metadata: {
+        name: "imap_clear_index",
+        description: "Clear all indexed IMAP data and crawl checkpoints so future crawls re-ingest from scratch.",
+        parameters: {
+          type: "object",
+          properties: {},
+        },
+      },
+      handler: async () => service.clearIndex(),
+    },
   ];
 }

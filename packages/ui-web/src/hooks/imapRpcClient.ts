@@ -42,17 +42,6 @@ export interface ImapToolStatusEntry {
       startedAt?: string;
       lastFinishedAt?: string | null;
     };
-    estimate?: {
-      available?: boolean;
-      remainingEmails?: number | null;
-      byFolder?: Array<{
-        folder: string;
-        crawledToUid: number;
-        maxUid: number;
-        remainingEmails: number;
-      }>;
-      error?: string;
-    };
   };
   error?: string;
 }
@@ -64,9 +53,56 @@ export interface ImapCrawlStatusResult {
     totalTools: number;
     failedTools: number;
     activeCrawls: number;
+  };
+}
+
+export interface ImapRemainingEstimateEntry {
+  toolKey: string;
+  estimate?: {
+    available?: boolean;
+    remainingEmails?: number | null;
+    byFolder?: Array<{
+      folder: string;
+      crawledToUid: number;
+      maxUid: number;
+      remainingEmails: number;
+    }>;
+    error?: string;
+    cache?: {
+      hit?: boolean;
+      ageMs?: number;
+      ttlMs?: number;
+    };
+  };
+  error?: string;
+}
+
+export interface ImapRemainingEstimateResult {
+  generatedAt: string;
+  tools: ImapRemainingEstimateEntry[];
+  summary: {
+    totalTools: number;
+    failedTools: number;
     toolsWithEstimate: number;
     estimatedRemainingEmails: number;
   };
+}
+
+export interface ImapRemainingEstimateOptions {
+  forceRefreshEstimate?: boolean;
+}
+
+export interface ImapClearIndexResult {
+  toolKey: string;
+  clearedAt: string;
+  countsBefore: {
+    emails: number;
+    chunks: number;
+    embeddings: number;
+    folderState: number;
+  };
+  nextCrawlMode: "manual" | "startup" | "continuous-sync";
+  note: string;
 }
 
 function buildHeaders(
@@ -149,6 +185,88 @@ export async function getImapCrawlStatus(
     apiBaseUrl,
     "imap_get_crawl_status",
     {},
+    authToken,
+    privilegedGrantId,
+    conversationId,
+  );
+}
+
+export async function getImapRemainingEstimate(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+  options: ImapRemainingEstimateOptions = {},
+): Promise<ImapRemainingEstimateResult> {
+  return callImapRpc<ImapRemainingEstimateResult>(
+    apiBaseUrl,
+    "imap_get_remaining_estimate",
+    {
+      forceRefreshEstimate: options.forceRefreshEstimate,
+    },
+    authToken,
+    privilegedGrantId,
+    conversationId,
+  );
+}
+
+export interface ImapStopCrawlResult {
+  toolKey: string;
+  stopped: boolean;
+  reason?: string;
+}
+
+export interface ImapStartCrawlResult {
+  toolKey: string;
+  started: boolean;
+  reason?: string;
+}
+
+export async function stopImapCrawl(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+  toolKey: string,
+): Promise<ImapStopCrawlResult> {
+  return callImapRpc<ImapStopCrawlResult>(
+    apiBaseUrl,
+    "imap_stop_crawl",
+    { toolKey },
+    authToken,
+    privilegedGrantId,
+    conversationId,
+  );
+}
+
+export async function startImapCrawl(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+  toolKey: string,
+): Promise<ImapStartCrawlResult> {
+  return callImapRpc<ImapStartCrawlResult>(
+    apiBaseUrl,
+    "imap_start_crawl",
+    { toolKey },
+    authToken,
+    privilegedGrantId,
+    conversationId,
+  );
+}
+
+export async function clearImapIndex(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+  toolKey: string,
+): Promise<ImapClearIndexResult> {
+  return callImapRpc<ImapClearIndexResult>(
+    apiBaseUrl,
+    "imap_clear_index",
+    { toolKey },
     authToken,
     privilegedGrantId,
     conversationId,

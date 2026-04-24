@@ -144,6 +144,11 @@ interface CrawlRuntimeState {
   lastFinishedAtIso: string | null;
 }
 
+interface EstimateCacheState {
+  capturedAtMs: number;
+  value: Record<string, unknown>;
+}
+
 export class ImapIndexService {
   private readonly settings: ResolvedImapSettings;
   private readonly db: Database.Database;
@@ -151,6 +156,9 @@ export class ImapIndexService {
   private pollTimer: NodeJS.Timeout | null = null;
   private readonly configDir: string;
   private crawlRuntime: CrawlRuntimeState | null = null;
+  private estimateCache: EstimateCacheState | null = null;
+  private crawlAbortRequested = false;
+  private static readonly ESTIMATE_CACHE_TTL_MS = 30_000;
 
   constructor(options: { toolKey: string; configDir?: string; secretsDir?: string }) {
     this.configDir = path.resolve(options.configDir ?? process.env["GLOVE_CONFIG_DIR"] ?? "config");
@@ -212,7 +220,6 @@ export class ImapIndexService {
       .all() as Array<{ folder: string; last_uid: number | null; last_crawled_at: string | null; last_error: string | null }>;
 
     const crawlRuntime = this.getCrawlRuntimeSnapshot();
-    const estimate = await this.estimateRemainingEmails();
 
     return {
       toolKey: this.settings.toolKey,
@@ -242,11 +249,47 @@ export class ImapIndexService {
       },
       folders,
       crawlRuntime,
-      estimate,
     };
   }
 
+  async remainingEstimate(input: { forceRefreshEstimate?: boolean } = {}): Promise<Record<string, unknown>> {
+    return this.getEstimateWithCache({ forceRefresh: input.forceRefreshEstimate === true });
+  }
+
+  async stopCrawl(): Promise<Record<string, unknown>> {
+    if (!this.crawlRuntime?.active) {
+      return { toolKey: this.settings.toolKey, stopped: false, reason: "No crawl is currently active" };
+    }
+    this.crawlAbortRequested = true;
+    // Also directly mark as inactive so status reflects the stop immediately,
+    // even if the crawl loop hasn't yet checked the abort flag.
+    this.crawlRuntime.active = false;
+    this.crawlRuntime.currentFolder = null;
+    return { toolKey: this.settings.toolKey, stopped: true };
+  }
+
+  async startCrawl(): Promise<Record<string, unknown>> {
+    if (this.crawlRuntime?.active) {
+      return { toolKey: this.settings.toolKey, started: false, reason: "A crawl is already in progress" };
+    }
+    void this.crawl({ full: false }).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`[tool-imap] manual start crawl failed: ${message}\n`);
+    });
+    return { toolKey: this.settings.toolKey, started: true };
+  }
+
   async crawl(input: CrawlInput = {}): Promise<Record<string, unknown>> {
+    if (this.crawlRuntime?.active) {
+      return {
+        skipped: true,
+        reason: "A crawl is already in progress",
+        toolKey: this.settings.toolKey,
+      };
+    }
+
+    this.crawlAbortRequested = false;
+
     let folders: string[] = [];
     const since = input.since ? new Date(input.since) : null;
     if (since && Number.isNaN(since.getTime())) {
@@ -254,7 +297,6 @@ export class ImapIndexService {
     }
 
     const client = this.createClient();
-    await client.connect();
 
     const mode: "full" | "incremental" = input.full ? "full" : "incremental";
     const crawlStartedAt = new Date().toISOString();
@@ -282,6 +324,8 @@ export class ImapIndexService {
     };
 
     try {
+      await client.connect();
+      this.estimateCache = null;
       folders = await this.resolveFoldersToCrawl(client, input.folder);
       if (this.crawlRuntime) {
         this.crawlRuntime.totalFolders = folders.length;
@@ -293,6 +337,10 @@ export class ImapIndexService {
       );
 
       for (const folder of folders) {
+        if (this.crawlAbortRequested) {
+          console.log(`[tool-imap] crawl aborted before folder=${folder} tool=${this.settings.toolKey}`);
+          break;
+        }
         if (this.crawlRuntime) {
           this.crawlRuntime.currentFolder = folder;
         }
@@ -365,7 +413,7 @@ export class ImapIndexService {
 
           newestUid = Math.max(newestUid, parsed.uid);
 
-          if (folderCrawled >= this.settings.batchSize) {
+          if (this.crawlAbortRequested || folderCrawled >= this.settings.batchSize) {
             break;
           }
         }
@@ -400,6 +448,7 @@ export class ImapIndexService {
         this.crawlRuntime.currentFolder = null;
         this.crawlRuntime.lastFinishedAtIso = finishedAtIso;
       }
+      this.estimateCache = null;
     }
 
     return {
@@ -551,6 +600,45 @@ export class ImapIndexService {
     return {
       reindexed: rows.length,
       chunkCount: totalChunks,
+    };
+  }
+
+  async clearIndex(): Promise<Record<string, unknown>> {
+    if (this.crawlRuntime?.active) {
+      this.crawlAbortRequested = true;
+    }
+
+    const countsBefore = {
+      emails: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_emails").get() as { count: number }).count,
+      chunks: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_chunks").get() as { count: number }).count,
+      embeddings: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_chunk_embeddings").get() as { count: number }).count,
+      folderState: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_crawl_state").get() as { count: number }).count,
+    };
+
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM imap_crawl_state").run();
+      this.db.prepare("DELETE FROM imap_emails").run();
+    });
+    tx();
+
+    this.estimateCache = null;
+
+    const willAutoCrawl = this.settings.crawlMode !== "manual";
+    if (willAutoCrawl) {
+      void this.crawl({ full: true }).catch((error) => {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`[tool-imap] post-clear crawl failed: ${message}\n`);
+      });
+    }
+
+    return {
+      toolKey: this.settings.toolKey,
+      clearedAt: new Date().toISOString(),
+      countsBefore,
+      nextCrawlMode: this.settings.crawlMode,
+      note: willAutoCrawl
+        ? "Index cleared: a full crawl has been started to repopulate from scratch"
+        : "Crawl mode is manual: run imap_crawl to repopulate the index",
     };
   }
 
@@ -1046,6 +1134,39 @@ export class ImapIndexService {
     } finally {
       await client.logout().catch(() => undefined);
     }
+  }
+
+  private async getEstimateWithCache(input: { forceRefresh?: boolean } = {}): Promise<Record<string, unknown>> {
+    const now = Date.now();
+    const forceRefresh = input.forceRefresh === true;
+    if (!forceRefresh && this.estimateCache) {
+      const ageMs = now - this.estimateCache.capturedAtMs;
+      if (ageMs >= 0 && ageMs < ImapIndexService.ESTIMATE_CACHE_TTL_MS) {
+        return {
+          ...this.estimateCache.value,
+          cache: {
+            hit: true,
+            ageMs,
+            ttlMs: ImapIndexService.ESTIMATE_CACHE_TTL_MS,
+          },
+        };
+      }
+    }
+
+    const fresh = await this.estimateRemainingEmails();
+    this.estimateCache = {
+      capturedAtMs: now,
+      value: fresh,
+    };
+
+    return {
+      ...fresh,
+      cache: {
+        hit: false,
+        ageMs: 0,
+        ttlMs: ImapIndexService.ESTIMATE_CACHE_TTL_MS,
+      },
+    };
   }
 
   private maybeLogCrawlProgress(

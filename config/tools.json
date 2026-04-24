@@ -110,7 +110,7 @@
   "imap-gmail": {
     "transport": "unix-socket",
     "socketName": "imap-gmail",
-    "enabled": false,
+    "enabled": true,
     "launcher": {
       "packageName": "@langgraph-glove/tool-imap"
     },
