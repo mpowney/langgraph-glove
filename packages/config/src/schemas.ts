@@ -275,6 +275,88 @@ export const ToolLauncherConfigSchema = z.object({
 });
 export type ToolLauncherConfig = z.infer<typeof ToolLauncherConfigSchema>;
 
+export const ImapAuthConfigSchema = z
+  .object({
+    user: z.string().min(1),
+    password: z.string().optional(),
+    accessToken: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.password && !value.accessToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["password"],
+        message: 'Either "password" or "accessToken" must be provided for IMAP auth',
+      });
+    }
+  });
+export type ImapAuthConfig = z.infer<typeof ImapAuthConfigSchema>;
+
+export const ImapServerConfigSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().positive().optional(),
+  secure: z.boolean().optional(),
+  tlsRejectUnauthorized: z.boolean().optional(),
+  auth: ImapAuthConfigSchema,
+});
+export type ImapServerConfig = z.infer<typeof ImapServerConfigSchema>;
+
+export const ImapChunkingConfigSchema = z
+  .object({
+    chunkSize: z.number().int().positive().optional(),
+    chunkOverlap: z.number().int().min(0).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.chunkSize !== undefined
+      && value.chunkOverlap !== undefined
+      && value.chunkOverlap >= value.chunkSize
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["chunkOverlap"],
+        message: '"chunkOverlap" must be smaller than "chunkSize"',
+      });
+    }
+  });
+export type ImapChunkingConfig = z.infer<typeof ImapChunkingConfigSchema>;
+
+export const ImapVectorConfigSchema = z.object({
+  embeddingModelKey: z.string().optional(),
+  indexingStrategy: z.enum(["immediate", "deferred"]).optional(),
+  chunking: ImapChunkingConfigSchema.optional(),
+});
+export type ImapVectorConfig = z.infer<typeof ImapVectorConfigSchema>;
+
+export const ImapCrawlConfigSchema = z
+  .object({
+    mode: z.enum(["manual", "startup", "continuous-sync"]).optional(),
+    folders: z.array(z.string().min(1)).optional(),
+    allFoldersExcept: z.array(z.string().min(1)).optional(),
+    batchSize: z.number().int().positive().optional(),
+    pollIntervalMs: z.number().int().positive().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.folders?.length && value.allFoldersExcept?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["allFoldersExcept"],
+        message: 'Use either "folders" or "allFoldersExcept", not both',
+      });
+    }
+  });
+export type ImapCrawlConfig = z.infer<typeof ImapCrawlConfigSchema>;
+
+export const ImapToolConfigSchema = z.object({
+  server: ImapServerConfigSchema,
+  mailbox: z.string().min(1).optional(),
+  crawl: ImapCrawlConfigSchema.optional(),
+  vector: ImapVectorConfigSchema.optional(),
+  indexDbPath: z.string().optional(),
+  urlTemplate: z.string().optional(),
+});
+export type ImapToolConfig = z.infer<typeof ImapToolConfigSchema>;
+
 /** A single tool server entry in tools.json. */
 export const ToolServerEntrySchema = z.object({
   /** Transport type. */
@@ -289,6 +371,8 @@ export const ToolServerEntrySchema = z.object({
   launcher: ToolLauncherConfigSchema.optional(),
   /** Optional MCP client runtime configuration for MCP-backed tool servers. */
   mcp: McpServerConfigSchema.optional(),
+  /** Optional IMAP crawler/index configuration for IMAP-backed tool servers. */
+  imap: ImapToolConfigSchema.optional(),
 });
 export type ToolServerEntry = z.infer<typeof ToolServerEntrySchema>;
 

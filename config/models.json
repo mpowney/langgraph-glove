@@ -19,6 +19,12 @@
     "baseUrl": "{SECRET:ollama-host}",
     "think": false
   },
+  "imap-embed": {
+    "provider": "ollama",
+    "model": "mxbai-embed-large:latest",
+    "baseUrl": "{SECRET:ollama-host}",
+    "think": false
+  },
   "powerful": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-20250514",
