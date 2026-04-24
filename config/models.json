@@ -21,7 +21,7 @@
   },
   "imap-embed": {
     "provider": "ollama",
-    "model": "mxbai-embed-large:latest",
+    "model": "nomic-embed-text:latest",
     "baseUrl": "{SECRET:ollama-host}",
     "think": false
   },

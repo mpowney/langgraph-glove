@@ -24,6 +24,7 @@ import { ConfigAdmin } from "./components/ConfigAdmin";
 import { ContentBrowser } from "./components/ContentBrowser";
 import { AuthGate } from "./components/AuthGate";
 import { ControlPanel } from "./components/ControlPanel";
+import { ImapStatusDrawer } from "./components/imap";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
 import { createUuid } from "./uuid";
@@ -152,6 +153,7 @@ function App() {
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [configAdminOpen, setConfigAdminOpen] = useState(false);
   const [contentBrowserOpen, setContentBrowserOpen] = useState(false);
+  const [imapStatusDrawerOpen, setImapStatusDrawerOpen] = useState(false);
   const [contentRouteRef, setContentRouteRef] = useState<string | null>(null);
   const [controlPanelOpen, setControlPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
@@ -455,6 +457,23 @@ function App() {
           authError={auth.error}
           passkeyEnabled={auth.passkeyRegistered}
         />
+        <ImapStatusDrawer
+          open={imapStatusDrawerOpen}
+          onClose={() => setImapStatusDrawerOpen(false)}
+          apiBaseUrl={adminApiBaseUrl}
+          authToken={auth.token ?? undefined}
+          privilegedGrantId={privilegedGrantId}
+          conversationId={conversationId}
+          privilegedAccessActive={Boolean(privilegedGrantId)}
+          privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+          onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+          onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+          onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+          privilegeTokenRegistered={auth.privilegeTokenRegistered}
+          onRegisterPrivilegeToken={registerPrivilegeToken}
+          authError={auth.error}
+          passkeyEnabled={auth.passkeyRegistered}
+        />
         <ControlPanel
           open={controlPanelOpen}
           onClose={() => setControlPanelOpen(false)}
@@ -474,6 +493,7 @@ function App() {
             replaceWithContentHashRoute(null);
           }}
           onOpenToolsPanel={() => setToolsPanelOpen(true)}
+          onOpenImapStatusPanel={() => setImapStatusDrawerOpen(true)}
           onOpenConfigAdmin={() => setConfigAdminOpen(true)}
           onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
           memoryAdminEnabled={memoryAvailable}

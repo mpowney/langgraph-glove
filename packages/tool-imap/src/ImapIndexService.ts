@@ -130,12 +130,27 @@ interface CrawlProgressState {
   changedEmails: number;
 }
 
+interface CrawlRuntimeState {
+  active: boolean;
+  mode: "full" | "incremental";
+  startedAtMs: number;
+  startedAtIso: string;
+  currentFolder: string | null;
+  totalFolders: number;
+  completedFolders: number;
+  crawledEmails: number;
+  changedEmails: number;
+  indexedChunks: number;
+  lastFinishedAtIso: string | null;
+}
+
 export class ImapIndexService {
   private readonly settings: ResolvedImapSettings;
   private readonly db: Database.Database;
   private readonly embeddingRegistry: EmbeddingRegistry;
   private pollTimer: NodeJS.Timeout | null = null;
   private readonly configDir: string;
+  private crawlRuntime: CrawlRuntimeState | null = null;
 
   constructor(options: { toolKey: string; configDir?: string; secretsDir?: string }) {
     this.configDir = path.resolve(options.configDir ?? process.env["GLOVE_CONFIG_DIR"] ?? "config");
@@ -186,7 +201,7 @@ export class ImapIndexService {
     }
   }
 
-  status(): Record<string, unknown> {
+  async status(): Promise<Record<string, unknown>> {
     const messageCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_emails").get() as { count: number };
     const chunkCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_chunks").get() as { count: number };
     const embeddingCount = this.db.prepare(
@@ -195,6 +210,9 @@ export class ImapIndexService {
 
     const folders = this.db.prepare("SELECT folder, last_uid, last_crawled_at, last_error FROM imap_crawl_state ORDER BY folder ASC")
       .all() as Array<{ folder: string; last_uid: number | null; last_crawled_at: string | null; last_error: string | null }>;
+
+    const crawlRuntime = this.getCrawlRuntimeSnapshot();
+    const estimate = await this.estimateRemainingEmails();
 
     return {
       toolKey: this.settings.toolKey,
@@ -223,6 +241,8 @@ export class ImapIndexService {
         indexedEmbeddings: embeddingCount.count,
       },
       folders,
+      crawlRuntime,
+      estimate,
     };
   }
 
@@ -236,6 +256,22 @@ export class ImapIndexService {
     const client = this.createClient();
     await client.connect();
 
+    const mode: "full" | "incremental" = input.full ? "full" : "incremental";
+    const crawlStartedAt = new Date().toISOString();
+    this.crawlRuntime = {
+      active: true,
+      mode,
+      startedAtMs: Date.now(),
+      startedAtIso: crawlStartedAt,
+      currentFolder: null,
+      totalFolders: 0,
+      completedFolders: 0,
+      crawledEmails: 0,
+      changedEmails: 0,
+      indexedChunks: 0,
+      lastFinishedAtIso: this.crawlRuntime?.lastFinishedAtIso ?? null,
+    };
+
     let crawledCount = 0;
     let indexedCount = 0;
     const folderSummaries: Array<Record<string, unknown>> = [];
@@ -247,6 +283,9 @@ export class ImapIndexService {
 
     try {
       folders = await this.resolveFoldersToCrawl(client, input.folder);
+      if (this.crawlRuntime) {
+        this.crawlRuntime.totalFolders = folders.length;
+      }
 
       console.log(
         `[tool-imap] crawl started tool=${this.settings.toolKey} folders=${folders.length} `
@@ -254,6 +293,9 @@ export class ImapIndexService {
       );
 
       for (const folder of folders) {
+        if (this.crawlRuntime) {
+          this.crawlRuntime.currentFolder = folder;
+        }
         await client.mailboxOpen(folder);
         const state = this.getFolderState(folder);
         const lowerBoundUid = !input.full && state.lastUid ? state.lastUid + 1 : 1;
@@ -296,12 +338,19 @@ export class ImapIndexService {
           const changed = this.upsertEmail(parsed);
           folderCrawled += 1;
           crawledCount += 1;
+          if (this.crawlRuntime) {
+            this.crawlRuntime.crawledEmails = crawledCount;
+          }
 
           if (changed) {
             progress.changedEmails += 1;
             const chunks = await this.reindexEmail(parsed.id);
             folderIndexed += chunks;
             indexedCount += chunks;
+            if (this.crawlRuntime) {
+              this.crawlRuntime.changedEmails = progress.changedEmails;
+              this.crawlRuntime.indexedChunks = indexedCount;
+            }
           }
 
           this.maybeLogCrawlProgress(progress, {
@@ -323,6 +372,9 @@ export class ImapIndexService {
 
         this.upsertFolderState(folder, newestUid, null);
         folderSummaries.push({ folder, crawled: folderCrawled, indexed: folderIndexed, lastUid: newestUid });
+        if (this.crawlRuntime) {
+          this.crawlRuntime.completedFolders = folderSummaries.length;
+        }
         this.maybeLogCrawlProgress(progress, {
           folder,
           foldersCompleted: folderSummaries.length,
@@ -342,10 +394,18 @@ export class ImapIndexService {
       throw error;
     } finally {
       await client.logout();
+      const finishedAtIso = new Date().toISOString();
+      if (this.crawlRuntime) {
+        this.crawlRuntime.active = false;
+        this.crawlRuntime.currentFolder = null;
+        this.crawlRuntime.lastFinishedAtIso = finishedAtIso;
+      }
     }
 
     return {
-      mode: input.full ? "full" : "incremental",
+      mode,
+      startedAt: crawlStartedAt,
+      finishedAt: new Date().toISOString(),
       folders: folderSummaries,
       crawled: crawledCount,
       indexedChunks: indexedCount,
@@ -920,6 +980,72 @@ export class ImapIndexService {
   private resolveProjectPath(targetPath: string): string {
     if (path.isAbsolute(targetPath)) return targetPath;
     return path.resolve(this.configDir, "..", targetPath);
+  }
+
+  private getCrawlRuntimeSnapshot(): Record<string, unknown> {
+    if (!this.crawlRuntime) {
+      return {
+        active: false,
+      };
+    }
+
+    const elapsedMs = this.crawlRuntime.active
+      ? Math.max(0, Date.now() - this.crawlRuntime.startedAtMs)
+      : 0;
+
+    return {
+      active: this.crawlRuntime.active,
+      mode: this.crawlRuntime.mode,
+      startedAt: this.crawlRuntime.startedAtIso,
+      elapsedMs,
+      currentFolder: this.crawlRuntime.currentFolder,
+      totalFolders: this.crawlRuntime.totalFolders,
+      completedFolders: this.crawlRuntime.completedFolders,
+      crawledEmails: this.crawlRuntime.crawledEmails,
+      changedEmails: this.crawlRuntime.changedEmails,
+      indexedChunks: this.crawlRuntime.indexedChunks,
+      lastFinishedAt: this.crawlRuntime.lastFinishedAtIso,
+    };
+  }
+
+  private async estimateRemainingEmails(): Promise<Record<string, unknown>> {
+    const client = this.createClient();
+    try {
+      await client.connect();
+      const folders = await this.resolveFoldersToCrawl(client);
+      const byFolder: Array<Record<string, unknown>> = [];
+      let remainingEmails = 0;
+
+      for (const folder of folders) {
+        await client.mailboxOpen(folder);
+        const maxUid = await this.getMaxUid(client, folder);
+        const state = this.getFolderState(folder);
+        const crawledToUid = state.lastUid ?? 0;
+        const remaining = Math.max(0, maxUid - crawledToUid);
+        remainingEmails += remaining;
+        byFolder.push({
+          folder,
+          crawledToUid,
+          maxUid,
+          remainingEmails: remaining,
+        });
+      }
+
+      return {
+        available: true,
+        remainingEmails,
+        byFolder,
+      };
+    } catch (error) {
+      return {
+        available: false,
+        remainingEmails: null,
+        byFolder: [],
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      await client.logout().catch(() => undefined);
+    }
   }
 
   private maybeLogCrawlProgress(
