@@ -1,2 +1,2 @@
-export { ImapIndexService } from "./ImapIndexService.js";
-export { createImapTools } from "./tools/ImapTools.js";
+export { ImapIndexService } from "./ImapIndexService";
+export { createImapTools } from "./tools/ImapTools";

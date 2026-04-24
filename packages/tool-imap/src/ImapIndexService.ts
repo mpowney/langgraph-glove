@@ -1,15 +1,26 @@
 import { createHash, randomUUID } from "node:crypto";
+import { execFile as execFileCallback } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
+import { promises as fsPromises } from "node:fs";
 import Database from "better-sqlite3";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import {
   ConfigLoader,
   EmbeddingRegistry,
+  ModelRegistry,
   type ImapToolConfig,
   type ToolServerEntry,
 } from "@langgraph-glove/config";
+import {
+  AttachmentProcessorRegistry,
+  createDefaultAttachmentProcessors,
+} from "./attachments/AttachmentProcessors";
+
+const execFile = promisify(execFileCallback);
 
 export interface CrawlInput {
   folder?: string;
@@ -64,6 +75,17 @@ interface ResolvedImapSettings {
   indexingStrategy: "immediate" | "deferred";
   indexDbPath: string;
   urlTemplate?: string;
+  attachment: ResolvedAttachmentSettings;
+}
+
+interface ResolvedAttachmentSettings {
+  enabled: boolean;
+  mimeAllowList: string[] | null;
+  maxFileSizeBytes: number;
+  parallelism: number;
+  ocrModelKey: string;
+  photoCaptionModelKey: string;
+  pdfMaxOcrPages: number;
 }
 
 interface EmailRow {
@@ -97,6 +119,10 @@ interface ChunkRow {
   from_addr: string;
   sent_at: string | null;
   item_url: string | null;
+  chunk_source: "email" | "attachment";
+  attachment_id: string | null;
+  attachment_filename: string | null;
+  attachment_mime_type: string | null;
 }
 
 interface ParsedEmailRecord {
@@ -114,6 +140,18 @@ interface ParsedEmailRecord {
   bodyText: string;
   bodyHash: string;
   itemUrl: string | null;
+  attachments: ParsedAttachmentRecord[];
+}
+
+interface ParsedAttachmentRecord {
+  id: string;
+  emailId: string;
+  attachmentIndex: number;
+  filename: string;
+  contentType: string;
+  fileSizeBytes: number;
+  contentHash: string;
+  content: Buffer;
 }
 
 interface ChunkRecord {
@@ -149,16 +187,27 @@ interface EstimateCacheState {
   value: Record<string, unknown>;
 }
 
+interface AttachmentTask {
+  emailId: string;
+  attachment: ParsedAttachmentRecord;
+}
+
 export class ImapIndexService {
   private readonly settings: ResolvedImapSettings;
   private readonly db: Database.Database;
   private readonly embeddingRegistry: EmbeddingRegistry;
+  private readonly modelRegistry: ModelRegistry;
   private pollTimer: NodeJS.Timeout | null = null;
   private readonly configDir: string;
+  private readonly attachmentProcessors: AttachmentProcessorRegistry;
   private crawlRuntime: CrawlRuntimeState | null = null;
   private estimateCache: EstimateCacheState | null = null;
   private crawlAbortRequested = false;
+  private readonly attachmentQueue: AttachmentTask[] = [];
+  private activeAttachmentTasks = 0;
+  private activeEmailIndexingTasks = 0;
   private static readonly ESTIMATE_CACHE_TTL_MS = 30_000;
+  private static readonly DEFAULT_PDF_DPI = 180;
 
   constructor(options: { toolKey: string; configDir?: string; secretsDir?: string }) {
     this.configDir = path.resolve(options.configDir ?? process.env["GLOVE_CONFIG_DIR"] ?? "config");
@@ -167,6 +216,7 @@ export class ImapIndexService {
     const loader = new ConfigLoader(this.configDir, secretsDir);
     const config = loader.load();
     this.embeddingRegistry = new EmbeddingRegistry(config.models);
+    this.modelRegistry = new ModelRegistry(config.models);
 
     const entry = config.tools[options.toolKey] as ToolServerEntry | undefined;
     if (!entry?.imap) {
@@ -174,6 +224,7 @@ export class ImapIndexService {
     }
 
     this.settings = this.resolveSettings(options.toolKey, entry.imap);
+    this.attachmentProcessors = new AttachmentProcessorRegistry(createDefaultAttachmentProcessors());
     const dbPath = this.resolveProjectPath(this.settings.indexDbPath);
     fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
@@ -184,6 +235,11 @@ export class ImapIndexService {
 
     if (this.settings.indexingStrategy === "immediate") {
       this.embeddingRegistry.get(this.settings.embeddingModelKey);
+    }
+
+    if (this.settings.attachment.enabled) {
+      this.modelRegistry.get(this.settings.attachment.ocrModelKey);
+      this.modelRegistry.get(this.settings.attachment.photoCaptionModelKey);
     }
   }
 
@@ -215,6 +271,11 @@ export class ImapIndexService {
     const embeddingCount = this.db.prepare(
       "SELECT COUNT(*) AS count FROM imap_chunk_embeddings WHERE status = 'indexed'",
     ).get() as { count: number };
+    const attachmentCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_attachments").get() as { count: number };
+    const attachmentChunkCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_chunks").get() as { count: number };
+    const attachmentEmbeddingCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM imap_attachment_embeddings WHERE status = 'indexed'",
+    ).get() as { count: number };
 
     const folders = this.db.prepare("SELECT folder, last_uid, last_crawled_at, last_error FROM imap_crawl_state ORDER BY folder ASC")
       .all() as Array<{ folder: string; last_uid: number | null; last_crawled_at: string | null; last_error: string | null }>;
@@ -242,10 +303,25 @@ export class ImapIndexService {
         indexingStrategy: this.settings.indexingStrategy,
         embeddingBatchSize: this.settings.embeddingBatchSize,
       },
+      attachmentIndexing: {
+        enabled: this.settings.attachment.enabled,
+        mimeAllowList: this.settings.attachment.mimeAllowList,
+        defaultSupportedMimeTypes: this.attachmentProcessors.supportedMimeTypes(),
+        maxFileSizeBytes: this.settings.attachment.maxFileSizeBytes,
+        parallelism: this.settings.attachment.parallelism,
+        ocrModelKey: this.settings.attachment.ocrModelKey,
+        photoCaptionModelKey: this.settings.attachment.photoCaptionModelKey,
+        pdfMaxOcrPages: this.settings.attachment.pdfMaxOcrPages,
+        activeQueue: this.attachmentQueue.length,
+        activeTasks: this.activeAttachmentTasks,
+      },
       totals: {
         emails: messageCount.count,
         chunks: chunkCount.count,
         indexedEmbeddings: embeddingCount.count,
+        attachments: attachmentCount.count,
+        attachmentChunks: attachmentChunkCount.count,
+        indexedAttachmentEmbeddings: attachmentEmbeddingCount.count,
       },
       folders,
       crawlRuntime,
@@ -399,6 +475,10 @@ export class ImapIndexService {
               this.crawlRuntime.changedEmails = progress.changedEmails;
               this.crawlRuntime.indexedChunks = indexedCount;
             }
+
+            if (this.canProcessAttachmentsForEmail(parsed.id) && parsed.attachments.length > 0) {
+              this.enqueueAttachmentTasks(parsed.id, parsed.attachments);
+            }
           }
 
           this.maybeLogCrawlProgress(progress, {
@@ -478,13 +558,46 @@ export class ImapIndexService {
         m.subject,
         m.from_addr,
         m.sent_at,
-        m.item_url
+        m.item_url,
+        'email' AS chunk_source,
+        NULL AS attachment_id,
+        NULL AS attachment_filename,
+        NULL AS attachment_mime_type
       FROM imap_email_chunks c
       INNER JOIN imap_emails m ON m.id = c.email_id
       LEFT JOIN imap_chunk_embeddings e ON e.chunk_id = c.id
       WHERE (? IS NULL OR m.folder = ?)
+
+      UNION ALL
+
+      SELECT
+        c.id,
+        c.email_id,
+        c.chunk_index,
+        c.content,
+        e.vector_json,
+        e.status AS embedding_status,
+        m.folder,
+        m.subject,
+        m.from_addr,
+        m.sent_at,
+        m.item_url,
+        'attachment' AS chunk_source,
+        c.attachment_id,
+        a.filename AS attachment_filename,
+        a.mime_type AS attachment_mime_type
+      FROM imap_attachment_chunks c
+      INNER JOIN imap_emails m ON m.id = c.email_id
+      INNER JOIN imap_email_attachments a ON a.id = c.attachment_id
+      LEFT JOIN imap_attachment_embeddings e ON e.chunk_id = c.id
+      WHERE (? IS NULL OR m.folder = ?)
       `,
-    ).all(input.folder ?? null, input.folder ?? null) as ChunkRow[];
+    ).all(
+      input.folder ?? null,
+      input.folder ?? null,
+      input.folder ?? null,
+      input.folder ?? null,
+    ) as ChunkRow[];
 
     const queryTerms = tokenize(query);
     const queryVector = await this.getQueryEmbedding(query, rows);
@@ -493,6 +606,7 @@ export class ImapIndexService {
       email: Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "from_addr" | "sent_at" | "item_url">;
       score: number;
       excerpts: string[];
+      hitSources: Set<string>;
     }>();
 
     for (const row of rows) {
@@ -517,14 +631,16 @@ export class ImapIndexService {
         grouped.set(row.email_id, {
           email: summary,
           score,
-          excerpts: [excerptForQuery(row.content, queryTerms)],
+          excerpts: [formatExcerpt(row, excerptForQuery(row.content, queryTerms))],
+          hitSources: new Set([row.chunk_source]),
         });
         continue;
       }
 
       current.score += score;
+      current.hitSources.add(row.chunk_source);
       if (current.excerpts.length < 3) {
-        current.excerpts.push(excerptForQuery(row.content, queryTerms));
+        current.excerpts.push(formatExcerpt(row, excerptForQuery(row.content, queryTerms)));
       }
     }
 
@@ -532,7 +648,11 @@ export class ImapIndexService {
     const results = [...grouped.values()]
       .sort((left, right) => right.score - left.score)
       .slice(0, limit)
-      .map((entry) => ({ ...entry, score: Number(entry.score.toFixed(4)) }));
+      .map((entry) => ({
+        ...entry,
+        score: Number(entry.score.toFixed(4)),
+        hitSources: [...entry.hitSources].sort((left, right) => left.localeCompare(right)),
+      }));
 
     return {
       query,
@@ -612,6 +732,9 @@ export class ImapIndexService {
       emails: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_emails").get() as { count: number }).count,
       chunks: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_chunks").get() as { count: number }).count,
       embeddings: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_chunk_embeddings").get() as { count: number }).count,
+      attachments: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_attachments").get() as { count: number }).count,
+      attachmentChunks: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_chunks").get() as { count: number }).count,
+      attachmentEmbeddings: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_embeddings").get() as { count: number }).count,
       folderState: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_crawl_state").get() as { count: number }).count,
     };
 
@@ -698,6 +821,24 @@ export class ImapIndexService {
       subjectSlug,
     });
 
+    const attachments = (parsed.attachments ?? []).map((attachment, index) => {
+      const contentType = normalizeMimeType(attachment.contentType);
+      const filename = attachment.filename?.trim() || `attachment-${index + 1}`;
+      const content = attachment.content ?? Buffer.alloc(0);
+      const attachmentId = buildAttachmentId(id, index);
+
+      return {
+        id: attachmentId,
+        emailId: id,
+        attachmentIndex: index,
+        filename,
+        contentType,
+        fileSizeBytes: content.byteLength,
+        contentHash: hashBuffer(content),
+        content,
+      } satisfies ParsedAttachmentRecord;
+    });
+
     return {
       id,
       folder: input.folder,
@@ -713,6 +854,7 @@ export class ImapIndexService {
       bodyText: body,
       bodyHash,
       itemUrl,
+      attachments,
     };
   }
 
@@ -785,7 +927,13 @@ export class ImapIndexService {
     if (!row) return 0;
 
     const chunks = chunkText(row.body_text, this.settings.chunkSize, this.settings.chunkOverlap);
-    const vectors = await this.embedChunks(chunks);
+    this.activeEmailIndexingTasks += 1;
+    let vectors: Array<number[] | null>;
+    try {
+      vectors = await this.embedChunks(chunks);
+    } finally {
+      this.activeEmailIndexingTasks = Math.max(0, this.activeEmailIndexingTasks - 1);
+    }
     const status = this.settings.indexingStrategy === "immediate" ? "indexed" : "pending";
     const now = new Date().toISOString();
 
@@ -843,7 +991,375 @@ export class ImapIndexService {
     });
 
     tx();
+    this.drainAttachmentQueue();
     return chunks.length;
+  }
+
+  private canProcessAttachmentsForEmail(emailId: string): boolean {
+    if (!this.settings.attachment.enabled) {
+      return false;
+    }
+    if (this.settings.indexingStrategy !== "immediate") {
+      return false;
+    }
+    return this.isEmailEmbeddingIndexed(emailId);
+  }
+
+  private isEmailEmbeddingIndexed(emailId: string): boolean {
+    const chunkCount = (this.db.prepare(
+      "SELECT COUNT(*) AS count FROM imap_email_chunks WHERE email_id = ?",
+    ).get(emailId) as { count: number }).count;
+
+    if (chunkCount === 0) {
+      return true;
+    }
+
+    const indexedCount = (this.db.prepare(
+      "SELECT COUNT(*) AS count FROM imap_chunk_embeddings WHERE email_id = ? AND status = 'indexed'",
+    ).get(emailId) as { count: number }).count;
+
+    return indexedCount === chunkCount;
+  }
+
+  private enqueueAttachmentTasks(emailId: string, attachments: ParsedAttachmentRecord[]): void {
+    for (const attachment of attachments) {
+      this.attachmentQueue.push({ emailId, attachment });
+    }
+    this.drainAttachmentQueue();
+  }
+
+  private drainAttachmentQueue(): void {
+    if (!this.settings.attachment.enabled) {
+      return;
+    }
+    if (this.activeEmailIndexingTasks > 0) {
+      setImmediate(() => this.drainAttachmentQueue());
+      return;
+    }
+
+    while (
+      this.activeAttachmentTasks < this.settings.attachment.parallelism
+      && this.attachmentQueue.length > 0
+    ) {
+      const task = this.attachmentQueue.shift();
+      if (!task) {
+        return;
+      }
+
+      this.activeAttachmentTasks += 1;
+      void this.processAttachmentTask(task)
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          process.stderr.write(`[tool-imap] attachment processing failed: ${message}\n`);
+        })
+        .finally(() => {
+          this.activeAttachmentTasks = Math.max(0, this.activeAttachmentTasks - 1);
+          this.drainAttachmentQueue();
+        });
+    }
+  }
+
+  private async processAttachmentTask(task: AttachmentTask): Promise<void> {
+    const { attachment } = task;
+    const now = new Date().toISOString();
+
+    this.db.prepare(
+      `
+      INSERT INTO imap_email_attachments (
+        id,
+        email_id,
+        attachment_index,
+        filename,
+        mime_type,
+        file_size_bytes,
+        content_hash,
+        extraction_status,
+        extraction_error,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(email_id, attachment_index) DO UPDATE SET
+        id = excluded.id,
+        filename = excluded.filename,
+        mime_type = excluded.mime_type,
+        file_size_bytes = excluded.file_size_bytes,
+        content_hash = excluded.content_hash,
+        extraction_status = excluded.extraction_status,
+        extraction_error = excluded.extraction_error,
+        updated_at = excluded.updated_at
+      `,
+    ).run(
+      attachment.id,
+      attachment.emailId,
+      attachment.attachmentIndex,
+      attachment.filename,
+      attachment.contentType,
+      attachment.fileSizeBytes,
+      attachment.contentHash,
+      "queued",
+      null,
+      now,
+      now,
+    );
+
+    if (!this.isAttachmentMimeAllowed(attachment.contentType)) {
+      this.markAttachmentStatus(attachment.id, "skipped-mime", null);
+      return;
+    }
+
+    if (attachment.fileSizeBytes > this.settings.attachment.maxFileSizeBytes) {
+      this.markAttachmentStatus(attachment.id, "skipped-size", null);
+      return;
+    }
+
+    const processor = this.attachmentProcessors.resolve(attachment.contentType);
+    if (!processor) {
+      this.markAttachmentStatus(attachment.id, "skipped-unsupported", null);
+      return;
+    }
+
+    this.markAttachmentStatus(attachment.id, "processing", null);
+
+    try {
+      const extraction = await processor.extract(
+        {
+          content: attachment.content,
+          contentType: attachment.contentType,
+          filename: attachment.filename,
+        },
+        {
+          extractPdfLayoutText: (input) => this.extractPdfLayoutText(input.content, input.filename),
+          ocrPdfPages: (input) => this.ocrPdfPages(input.content, input.filename),
+          ocrImage: (input) => this.ocrImageAttachment(input.content, input.contentType, input.filename),
+          describePhoto: (input) => this.describePhotoAttachment(input.content, input.contentType, input.filename),
+        },
+      );
+      const text = extraction.text.trim();
+
+      if (!text) {
+        this.replaceAttachmentChunksAndEmbeddings(attachment.id, attachment.emailId, []);
+        this.markAttachmentStatus(attachment.id, "skipped-empty", null);
+        return;
+      }
+
+      const chunks = chunkText(text, this.settings.chunkSize, this.settings.chunkOverlap);
+      const vectors = await this.embedChunks(chunks);
+      this.replaceAttachmentChunksAndEmbeddings(attachment.id, attachment.emailId, chunks, vectors);
+      this.markAttachmentStatus(attachment.id, "indexed", null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.markAttachmentStatus(attachment.id, "failed", message.slice(0, 2000));
+      throw error;
+    }
+  }
+
+  private isAttachmentMimeAllowed(contentType: string): boolean {
+    const normalized = normalizeMimeType(contentType);
+    if (!this.settings.attachment.mimeAllowList) {
+      return this.attachmentProcessors.resolve(normalized) !== null;
+    }
+    return this.settings.attachment.mimeAllowList.includes(normalized);
+  }
+
+  private markAttachmentStatus(attachmentId: string, status: string, error: string | null): void {
+    this.db.prepare(
+      "UPDATE imap_email_attachments SET extraction_status = ?, extraction_error = ?, updated_at = ? WHERE id = ?",
+    ).run(status, error, new Date().toISOString(), attachmentId);
+  }
+
+  private replaceAttachmentChunksAndEmbeddings(
+    attachmentId: string,
+    emailId: string,
+    chunks: ChunkRecord[],
+    vectors: Array<number[] | null> = [],
+  ): void {
+    const now = new Date().toISOString();
+    const status = this.settings.indexingStrategy === "immediate" ? "indexed" : "pending";
+
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM imap_attachment_embeddings WHERE attachment_id = ?").run(attachmentId);
+      this.db.prepare("DELETE FROM imap_attachment_chunks WHERE attachment_id = ?").run(attachmentId);
+
+      const insertChunk = this.db.prepare(
+        `
+        INSERT INTO imap_attachment_chunks (
+          id,
+          attachment_id,
+          email_id,
+          chunk_index,
+          start_offset,
+          end_offset,
+          content,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+      );
+
+      const insertEmbedding = this.db.prepare(
+        `
+        INSERT INTO imap_attachment_embeddings (
+          chunk_id,
+          attachment_id,
+          email_id,
+          embedding_model_key,
+          vector_json,
+          status,
+          updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `,
+      );
+
+      for (const [index, chunk] of chunks.entries()) {
+        insertChunk.run(
+          chunk.id,
+          attachmentId,
+          emailId,
+          chunk.chunkIndex,
+          chunk.startOffset,
+          chunk.endOffset,
+          chunk.content,
+          now,
+          now,
+        );
+
+        insertEmbedding.run(
+          chunk.id,
+          attachmentId,
+          emailId,
+          this.settings.embeddingModelKey,
+          vectors[index] ? JSON.stringify(vectors[index]) : null,
+          status,
+          now,
+        );
+      }
+    });
+
+    tx();
+  }
+
+  private async extractPdfLayoutText(content: Buffer, filename: string): Promise<string | null> {
+    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "imap-pdf-text-"));
+    const inputPath = path.join(tempDir, sanitizeFilename(filename || "document.pdf"));
+    try {
+      await fsPromises.writeFile(inputPath, content);
+      const result = await execFile("pdftotext", ["-layout", inputPath, "-"], {
+        maxBuffer: 20 * 1024 * 1024,
+      }) as { stdout: string; stderr: string };
+      const text = result.stdout.trim();
+      return text || null;
+    } catch {
+      return null;
+    } finally {
+      await fsPromises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async ocrPdfPages(content: Buffer, filename: string): Promise<string> {
+    const pages = await this.renderPdfPagesToPng(content, filename);
+    if (!pages.length) return "";
+
+    const limitedPages = pages.slice(0, this.settings.attachment.pdfMaxOcrPages);
+    const parts: string[] = [];
+    for (const [index, pageImage] of limitedPages.entries()) {
+      const pageText = await this.runOllamaVisionPrompt({
+        modelKey: this.settings.attachment.ocrModelKey,
+        prompt: "Extract all visible text in reading order from this document page. Keep line breaks where meaningful. Do not add commentary.",
+        image: pageImage,
+        contentType: "image/png",
+      });
+      const normalized = pageText.trim();
+      if (normalized) {
+        parts.push(`[Page ${index + 1}]\n${normalized}`);
+      }
+    }
+    return parts.join("\n\n");
+  }
+
+  private async renderPdfPagesToPng(content: Buffer, filename: string): Promise<Buffer[]> {
+    const tempDir = await fsPromises.mkdtemp(path.join(os.tmpdir(), "imap-pdf-ocr-"));
+    const inputPath = path.join(tempDir, sanitizeFilename(filename || "document.pdf"));
+    const outputPrefix = path.join(tempDir, "page");
+    try {
+      await fsPromises.writeFile(inputPath, content);
+      await execFile("pdftoppm", [
+        "-png",
+        "-r",
+        String(ImapIndexService.DEFAULT_PDF_DPI),
+        inputPath,
+        outputPrefix,
+      ], {
+        maxBuffer: 20 * 1024 * 1024,
+      });
+
+      const files = (await fsPromises.readdir(tempDir))
+        .filter((name) => /^page-\d+\.png$/i.test(name))
+        .sort((left, right) => left.localeCompare(right, undefined, { numeric: true }));
+
+      const buffers: Buffer[] = [];
+      for (const file of files) {
+        buffers.push(await fsPromises.readFile(path.join(tempDir, file)));
+      }
+      return buffers;
+    } finally {
+      await fsPromises.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  private async ocrImageAttachment(content: Buffer, contentType: string, filename: string): Promise<string> {
+    return this.runOllamaVisionPrompt({
+      modelKey: this.settings.attachment.ocrModelKey,
+      prompt: `Extract all visible text from this image attachment named "${filename}". Return only extracted text in reading order.`,
+      image: content,
+      contentType,
+    });
+  }
+
+  private async describePhotoAttachment(content: Buffer, contentType: string, filename: string): Promise<string> {
+    return this.runOllamaVisionPrompt({
+      modelKey: this.settings.attachment.photoCaptionModelKey,
+      prompt: `Describe this photo attachment named "${filename}" for semantic search. Focus on people, objects, scene, actions, text signs, and notable context in 3-6 concise sentences.`,
+      image: content,
+      contentType,
+    });
+  }
+
+  private async runOllamaVisionPrompt(input: {
+    modelKey: string;
+    prompt: string;
+    image: Buffer;
+    contentType: string;
+  }): Promise<string> {
+    const entry = this.modelRegistry.resolveEntry(input.modelKey);
+    if (entry.provider !== "ollama") {
+      throw new Error(`Model "${input.modelKey}" must use provider=ollama for attachment vision processing`);
+    }
+
+    const baseUrl = (entry.baseUrl ?? "http://localhost:11434").replace(/\/+$/, "");
+    const response = await fetch(`${baseUrl}/api/generate`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model: entry.model,
+        prompt: input.prompt,
+        images: [input.image.toString("base64")],
+        stream: false,
+        keep_alive: entry.keepAlive,
+        options: {
+          temperature: entry.temperature ?? 0,
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const errorBody = await response.text();
+      throw new Error(`Ollama request failed (${response.status}): ${errorBody.slice(0, 500)}`);
+    }
+
+    const payload = await response.json() as { response?: string };
+    return (payload.response ?? "").trim();
   }
 
   private async embedChunks(chunks: ChunkRecord[]): Promise<Array<number[] | null>> {
@@ -1012,12 +1528,68 @@ export class ImapIndexService {
         last_crawled_at TEXT,
         last_error TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS imap_email_attachments (
+        id TEXT PRIMARY KEY,
+        email_id TEXT NOT NULL,
+        attachment_index INTEGER NOT NULL,
+        filename TEXT NOT NULL,
+        mime_type TEXT NOT NULL,
+        file_size_bytes INTEGER NOT NULL,
+        content_hash TEXT NOT NULL,
+        extraction_status TEXT NOT NULL,
+        extraction_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(email_id) REFERENCES imap_emails(id) ON DELETE CASCADE,
+        UNIQUE(email_id, attachment_index)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_imap_email_attachments_email_id ON imap_email_attachments(email_id);
+      CREATE INDEX IF NOT EXISTS idx_imap_email_attachments_status ON imap_email_attachments(extraction_status);
+
+      CREATE TABLE IF NOT EXISTS imap_attachment_chunks (
+        id TEXT PRIMARY KEY,
+        attachment_id TEXT NOT NULL,
+        email_id TEXT NOT NULL,
+        chunk_index INTEGER NOT NULL,
+        start_offset INTEGER NOT NULL,
+        end_offset INTEGER NOT NULL,
+        content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(attachment_id) REFERENCES imap_email_attachments(id) ON DELETE CASCADE,
+        FOREIGN KEY(email_id) REFERENCES imap_emails(id) ON DELETE CASCADE,
+        UNIQUE(attachment_id, chunk_index)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_imap_attachment_chunks_attachment_id ON imap_attachment_chunks(attachment_id);
+      CREATE INDEX IF NOT EXISTS idx_imap_attachment_chunks_email_id ON imap_attachment_chunks(email_id);
+
+      CREATE TABLE IF NOT EXISTS imap_attachment_embeddings (
+        chunk_id TEXT PRIMARY KEY,
+        attachment_id TEXT NOT NULL,
+        email_id TEXT NOT NULL,
+        embedding_model_key TEXT NOT NULL,
+        vector_json TEXT,
+        status TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(chunk_id) REFERENCES imap_attachment_chunks(id) ON DELETE CASCADE,
+        FOREIGN KEY(attachment_id) REFERENCES imap_email_attachments(id) ON DELETE CASCADE,
+        FOREIGN KEY(email_id) REFERENCES imap_emails(id) ON DELETE CASCADE
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_imap_attachment_embeddings_attachment_id ON imap_attachment_embeddings(attachment_id);
+      CREATE INDEX IF NOT EXISTS idx_imap_attachment_embeddings_email_id ON imap_attachment_embeddings(email_id);
     `);
   }
 
   private resolveSettings(toolKey: string, entry: ImapToolConfig): ResolvedImapSettings {
     const secure = entry.server.secure ?? true;
     const allFoldersExcept = dedupe(entry.crawl?.allFoldersExcept ?? []);
+    const mimeAllowList = entry.attachment?.mimeAllowList && entry.attachment.mimeAllowList.length > 0
+      ? dedupe(entry.attachment.mimeAllowList.map((mimeType) => normalizeMimeType(mimeType)))
+      : null;
     return {
       toolKey,
       host: entry.server.host,
@@ -1042,6 +1614,15 @@ export class ImapIndexService {
       indexingStrategy: entry.vector?.indexingStrategy ?? "immediate",
       indexDbPath: entry.indexDbPath ?? `data/imap-${slugify(toolKey)}.sqlite`,
       urlTemplate: entry.urlTemplate,
+      attachment: {
+        enabled: entry.attachment?.enabled ?? false,
+        mimeAllowList,
+        maxFileSizeBytes: entry.attachment?.maxFileSizeBytes ?? 100 * 1024 * 1024,
+        parallelism: entry.attachment?.parallelism ?? 2,
+        ocrModelKey: entry.attachment?.ocrModelKey ?? "imap-ocr-vision",
+        photoCaptionModelKey: entry.attachment?.photoCaptionModelKey ?? "imap-photo-caption",
+        pdfMaxOcrPages: entry.attachment?.pdfMaxOcrPages ?? 8,
+      },
     };
   }
 
@@ -1250,6 +1831,23 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function hashBuffer(value: Buffer): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function buildAttachmentId(emailId: string, attachmentIndex: number): string {
+  const digest = createHash("sha1")
+    .update(`${emailId}|${attachmentIndex}`)
+    .digest("hex")
+    .slice(0, 12);
+  return `${emailId}-att-${attachmentIndex}-${digest}`;
+}
+
+function normalizeMimeType(value: string | null | undefined): string {
+  const normalized = value?.toLowerCase().split(";")[0]?.trim();
+  return normalized || "application/octet-stream";
+}
+
 function addressList(input: unknown): string[] {
   const value = input as { value?: Array<{ name?: string; address?: string }> } | undefined;
   if (!value?.value?.length) return [];
@@ -1356,6 +1954,22 @@ function excerptForQuery(content: string, queryTerms: string[]): string {
   const prefix = start > 0 ? "..." : "";
   const suffix = end < normalized.length ? "..." : "";
   return `${prefix}${normalized.slice(start, end)}${suffix}`;
+}
+
+function formatExcerpt(row: ChunkRow, excerpt: string): string {
+  if (row.chunk_source !== "attachment") {
+    return excerpt;
+  }
+
+  const name = row.attachment_filename ?? "attachment";
+  const mime = row.attachment_mime_type ?? "unknown";
+  return `[Attachment: ${name} (${mime})] ${excerpt}`;
+}
+
+function sanitizeFilename(value: string): string {
+  const trimmed = value.trim();
+  const normalized = trimmed.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/-+/g, "-");
+  return normalized || "document.pdf";
 }
 
 function chunkText(content: string, chunkSize: number, chunkOverlap: number): ChunkRecord[] {

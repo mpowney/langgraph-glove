@@ -141,6 +141,14 @@
           "chunkOverlap": 140
         }
       },
+      "attachment": {
+        "enabled": true,
+        "maxFileSizeBytes": 104857600,
+        "parallelism": 2,
+        "ocrModelKey": "imap-ocr-vision",
+        "photoCaptionModelKey": "imap-photo-caption",
+        "pdfMaxOcrPages": 8
+      },
       "indexDbPath": "data/imap-gmail.sqlite",
       "urlTemplate": "https://mail.google.com/mail/u/0/#search/rfc822msgid%3A{messageId}"
     }
@@ -178,6 +186,14 @@
           "chunkSize": 900,
           "chunkOverlap": 140
         }
+      },
+      "attachment": {
+        "enabled": true,
+        "maxFileSizeBytes": 104857600,
+        "parallelism": 2,
+        "ocrModelKey": "imap-ocr-vision",
+        "photoCaptionModelKey": "imap-photo-caption",
+        "pdfMaxOcrPages": 8
       },
       "indexDbPath": "data/imap-icloud.sqlite",
       "urlTemplate": "https://mail.icloud.com/mail/#folder/{folder}/{uid}"

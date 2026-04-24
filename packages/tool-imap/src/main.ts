@@ -1,7 +1,7 @@
 import path from "node:path";
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { ImapIndexService } from "./ImapIndexService.js";
-import { createImapTools } from "./tools/ImapTools.js";
+import { ImapIndexService } from "./ImapIndexService";
+import { createImapTools } from "./tools/ImapTools";
 
 function resolveToolKey(): string {
   const fromEnv = process.env["TOOL_NAME"]?.trim();

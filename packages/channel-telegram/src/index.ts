@@ -1,2 +1,2 @@
-export { TelegramChannel } from "./TelegramChannel.js";
-export type { TelegramChannelConfig } from "./TelegramChannel.js";
+export { TelegramChannel } from "./TelegramChannel";
+export type { TelegramChannelConfig } from "./TelegramChannel";

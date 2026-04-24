@@ -1,5 +1,5 @@
 import type { ToolHandler, ToolMetadata } from "@langgraph-glove/tool-server";
-import { ImapIndexService } from "../ImapIndexService.js";
+import { ImapIndexService } from "../ImapIndexService";
 
 export interface ImapToolDefinition {
   metadata: ToolMetadata;

@@ -348,11 +348,23 @@ export const ImapCrawlConfigSchema = z
   });
 export type ImapCrawlConfig = z.infer<typeof ImapCrawlConfigSchema>;
 
+export const ImapAttachmentConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  mimeAllowList: z.array(z.string().min(1)).optional(),
+  maxFileSizeBytes: z.number().int().positive().optional(),
+  parallelism: z.number().int().positive().optional(),
+  ocrModelKey: z.string().min(1).optional(),
+  photoCaptionModelKey: z.string().min(1).optional(),
+  pdfMaxOcrPages: z.number().int().positive().optional(),
+});
+export type ImapAttachmentConfig = z.infer<typeof ImapAttachmentConfigSchema>;
+
 export const ImapToolConfigSchema = z.object({
   server: ImapServerConfigSchema,
   mailbox: z.string().min(1).optional(),
   crawl: ImapCrawlConfigSchema.optional(),
   vector: ImapVectorConfigSchema.optional(),
+  attachment: ImapAttachmentConfigSchema.optional(),
   indexDbPath: z.string().optional(),
   urlTemplate: z.string().optional(),
 });

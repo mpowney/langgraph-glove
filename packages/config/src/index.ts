@@ -37,6 +37,7 @@ export {
   ImapChunkingConfigSchema,
   ImapVectorConfigSchema,
   ImapCrawlConfigSchema,
+  ImapAttachmentConfigSchema,
   ImapToolConfigSchema,
   ToolServerEntrySchema,
   ToolsConfigSchema,
@@ -50,7 +51,7 @@ export {
   GraphsConfigSchema,
   DEFAULT_GRAPH_ENTRY,
   SECRET_REF_PATTERN,
-} from "./schemas.js";
+} from "./schemas";
 export type {
   ModelProvider,
   ModelEntry,
@@ -76,6 +77,7 @@ export type {
   ImapChunkingConfig,
   ImapVectorConfig,
   ImapCrawlConfig,
+  ImapAttachmentConfig,
   ImapToolConfig,
   ToolServerEntry,
   ToolsConfig,
