@@ -43,8 +43,10 @@ function terminateProcess(pid) {
   }
 
   const deadline = Date.now() + 2000;
+  const sleepBuf = new Int32Array(new SharedArrayBuffer(4));
   while (Date.now() < deadline) {
     if (!processExists(pid)) return;
+    Atomics.wait(sleepBuf, 0, 0, 100);
   }
 
   const kill = runCommand("kill", ["-KILL", String(pid)]);
