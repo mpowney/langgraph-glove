@@ -379,6 +379,10 @@ export function ImapStatusSection({
                   <Text className={styles.summaryValue}>{formatNumber(totals?.emails)}</Text>
                   <Text className={styles.summaryKey}>Chunks indexed</Text>
                   <Text className={styles.summaryValue}>{formatNumber(totals?.chunks)}</Text>
+                  <Text className={styles.summaryKey}>Files queued to index</Text>
+                  <Text className={styles.summaryValue}>{formatNumber(totals?.queuedFiles)}</Text>
+                  <Text className={styles.summaryKey}>Files indexed</Text>
+                  <Text className={styles.summaryValue}>{formatNumber(totals?.indexedFiles)}</Text>
                   <Text className={styles.summaryKey}>Remaining emails (est.)</Text>
                   <Text className={styles.summaryValue}>{formatEstimateValue(tool.toolKey)}</Text>
                   <Text className={styles.summaryKey}>Folder progress</Text>

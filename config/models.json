@@ -27,7 +27,7 @@
   },
   "imap-ocr-vision": {
     "provider": "ollama",
-    "model": "qwen2.5vl:7b",
+    "model": "glm-ocr:latest",
     "baseUrl": "{SECRET:ollama-host}",
     "temperature": 0,
     "think": false,

@@ -29,6 +29,8 @@ export interface ImapToolStatusEntry {
       emails?: number;
       chunks?: number;
       indexedEmbeddings?: number;
+      queuedFiles?: number;
+      indexedFiles?: number;
     };
     crawlRuntime?: {
       active?: boolean;

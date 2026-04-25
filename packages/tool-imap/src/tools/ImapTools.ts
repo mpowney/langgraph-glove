@@ -37,6 +37,11 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
             query: { type: "string", description: "Search query text." },
             folder: { type: "string", description: "Optional folder filter." },
             limit: { type: "number", description: "Maximum results to return." },
+            chunkSource: {
+              type: "string",
+              enum: ["email", "attachment"],
+              description: "Optional content source filter. When omitted, searches both email and attachment chunks.",
+            },
           },
           required: ["query"],
         },
@@ -45,6 +50,7 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
         query: params["query"] as string,
         folder: params["folder"] as string | undefined,
         limit: params["limit"] as number | undefined,
+        chunkSource: params["chunkSource"] as "email" | "attachment" | undefined,
       }),
     },
     {

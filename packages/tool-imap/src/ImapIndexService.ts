@@ -32,6 +32,7 @@ export interface SearchInput {
   query: string;
   folder?: string;
   limit?: number;
+  chunkSource?: "email" | "attachment";
 }
 
 export interface GetEmailInput {
@@ -192,6 +193,16 @@ interface AttachmentTask {
   attachment: ParsedAttachmentRecord;
 }
 
+interface AttachmentLogState {
+  startedAtMs: number;
+  lastLoggedAtMs: number;
+  queued: number;
+  processed: number;
+  indexed: number;
+  skipped: number;
+  failed: number;
+}
+
 export class ImapIndexService {
   private readonly settings: ResolvedImapSettings;
   private readonly db: Database.Database;
@@ -206,6 +217,16 @@ export class ImapIndexService {
   private readonly attachmentQueue: AttachmentTask[] = [];
   private activeAttachmentTasks = 0;
   private activeEmailIndexingTasks = 0;
+  private attachmentDrainDeferredLogged = false;
+  private readonly attachmentLogState: AttachmentLogState = {
+    startedAtMs: Date.now(),
+    lastLoggedAtMs: 0,
+    queued: 0,
+    processed: 0,
+    indexed: 0,
+    skipped: 0,
+    failed: 0,
+  };
   private static readonly ESTIMATE_CACHE_TTL_MS = 30_000;
   private static readonly DEFAULT_PDF_DPI = 180;
 
@@ -240,6 +261,11 @@ export class ImapIndexService {
     if (this.settings.attachment.enabled) {
       this.modelRegistry.get(this.settings.attachment.ocrModelKey);
       this.modelRegistry.get(this.settings.attachment.photoCaptionModelKey);
+      console.log(
+        `[tool-imap] attachment indexing enabled tool=${this.settings.toolKey} `
+        + `parallelism=${this.settings.attachment.parallelism} maxFileBytes=${this.settings.attachment.maxFileSizeBytes} `
+        + `ocrModel=${this.settings.attachment.ocrModelKey} captionModel=${this.settings.attachment.photoCaptionModelKey}`,
+      );
     }
   }
 
@@ -275,6 +301,12 @@ export class ImapIndexService {
     const attachmentChunkCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_chunks").get() as { count: number };
     const attachmentEmbeddingCount = this.db.prepare(
       "SELECT COUNT(*) AS count FROM imap_attachment_embeddings WHERE status = 'indexed'",
+    ).get() as { count: number };
+    const queuedFileCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM imap_email_attachments WHERE extraction_status IN ('queued', 'processing')",
+    ).get() as { count: number };
+    const indexedFileCount = this.db.prepare(
+      "SELECT COUNT(*) AS count FROM imap_email_attachments WHERE extraction_status = 'indexed'",
     ).get() as { count: number };
 
     const folders = this.db.prepare("SELECT folder, last_uid, last_crawled_at, last_error FROM imap_crawl_state ORDER BY folder ASC")
@@ -322,6 +354,8 @@ export class ImapIndexService {
         attachments: attachmentCount.count,
         attachmentChunks: attachmentChunkCount.count,
         indexedAttachmentEmbeddings: attachmentEmbeddingCount.count,
+        queuedFiles: queuedFileCount.count,
+        indexedFiles: indexedFileCount.count,
       },
       folders,
       crawlRuntime,
@@ -531,6 +565,8 @@ export class ImapIndexService {
       this.estimateCache = null;
     }
 
+    this.maybeLogAttachmentProgress(true);
+
     return {
       mode,
       startedAt: crawlStartedAt,
@@ -544,6 +580,11 @@ export class ImapIndexService {
   async search(input: SearchInput): Promise<Record<string, unknown>> {
     const query = input.query?.trim();
     if (!query) throw new Error('"query" is required');
+
+    const chunkSource = input.chunkSource?.trim().toLowerCase();
+    if (chunkSource && chunkSource !== "email" && chunkSource !== "attachment") {
+      throw new Error('"chunkSource" must be one of: "email", "attachment"');
+    }
 
     const rows = this.db.prepare(
       `
@@ -567,6 +608,7 @@ export class ImapIndexService {
       INNER JOIN imap_emails m ON m.id = c.email_id
       LEFT JOIN imap_chunk_embeddings e ON e.chunk_id = c.id
       WHERE (? IS NULL OR m.folder = ?)
+        AND (? IS NULL OR ? = 'email')
 
       UNION ALL
 
@@ -591,12 +633,17 @@ export class ImapIndexService {
       INNER JOIN imap_email_attachments a ON a.id = c.attachment_id
       LEFT JOIN imap_attachment_embeddings e ON e.chunk_id = c.id
       WHERE (? IS NULL OR m.folder = ?)
+        AND (? IS NULL OR ? = 'attachment')
       `,
     ).all(
       input.folder ?? null,
       input.folder ?? null,
+      chunkSource ?? null,
+      chunkSource ?? null,
       input.folder ?? null,
       input.folder ?? null,
+      chunkSource ?? null,
+      chunkSource ?? null,
     ) as ChunkRow[];
 
     const queryTerms = tokenize(query);
@@ -656,6 +703,7 @@ export class ImapIndexService {
 
     return {
       query,
+      chunkSource: chunkSource ?? "all",
       retrievalMode: queryVector ? "vector-hybrid" : "lexical-fallback",
       embeddingModelKey: this.settings.embeddingModelKey,
       indexingStrategy: this.settings.indexingStrategy,
@@ -1022,9 +1070,14 @@ export class ImapIndexService {
   }
 
   private enqueueAttachmentTasks(emailId: string, attachments: ParsedAttachmentRecord[]): void {
+    this.attachmentLogState.queued += attachments.length;
     for (const attachment of attachments) {
       this.attachmentQueue.push({ emailId, attachment });
     }
+    this.logAttachmentEvent(
+      `queued emailId=${emailId} added=${attachments.length} queue=${this.attachmentQueue.length}`,
+    );
+    this.maybeLogAttachmentProgress(false);
     this.drainAttachmentQueue();
   }
 
@@ -1033,8 +1086,19 @@ export class ImapIndexService {
       return;
     }
     if (this.activeEmailIndexingTasks > 0) {
+      if (!this.attachmentDrainDeferredLogged) {
+        this.attachmentDrainDeferredLogged = true;
+        this.logAttachmentEvent(
+          `deferred queue=${this.attachmentQueue.length} activeEmailTasks=${this.activeEmailIndexingTasks}`,
+        );
+      }
       setImmediate(() => this.drainAttachmentQueue());
       return;
+    }
+
+    if (this.attachmentDrainDeferredLogged) {
+      this.attachmentDrainDeferredLogged = false;
+      this.logAttachmentEvent("resumed after email-priority deferral");
     }
 
     while (
@@ -1047,6 +1111,10 @@ export class ImapIndexService {
       }
 
       this.activeAttachmentTasks += 1;
+      this.logAttachmentEvent(
+        `start attachmentId=${task.attachment.id} emailId=${task.emailId} mime=${task.attachment.contentType} `
+        + `size=${task.attachment.fileSizeBytes}B active=${this.activeAttachmentTasks} queue=${this.attachmentQueue.length}`,
+      );
       void this.processAttachmentTask(task)
         .catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
@@ -1054,6 +1122,7 @@ export class ImapIndexService {
         })
         .finally(() => {
           this.activeAttachmentTasks = Math.max(0, this.activeAttachmentTasks - 1);
+          this.maybeLogAttachmentProgress(false);
           this.drainAttachmentQueue();
         });
     }
@@ -1103,17 +1172,32 @@ export class ImapIndexService {
     );
 
     if (!this.isAttachmentMimeAllowed(attachment.contentType)) {
+      this.attachmentLogState.processed += 1;
+      this.attachmentLogState.skipped += 1;
+      this.logAttachmentEvent(
+        `skip-mime attachmentId=${attachment.id} emailId=${attachment.emailId} mime=${attachment.contentType}`,
+      );
       this.markAttachmentStatus(attachment.id, "skipped-mime", null);
       return;
     }
 
     if (attachment.fileSizeBytes > this.settings.attachment.maxFileSizeBytes) {
+      this.attachmentLogState.processed += 1;
+      this.attachmentLogState.skipped += 1;
+      this.logAttachmentEvent(
+        `skip-size attachmentId=${attachment.id} emailId=${attachment.emailId} size=${attachment.fileSizeBytes}B`,
+      );
       this.markAttachmentStatus(attachment.id, "skipped-size", null);
       return;
     }
 
     const processor = this.attachmentProcessors.resolve(attachment.contentType);
     if (!processor) {
+      this.attachmentLogState.processed += 1;
+      this.attachmentLogState.skipped += 1;
+      this.logAttachmentEvent(
+        `skip-unsupported attachmentId=${attachment.id} emailId=${attachment.emailId} mime=${attachment.contentType}`,
+      );
       this.markAttachmentStatus(attachment.id, "skipped-unsupported", null);
       return;
     }
@@ -1138,6 +1222,11 @@ export class ImapIndexService {
 
       if (!text) {
         this.replaceAttachmentChunksAndEmbeddings(attachment.id, attachment.emailId, []);
+        this.attachmentLogState.processed += 1;
+        this.attachmentLogState.skipped += 1;
+        this.logAttachmentEvent(
+          `skip-empty attachmentId=${attachment.id} emailId=${attachment.emailId} mime=${attachment.contentType}`,
+        );
         this.markAttachmentStatus(attachment.id, "skipped-empty", null);
         return;
       }
@@ -1145,9 +1234,19 @@ export class ImapIndexService {
       const chunks = chunkText(text, this.settings.chunkSize, this.settings.chunkOverlap);
       const vectors = await this.embedChunks(chunks);
       this.replaceAttachmentChunksAndEmbeddings(attachment.id, attachment.emailId, chunks, vectors);
+      this.attachmentLogState.processed += 1;
+      this.attachmentLogState.indexed += 1;
+      this.logAttachmentEvent(
+        `indexed attachmentId=${attachment.id} emailId=${attachment.emailId} chunks=${chunks.length}`,
+      );
       this.markAttachmentStatus(attachment.id, "indexed", null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.attachmentLogState.processed += 1;
+      this.attachmentLogState.failed += 1;
+      this.logAttachmentEvent(
+        `failed attachmentId=${attachment.id} emailId=${attachment.emailId} error=${message.slice(0, 200)}`,
+      );
       this.markAttachmentStatus(attachment.id, "failed", message.slice(0, 2000));
       throw error;
     }
@@ -1332,7 +1431,10 @@ export class ImapIndexService {
   }): Promise<string> {
     const entry = this.modelRegistry.resolveEntry(input.modelKey);
     if (entry.provider !== "ollama") {
-      throw new Error(`Model "${input.modelKey}" must use provider=ollama for attachment vision processing`);
+      throw new Error(
+        `Attachment vision model must use provider=ollama modelKey=${input.modelKey} `
+        + `provider=${entry.provider} model=${entry.model}`,
+      );
     }
 
     const baseUrl = (entry.baseUrl ?? "http://localhost:11434").replace(/\/+$/, "");
@@ -1355,7 +1457,10 @@ export class ImapIndexService {
 
     if (!response.ok) {
       const errorBody = await response.text();
-      throw new Error(`Ollama request failed (${response.status}): ${errorBody.slice(0, 500)}`);
+      throw new Error(
+        `Ollama request failed status=${response.status} modelKey=${input.modelKey} model=${entry.model} `
+        + `baseUrl=${baseUrl}: ${errorBody.slice(0, 500)}`,
+      );
     }
 
     const payload = await response.json() as { response?: string };
@@ -1781,6 +1886,31 @@ export class ImapIndexService {
       + `emails=${details.crawledCount} changed=${details.changedEmails} `
       + `chunks=${details.indexedCount} embeddings=${embeddingStatus} `
       + `model=${this.settings.embeddingModelKey} elapsedMs=${elapsedMs}`,
+    );
+  }
+
+  private logAttachmentEvent(message: string): void {
+    console.log(`[tool-imap] attachment ${message} tool=${this.settings.toolKey}`);
+  }
+
+  private maybeLogAttachmentProgress(force: boolean): void {
+    const now = Date.now();
+    const shouldLog = force
+      || this.attachmentLogState.processed === 1
+      || this.attachmentLogState.processed % 10 === 0
+      || now - this.attachmentLogState.lastLoggedAtMs >= 15000;
+
+    if (!shouldLog) {
+      return;
+    }
+
+    this.attachmentLogState.lastLoggedAtMs = now;
+    const elapsedMs = Math.max(0, now - this.attachmentLogState.startedAtMs);
+    this.logAttachmentEvent(
+      `progress queued=${this.attachmentLogState.queued} processed=${this.attachmentLogState.processed} `
+      + `indexed=${this.attachmentLogState.indexed} skipped=${this.attachmentLogState.skipped} `
+      + `failed=${this.attachmentLogState.failed} queue=${this.attachmentQueue.length} `
+      + `active=${this.activeAttachmentTasks} elapsedMs=${elapsedMs}`,
     );
   }
 
