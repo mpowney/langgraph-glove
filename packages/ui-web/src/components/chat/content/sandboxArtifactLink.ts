@@ -1,9 +1,40 @@
-const SAFE_PROTOCOLS = new Set(["http:", "https:"]);
+const DEFAULT_SAFE_PROTOCOLS = new Set(["http", "https", "sandbox"]);
 const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"]);
 
-export function isSafeHref(href: string): boolean {
+function normalizeProtocol(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  let normalized = trimmed;
+  if (normalized.endsWith(":")) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (normalized.endsWith("://")) {
+    normalized = normalized.slice(0, -3);
+  }
+
+  if (!/^[a-z][a-z0-9+.-]*$/u.test(normalized)) {
+    return null;
+  }
+
+  return normalized;
+}
+
+function getAllowedProtocolSet(allowedProtocols?: string[]): Set<string> {
+  const merged = new Set<string>(DEFAULT_SAFE_PROTOCOLS);
+  for (const value of allowedProtocols ?? []) {
+    const normalized = normalizeProtocol(value);
+    if (normalized) {
+      merged.add(normalized);
+    }
+  }
+  return merged;
+}
+
+export function isSafeHref(href: string, allowedProtocols?: string[]): boolean {
   try {
-    return SAFE_PROTOCOLS.has(new URL(href).protocol);
+    const protocol = new URL(href).protocol.replace(/:$/u, "").toLowerCase();
+    return getAllowedProtocolSet(allowedProtocols).has(protocol);
   } catch {
     return false;
   }

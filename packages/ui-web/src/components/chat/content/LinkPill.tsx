@@ -21,6 +21,7 @@ import {
   isSafeHref,
   isSandboxArtifactHref,
 } from "./sandboxArtifactLink";
+import { useAllowedLinkProtocols } from "../../../contexts/AllowedLinkProtocolsContext";
 
 const useStyles = makeStyles({
   pill: {
@@ -91,10 +92,11 @@ interface LinkPillProps {
 export function LinkPill({ href, children }: LinkPillProps) {
   const styles = useStyles();
   const [artifactDialogOpen, setArtifactDialogOpen] = useState(false);
+  const allowedProtocols = useAllowedLinkProtocols();
   const isSandboxArtifact = isSandboxArtifactHref(href);
   const fileName = useMemo(() => getSandboxFilename(href), [href]);
 
-  if (!isSafeHref(href) && !isSandboxArtifact) {
+  if (!isSafeHref(href, allowedProtocols) && !isSandboxArtifact) {
     // Render as plain text for non-http(s) hrefs to prevent XSS
     return <span className={styles.unsafeLink}>{children}</span>;
   }

@@ -151,7 +151,7 @@
         "pdfMaxOcrPages": 8
       },
       "indexDbPath": "data/imap-gmail.sqlite",
-      "urlTemplate": "https://mail.google.com/mail/u/0/#search/rfc822msgid%3A{messageId}"
+      "urlTemplate": "https://mail.google.com/mail/u/0/#search/rfc822msgid%3A%3C{messageId}%3E"
     }
   },
   "imap-icloud": {
@@ -198,7 +198,7 @@
         "pdfMaxOcrPages": 8
       },
       "indexDbPath": "data/imap-icloud.sqlite",
-      "urlTemplate": "https://mail.icloud.com/mail/#folder/{folder}/{uid}"
+      "urlTemplate": "message://%3C{messageId}%3E"
     }
   }
 }

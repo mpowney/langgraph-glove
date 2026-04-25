@@ -27,7 +27,39 @@ export const WebChannelSettingsSchema = z.object({
   host: z.string().min(1).optional(),
   receiveAgentProcessing: z.boolean().optional(),
   receiveSystem: z.boolean().optional(),
+  allowedUrlProtocols: z.array(z.string().min(1)).optional(),
 });
+
+const DEFAULT_ALLOWED_URL_PROTOCOLS = ["http", "https", "sandbox"] as const;
+
+function normalizeUrlProtocol(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  let normalized = trimmed;
+  if (normalized.endsWith(":")) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (normalized.endsWith("://")) {
+    normalized = normalized.slice(0, -3);
+  }
+
+  if (!/^[a-z][a-z0-9+.-]*$/u.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeAllowedUrlProtocols(configured?: string[]): string[] {
+  const unique = new Set<string>(DEFAULT_ALLOWED_URL_PROTOCOLS);
+  for (const value of configured ?? []) {
+    const normalized = normalizeUrlProtocol(value);
+    if (normalized) {
+      unique.add(normalized);
+    }
+  }
+  return [...unique];
+}
 
 export interface WebChannelFactoryContext {
   checkpointDbPath?: string;
@@ -52,6 +84,7 @@ export function createWebChannelFromConfig(
     host: result.data.host,
     receiveAgentProcessing: result.data.receiveAgentProcessing ?? true,
     receiveSystem: result.data.receiveSystem ?? false,
+    allowedUrlProtocols: normalizeAllowedUrlProtocols(result.data.allowedUrlProtocols),
     appInfo: context.appInfo,
     checkpointDbPath: context.checkpointDbPath,
   });
@@ -162,6 +195,8 @@ export interface WebChannelConfig extends ChannelConfig {
   };
   /** Optional path to the SQLite checkpointer database for checkpoint metadata. */
   checkpointDbPath?: string;
+  /** Allowed URL protocols that the authenticated UI can render as links. */
+  allowedUrlProtocols?: string[];
   /**
    * Optional auth service.  When provided every WebSocket upgrade request
    * must carry a valid session token in the `?token=` query parameter;
@@ -196,6 +231,7 @@ export class WebChannel extends Channel {
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
   private authService?: AuthService;
+  private readonly allowedUrlProtocols: string[];
   private readonly pendingDefaultAgentContentItems = new Map<string, OutgoingContentItem[]>();
   private readonly pendingMainToolReferences = new Map<string, OutgoingToolReference[]>();
   private readonly pendingSubAgentToolReferences = new Map<string, Map<string, OutgoingToolReference[]>>();
@@ -214,6 +250,7 @@ export class WebChannel extends Channel {
     };
     this.checkpointDbPath = config.checkpointDbPath;
     this.authService = config.authService;
+    this.allowedUrlProtocols = normalizeAllowedUrlProtocols(config.allowedUrlProtocols);
 
     if (this.checkpointDbPath) {
       try {
@@ -251,6 +288,26 @@ export class WebChannel extends Channel {
         ...(this.appInfo.modelContextWindowSource && {
           modelContextWindowSource: this.appInfo.modelContextWindowSource,
         }),
+      });
+    });
+
+    // Expose URL protocol allowlist to authenticated UI clients.
+    this.app.get("/api/link-protocols", (req, res) => {
+      if (this.authService) {
+        const authHeader = req.header("authorization") ?? "";
+        const [scheme, token] = authHeader.split(/\s+/, 2);
+        const isBearer = scheme?.toLowerCase() === "bearer";
+        const authenticated = isBearer && token
+          ? this.authService.authenticateSession(token)
+          : null;
+        if (!authenticated) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+
+      res.json({
+        protocols: this.allowedUrlProtocols,
       });
     });
 
