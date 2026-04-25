@@ -1,6 +1,13 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
 import { sessionManager } from "../SessionManager";
 
+interface ToolReference {
+  url: string;
+  title: string;
+  kind: "web";
+  sourceTool: "browse_open";
+}
+
 export const openToolMetadata: ToolMetadata = {
   name: "browse_open",
   description:
@@ -21,10 +28,21 @@ export const openToolMetadata: ToolMetadata = {
 
 export async function handleOpen(
   params: Record<string, unknown>,
-): Promise<{ sessionId: string; title: string; url: string }> {
+): Promise<{ sessionId: string; title: string; url: string; references: ToolReference[] }> {
   const url = params["url"] as string;
   if (!url || typeof url !== "string") {
     throw new Error("browse_open: 'url' parameter is required and must be a string");
   }
-  return sessionManager.open(url);
+  const result = await sessionManager.open(url);
+  return {
+    ...result,
+    references: [
+      {
+        url: result.url,
+        title: result.title?.trim().length ? result.title : result.url,
+        kind: "web",
+        sourceTool: "browse_open",
+      },
+    ],
+  };
 }

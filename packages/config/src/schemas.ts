@@ -360,6 +360,7 @@ export const ImapAttachmentConfigSchema = z.object({
 export type ImapAttachmentConfig = z.infer<typeof ImapAttachmentConfigSchema>;
 
 export const ImapToolConfigSchema = z.object({
+  displayName: z.string().min(1).optional(),
   server: ImapServerConfigSchema,
   mailbox: z.string().min(1).optional(),
   crawl: ImapCrawlConfigSchema.optional(),

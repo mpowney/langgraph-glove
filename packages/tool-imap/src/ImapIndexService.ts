@@ -33,6 +33,15 @@ export interface SearchInput {
   folder?: string;
   limit?: number;
   chunkSource?: "email" | "attachment";
+  year?: number;
+  month?: number;
+  day?: number;
+  dateField?: "sentAt" | "receivedAt" | "updatedAt";
+  from?: string;
+  subject?: string;
+  hasAttachments?: boolean;
+  sortBy?: "relevance" | "sentAt" | "receivedAt" | "updatedAt";
+  sortDirection?: "asc" | "desc";
 }
 
 export interface GetEmailInput {
@@ -56,6 +65,7 @@ export interface ReindexInput {
 
 interface ResolvedImapSettings {
   toolKey: string;
+  displayName?: string;
   host: string;
   port: number;
   secure: boolean;
@@ -119,6 +129,8 @@ interface ChunkRow {
   subject: string;
   from_addr: string;
   sent_at: string | null;
+  created_at: string;
+  updated_at: string;
   item_url: string | null;
   chunk_source: "email" | "attachment";
   attachment_id: string | null;
@@ -203,6 +215,12 @@ interface AttachmentLogState {
   failed: number;
 }
 
+interface ImapErrorDetails {
+  code: string;
+  syscall: string;
+  message: string;
+}
+
 export class ImapIndexService {
   private readonly settings: ResolvedImapSettings;
   private readonly db: Database.Database;
@@ -218,6 +236,11 @@ export class ImapIndexService {
   private activeAttachmentTasks = 0;
   private activeEmailIndexingTasks = 0;
   private attachmentDrainDeferredLogged = false;
+  private readonly econnResetFailureTimestampsMs: number[] = [];
+  private lastEconnResetSignature: string | null = null;
+  private lastEconnResetRecordedAtMs = 0;
+  private crawlStoppedByImapErrors = false;
+  private crawlStopReason: string | null = null;
   private readonly attachmentLogState: AttachmentLogState = {
     startedAtMs: Date.now(),
     lastLoggedAtMs: 0,
@@ -229,7 +252,12 @@ export class ImapIndexService {
   };
   private static readonly ESTIMATE_CACHE_TTL_MS = 30_000;
   private static readonly DEFAULT_PDF_DPI = 180;
+  private static readonly ECONNRESET_FAILURE_WINDOW_MS = 60 * 60 * 1000;
+  private static readonly ECONNRESET_FAILURE_LIMIT = 5;
+  private static readonly ECONNRESET_DEDUPE_MS = 5000;
 
+  private static readonly SEARCH_EMBED_TIMEOUT_MS = 10_000;
+  private static readonly SEARCH_MAX_CANDIDATE_ROWS = 12_000;
   constructor(options: { toolKey: string; configDir?: string; secretsDir?: string }) {
     this.configDir = path.resolve(options.configDir ?? process.env["GLOVE_CONFIG_DIR"] ?? "config");
     const secretsDir = path.resolve(options.secretsDir ?? process.env["GLOVE_SECRETS_DIR"] ?? "secrets");
@@ -270,14 +298,39 @@ export class ImapIndexService {
   }
 
   async start(): Promise<void> {
-    if (this.settings.crawlMode === "startup" || this.settings.crawlMode === "continuous-sync") {
-      await this.crawl({ full: false });
+    if (this.crawlStoppedByImapErrors) {
+      process.stderr.write(`[tool-imap] startup crawl disabled: ${this.crawlStopReason ?? "IMAP crawl has been stopped"}\n`);
+      return;
     }
 
-    if (this.settings.crawlMode === "continuous-sync") {
+    if (this.settings.crawlMode === "startup" || this.settings.crawlMode === "continuous-sync") {
+      try {
+        await this.crawl({ full: false });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (this.isEconnResetError(error)) {
+          process.stderr.write(`[tool-imap] startup crawl recoverable IMAP failure: ${message}\n`);
+        } else {
+          throw error;
+        }
+      }
+    }
+
+    if (this.settings.crawlMode === "continuous-sync" && !this.crawlStoppedByImapErrors) {
       this.pollTimer = setInterval(() => {
+        if (this.crawlStoppedByImapErrors) {
+          if (this.pollTimer) {
+            clearInterval(this.pollTimer);
+            this.pollTimer = null;
+          }
+          return;
+        }
         void this.crawl({ full: false }).catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
+          if (this.isEconnResetError(error)) {
+            process.stderr.write(`[tool-imap] poll crawl recoverable IMAP failure: ${message}\n`);
+            return;
+          }
           process.stderr.write(`[tool-imap] poll crawl failed: ${message}\n`);
         });
       }, this.settings.pollIntervalMs);
@@ -313,9 +366,11 @@ export class ImapIndexService {
       .all() as Array<{ folder: string; last_uid: number | null; last_crawled_at: string | null; last_error: string | null }>;
 
     const crawlRuntime = this.getCrawlRuntimeSnapshot();
+    this.pruneEconnResetFailures(Date.now());
 
     return {
       toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
       crawlMode: this.settings.crawlMode,
       crawlSelection: this.settings.allFoldersExcept.length > 0
         ? {
@@ -359,6 +414,13 @@ export class ImapIndexService {
       },
       folders,
       crawlRuntime,
+      imapConnectionHealth: {
+        stopped: this.crawlStoppedByImapErrors,
+        stopReason: this.crawlStopReason,
+        econnresetFailuresLastHour: this.econnResetFailureTimestampsMs.length,
+        stopThreshold: ImapIndexService.ECONNRESET_FAILURE_LIMIT,
+        failureWindowMs: ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS,
+      },
     };
   }
 
@@ -368,28 +430,55 @@ export class ImapIndexService {
 
   async stopCrawl(): Promise<Record<string, unknown>> {
     if (!this.crawlRuntime?.active) {
-      return { toolKey: this.settings.toolKey, stopped: false, reason: "No crawl is currently active" };
+      return {
+        toolKey: this.settings.toolKey,
+        displayName: this.settings.displayName,
+        stopped: false,
+        reason: "No crawl is currently active",
+      };
     }
     this.crawlAbortRequested = true;
     // Also directly mark as inactive so status reflects the stop immediately,
     // even if the crawl loop hasn't yet checked the abort flag.
     this.crawlRuntime.active = false;
     this.crawlRuntime.currentFolder = null;
-    return { toolKey: this.settings.toolKey, stopped: true };
+    return { toolKey: this.settings.toolKey, displayName: this.settings.displayName, stopped: true };
   }
 
   async startCrawl(): Promise<Record<string, unknown>> {
+    if (this.crawlStoppedByImapErrors) {
+      return {
+        toolKey: this.settings.toolKey,
+        displayName: this.settings.displayName,
+        started: false,
+        reason: this.crawlStopReason ?? "IMAP crawl has been stopped",
+      };
+    }
+
     if (this.crawlRuntime?.active) {
-      return { toolKey: this.settings.toolKey, started: false, reason: "A crawl is already in progress" };
+      return {
+        toolKey: this.settings.toolKey,
+        displayName: this.settings.displayName,
+        started: false,
+        reason: "A crawl is already in progress",
+      };
     }
     void this.crawl({ full: false }).catch((error) => {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`[tool-imap] manual start crawl failed: ${message}\n`);
     });
-    return { toolKey: this.settings.toolKey, started: true };
+    return { toolKey: this.settings.toolKey, displayName: this.settings.displayName, started: true };
   }
 
   async crawl(input: CrawlInput = {}): Promise<Record<string, unknown>> {
+    if (this.crawlStoppedByImapErrors) {
+      return {
+        skipped: true,
+        reason: this.crawlStopReason ?? "IMAP crawl has been stopped",
+        toolKey: this.settings.toolKey,
+      };
+    }
+
     if (this.crawlRuntime?.active) {
       return {
         skipped: true,
@@ -549,13 +638,16 @@ export class ImapIndexService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (this.isEconnResetError(error)) {
+        this.recordEconnResetFailure(error, "crawl");
+      }
       for (const folder of folders) {
         const state = this.getFolderState(folder);
         this.upsertFolderState(folder, state.lastUid ?? 0, message);
       }
       throw error;
     } finally {
-      await client.logout();
+      await client.logout().catch(() => undefined);
       const finishedAtIso = new Date().toISOString();
       if (this.crawlRuntime) {
         this.crawlRuntime.active = false;
@@ -586,8 +678,39 @@ export class ImapIndexService {
       throw new Error('"chunkSource" must be one of: "email", "attachment"');
     }
 
+    const dateField = normalizeSearchDateField(input.dateField);
+    const sortBy = normalizeSearchSortBy(input.sortBy);
+    const sortDirection = normalizeSortDirection(input.sortDirection);
+    const year = normalizeSearchYear(input.year);
+    const month = normalizeSearchMonth(input.month);
+    const day = normalizeSearchDay(input.day);
+    const fromFilter = buildCaseInsensitiveLikePattern(input.from);
+    const subjectFilter = buildCaseInsensitiveLikePattern(input.subject);
+    const hasAttachments = typeof input.hasAttachments === "boolean" ? Number(input.hasAttachments) : null;
+    const dateColumn = resolveSearchDateColumn(dateField);
+    const queryTerms = tokenize(query);
+    const wildcardQuery = isWildcardQuery(query, queryTerms);
+
+    if (wildcardQuery) {
+      return this.searchByMetadata(input, {
+        query,
+        chunkSource,
+        dateField,
+        dateColumn,
+        sortBy,
+        sortDirection,
+        year,
+        month,
+        day,
+        fromFilter,
+        subjectFilter,
+        hasAttachments,
+      });
+    }
+
     const rows = this.db.prepare(
       `
+      SELECT * FROM (
       SELECT
         c.id,
         c.email_id,
@@ -599,6 +722,8 @@ export class ImapIndexService {
         m.subject,
         m.from_addr,
         m.sent_at,
+        m.created_at,
+        m.updated_at,
         m.item_url,
         'email' AS chunk_source,
         NULL AS attachment_id,
@@ -609,9 +734,18 @@ export class ImapIndexService {
       LEFT JOIN imap_chunk_embeddings e ON e.chunk_id = c.id
       WHERE (? IS NULL OR m.folder = ?)
         AND (? IS NULL OR ? = 'email')
+        AND (? IS NULL OR LOWER(m.from_addr) LIKE ? ESCAPE '\\')
+        AND (? IS NULL OR LOWER(m.subject) LIKE ? ESCAPE '\\')
+        AND (? IS NULL OR CAST(strftime('%Y', ${dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR CAST(strftime('%m', ${dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR CAST(strftime('%d', ${dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR EXISTS(SELECT 1 FROM imap_email_attachments att WHERE att.email_id = m.id) = ?)
+      LIMIT ?
+      )
 
       UNION ALL
 
+      SELECT * FROM (
       SELECT
         c.id,
         c.email_id,
@@ -623,6 +757,8 @@ export class ImapIndexService {
         m.subject,
         m.from_addr,
         m.sent_at,
+        m.created_at,
+        m.updated_at,
         m.item_url,
         'attachment' AS chunk_source,
         c.attachment_id,
@@ -634,23 +770,65 @@ export class ImapIndexService {
       LEFT JOIN imap_attachment_embeddings e ON e.chunk_id = c.id
       WHERE (? IS NULL OR m.folder = ?)
         AND (? IS NULL OR ? = 'attachment')
+        AND (? IS NULL OR LOWER(m.from_addr) LIKE ? ESCAPE '\\')
+        AND (? IS NULL OR LOWER(m.subject) LIKE ? ESCAPE '\\')
+        AND (? IS NULL OR CAST(strftime('%Y', ${dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR CAST(strftime('%m', ${dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR CAST(strftime('%d', ${dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR EXISTS(SELECT 1 FROM imap_email_attachments att WHERE att.email_id = m.id) = ?)
+      LIMIT ?
+      )
       `,
     ).all(
       input.folder ?? null,
       input.folder ?? null,
       chunkSource ?? null,
       chunkSource ?? null,
+      fromFilter,
+      fromFilter,
+      subjectFilter,
+      subjectFilter,
+      year,
+      year,
+      month,
+      month,
+      day,
+      day,
+      hasAttachments,
+      hasAttachments,
+      ImapIndexService.SEARCH_MAX_CANDIDATE_ROWS,
       input.folder ?? null,
       input.folder ?? null,
       chunkSource ?? null,
       chunkSource ?? null,
+      fromFilter,
+      fromFilter,
+      subjectFilter,
+      subjectFilter,
+      year,
+      year,
+      month,
+      month,
+      day,
+      day,
+      hasAttachments,
+      hasAttachments,
+      ImapIndexService.SEARCH_MAX_CANDIDATE_ROWS,
     ) as ChunkRow[];
 
-    const queryTerms = tokenize(query);
-    const queryVector = await this.getQueryEmbedding(query, rows);
+    let queryVector: number[] | null = null;
+    try {
+      queryVector = await this.getQueryEmbedding(query, rows);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `[tool-imap] search embedding fallback tool=${this.settings.toolKey} `
+        + `model=${this.settings.embeddingModelKey} reason=${message}`,
+      );
+    }
 
     const grouped = new Map<string, {
-      email: Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "from_addr" | "sent_at" | "item_url">;
+      email: Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "subject_slug" | "from_addr" | "to_addrs" | "sent_at" | "in_reply_to" | "created_at" | "updated_at">;
       score: number;
       excerpts: string[];
       hitSources: Set<string>;
@@ -666,12 +844,12 @@ export class ImapIndexService {
       if (!current) {
         const summary = this.db.prepare(
           `
-          SELECT id, folder, uid, message_id, thread_id, subject, from_addr, sent_at, item_url
+          SELECT id, folder, uid, message_id, thread_id, subject, subject_slug, from_addr, to_addrs, sent_at, in_reply_to, created_at, updated_at
           FROM imap_emails
           WHERE id = ?
           LIMIT 1
           `,
-        ).get(row.email_id) as Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "from_addr" | "sent_at" | "item_url"> | undefined;
+        ).get(row.email_id) as Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "subject_slug" | "from_addr" | "to_addrs" | "sent_at" | "in_reply_to" | "created_at" | "updated_at"> | undefined;
 
         if (!summary) continue;
 
@@ -693,32 +871,221 @@ export class ImapIndexService {
 
     const limit = Math.max(1, Math.min(50, input.limit ?? 10));
     const results = [...grouped.values()]
-      .sort((left, right) => right.score - left.score)
+      .sort((left, right) => compareSearchEntries(left, right, sortBy, sortDirection))
       .slice(0, limit)
       .map((entry) => ({
         ...entry,
+        toolKey: this.settings.toolKey,
+        displayName: this.settings.displayName,
+        email: this.decorateEmailSummary(entry.email),
         score: Number(entry.score.toFixed(4)),
         hitSources: [...entry.hitSources].sort((left, right) => left.localeCompare(right)),
       }));
 
+    const references = results
+      .map((entry) => ({
+        url: entry.email.itemUrl,
+        title: entry.email.subject,
+      }))
+      .filter((entry) => typeof entry.url === "string" && entry.url.trim().length > 0)
+      .map((entry) => ({
+        url: entry.url as string,
+        title: typeof entry.title === "string" && entry.title.trim().length > 0
+          ? entry.title
+          : (entry.url as string),
+        kind: "email",
+        sourceTool: "imap_search",
+      }));
+
     return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
       query,
+      filters: {
+        folder: input.folder ?? null,
+        chunkSource: chunkSource ?? "all",
+        from: input.from?.trim() || null,
+        subject: input.subject?.trim() || null,
+        hasAttachments: typeof input.hasAttachments === "boolean" ? input.hasAttachments : null,
+        dateField,
+        year,
+        month,
+        day,
+      },
+      sort: {
+        by: sortBy,
+        direction: sortDirection,
+      },
       chunkSource: chunkSource ?? "all",
       retrievalMode: queryVector ? "vector-hybrid" : "lexical-fallback",
       embeddingModelKey: this.settings.embeddingModelKey,
       indexingStrategy: this.settings.indexingStrategy,
+      candidateRowsScanned: rows.length,
       results,
+      references,
+    };
+  }
+
+  private searchByMetadata(
+    input: SearchInput,
+    context: {
+      query: string;
+      chunkSource: string | undefined;
+      dateField: "sentAt" | "receivedAt" | "updatedAt";
+      dateColumn: string;
+      sortBy: "relevance" | "sentAt" | "receivedAt" | "updatedAt";
+      sortDirection: "asc" | "desc";
+      year: number | null;
+      month: number | null;
+      day: number | null;
+      fromFilter: string | null;
+      subjectFilter: string | null;
+      hasAttachments: number | null;
+    },
+  ): Record<string, unknown> {
+    const effectiveSortBy = context.sortBy === "relevance" ? "receivedAt" : context.sortBy;
+    const { sortColumn, sortDirectionSql } = resolveMetadataSortClause(effectiveSortBy, context.sortDirection);
+    const chunkSource = context.chunkSource;
+
+    const rows = this.db.prepare(
+      `
+      SELECT
+        m.id,
+        m.folder,
+        m.uid,
+        m.message_id,
+        m.thread_id,
+        m.subject,
+        m.subject_slug,
+        m.from_addr,
+        m.to_addrs,
+        m.sent_at,
+        m.in_reply_to,
+        m.created_at,
+        m.updated_at
+      FROM imap_emails m
+      WHERE (? IS NULL OR m.folder = ?)
+        AND (? IS NULL OR LOWER(m.from_addr) LIKE ? ESCAPE '\\')
+        AND (? IS NULL OR LOWER(m.subject) LIKE ? ESCAPE '\\')
+        AND (? IS NULL OR CAST(strftime('%Y', ${context.dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR CAST(strftime('%m', ${context.dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR CAST(strftime('%d', ${context.dateColumn}) AS INTEGER) = ?)
+        AND (? IS NULL OR EXISTS(SELECT 1 FROM imap_email_attachments att WHERE att.email_id = m.id) = ?)
+        AND (? IS NULL OR ? = 'email')
+        AND (? IS NULL OR EXISTS(SELECT 1 FROM imap_email_attachments att WHERE att.email_id = m.id))
+      ORDER BY ${sortColumn} ${sortDirectionSql}, m.uid DESC
+      LIMIT ?
+      `,
+    ).all(
+      input.folder ?? null,
+      input.folder ?? null,
+      context.fromFilter,
+      context.fromFilter,
+      context.subjectFilter,
+      context.subjectFilter,
+      context.year,
+      context.year,
+      context.month,
+      context.month,
+      context.day,
+      context.day,
+      context.hasAttachments,
+      context.hasAttachments,
+      chunkSource ?? null,
+      chunkSource ?? null,
+      chunkSource ?? null,
+      Math.max(1, Math.min(50, input.limit ?? 10)),
+    ) as Array<
+      Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "subject_slug" | "from_addr" | "to_addrs" | "sent_at" | "in_reply_to" | "created_at" | "updated_at">
+    >;
+
+    const hitSource = chunkSource === "attachment" ? "attachment" : "email";
+    const results = rows.map((row) => ({
+      email: this.decorateEmailSummary(row),
+      score: 0,
+      excerpts: [] as string[],
+      hitSources: [hitSource],
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
+    }));
+
+    const references = results
+      .map((entry) => ({
+        url: entry.email.itemUrl,
+        title: entry.email.subject,
+      }))
+      .filter((entry) => typeof entry.url === "string" && entry.url.trim().length > 0)
+      .map((entry) => ({
+        url: entry.url as string,
+        title: typeof entry.title === "string" && entry.title.trim().length > 0
+          ? entry.title
+          : (entry.url as string),
+        kind: "email",
+        sourceTool: "imap_search",
+      }));
+
+    return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
+      query: context.query,
+      filters: {
+        folder: input.folder ?? null,
+        chunkSource: chunkSource ?? "all",
+        from: input.from?.trim() || null,
+        subject: input.subject?.trim() || null,
+        hasAttachments: typeof input.hasAttachments === "boolean" ? input.hasAttachments : null,
+        dateField: context.dateField,
+        year: context.year,
+        month: context.month,
+        day: context.day,
+      },
+      sort: {
+        by: effectiveSortBy,
+        direction: context.sortDirection,
+      },
+      chunkSource: chunkSource ?? "all",
+      retrievalMode: "metadata-fallback",
+      embeddingModelKey: this.settings.embeddingModelKey,
+      indexingStrategy: this.settings.indexingStrategy,
+      candidateRowsScanned: rows.length,
+      results,
+      references,
     };
   }
 
   getEmail(input: GetEmailInput): Record<string, unknown> {
     const row = this.resolveEmail(input);
-    return this.toEmailResult(row);
+    const email = this.toEmailResult(row);
+    const url = this.generateUrlFromMetadata({
+      messageId: row.message_id,
+      threadId: row.thread_id,
+      uid: row.uid,
+      folder: row.folder,
+      inReplyTo: row.in_reply_to,
+      from: row.from_addr,
+      to: parseJsonArray(row.to_addrs).join(","),
+      date: row.sent_at,
+      subjectSlug: row.subject_slug,
+    });
+    const references = url
+      ? [{
+          url,
+          title: row.subject?.trim().length ? row.subject : url,
+          kind: "email",
+          sourceTool: "imap_get_email",
+        }]
+      : [];
+    return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
+      ...email,
+      references,
+    };
   }
 
   getThread(input: GetThreadInput): Record<string, unknown> {
     const limit = Math.max(1, Math.min(100, input.limit ?? 50));
-    let threadId = input.threadId?.trim() || null;
+    let threadId = this.normalizeQualifiedThreadId(input.threadId) ?? null;
 
     if (!threadId && input.messageId) {
       const byMessage = this.db.prepare(
@@ -741,10 +1108,38 @@ export class ImapIndexService {
       `,
     ).all(threadId, limit) as EmailRow[];
 
+    const emails = rows.map((row) => this.toEmailResult(row));
+    const references = rows
+      .map((row) => {
+        const url = this.generateUrlFromMetadata({
+          messageId: row.message_id,
+          threadId: row.thread_id,
+          uid: row.uid,
+          folder: row.folder,
+          inReplyTo: row.in_reply_to,
+          from: row.from_addr,
+          to: parseJsonArray(row.to_addrs).join(","),
+          date: row.sent_at,
+          subjectSlug: row.subject_slug,
+        });
+        return { url, row };
+      })
+      .filter((entry) => typeof entry.url === "string" && entry.url.trim().length > 0)
+      .map((entry) => ({
+        url: entry.url,
+        title: entry.row.subject?.trim().length ? entry.row.subject : entry.url,
+        kind: "email",
+        sourceTool: "imap_get_thread",
+      }));
+
     return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
       threadId,
+      qualifiedThreadId: this.qualifyScopedId(threadId),
       count: rows.length,
-      emails: rows.map((row) => this.toEmailResult(row)),
+      emails,
+      references,
     };
   }
 
@@ -756,7 +1151,14 @@ export class ImapIndexService {
         uid: input.uid,
       });
       const chunkCount = await this.reindexEmail(row.id);
-      return { reindexed: 1, chunkCount };
+      return {
+        toolKey: this.settings.toolKey,
+        displayName: this.settings.displayName,
+        reindexed: 1,
+        chunkCount,
+        emailId: row.id,
+        qualifiedEmailId: this.qualifyScopedId(row.id),
+      };
     }
 
     const rows = this.db.prepare("SELECT id FROM imap_emails ORDER BY updated_at DESC").all() as Array<{ id: string }>;
@@ -766,6 +1168,8 @@ export class ImapIndexService {
     }
 
     return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
       reindexed: rows.length,
       chunkCount: totalChunks,
     };
@@ -804,6 +1208,7 @@ export class ImapIndexService {
 
     return {
       toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
       clearedAt: new Date().toISOString(),
       countsBefore,
       nextCrawlMode: this.settings.crawlMode,
@@ -813,8 +1218,12 @@ export class ImapIndexService {
     };
   }
 
+  getDisplayName(): string | undefined {
+    return this.settings.displayName;
+  }
+
   private createClient(): ImapFlow {
-    return new ImapFlow({
+    const client = new ImapFlow({
       host: this.settings.host,
       port: this.settings.port,
       secure: this.settings.secure,
@@ -828,6 +1237,18 @@ export class ImapIndexService {
       },
       logger: false,
     });
+
+    client.on("error", (error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      if (this.isEconnResetError(error)) {
+        this.recordEconnResetFailure(error, "client-event");
+        process.stderr.write(`[tool-imap] IMAP connection reset observed: ${message}\n`);
+        return;
+      }
+      process.stderr.write(`[tool-imap] IMAP client error: ${message}\n`);
+    });
+
+    return client;
   }
 
   private async normalizeMessage(input: {
@@ -857,17 +1278,6 @@ export class ImapIndexService {
 
     const id = buildEmailId(input.folder, input.uid, messageId);
     const bodyHash = hashText(body);
-    const itemUrl = this.renderItemUrl({
-      messageId,
-      uid: input.uid,
-      folder: input.folder,
-      threadId: input.threadId,
-      inReplyTo,
-      from: fromAddr,
-      to: toAddrs.join(","),
-      date: sentAt,
-      subjectSlug,
-    });
 
     const attachments = (parsed.attachments ?? []).map((attachment, index) => {
       const contentType = normalizeMimeType(attachment.contentType);
@@ -901,7 +1311,7 @@ export class ImapIndexService {
       sentAt,
       bodyText: body,
       bodyHash,
-      itemUrl,
+      itemUrl: null,
       attachments,
     };
   }
@@ -962,7 +1372,7 @@ export class ImapIndexService {
       record.sentAt,
       record.bodyText,
       record.bodyHash,
-      record.itemUrl,
+      null,
       now,
       now,
     );
@@ -1492,11 +1902,16 @@ export class ImapIndexService {
     if (!hasIndexedVectors) return null;
 
     const embeddings = this.embeddingRegistry.get(this.settings.embeddingModelKey);
-    const vector = await embeddings.embedQuery(query);
+    const vector = await withTimeout(
+      embeddings.embedQuery(query),
+      ImapIndexService.SEARCH_EMBED_TIMEOUT_MS,
+      `embedding request timed out after ${ImapIndexService.SEARCH_EMBED_TIMEOUT_MS}ms`,
+    );
     return [...vector];
   }
 
   private resolveEmail(input: GetEmailInput): EmailRow {
+    const resolvedEmailId = this.normalizeQualifiedEmailId(input.emailId);
     const row = this.db.prepare(
       `
       SELECT *
@@ -1507,8 +1922,8 @@ export class ImapIndexService {
       LIMIT 1
       `,
     ).get(
-      input.emailId ?? null,
-      input.emailId ?? null,
+      resolvedEmailId ?? null,
+      resolvedEmailId ?? null,
       input.messageId ?? null,
       input.messageId ?? null,
       input.folder ?? null,
@@ -1525,20 +1940,36 @@ export class ImapIndexService {
   }
 
   private toEmailResult(row: EmailRow): Record<string, unknown> {
+    const itemUrl = this.generateUrlFromMetadata({
+      messageId: row.message_id,
+      threadId: row.thread_id,
+      uid: row.uid,
+      folder: row.folder,
+      inReplyTo: row.in_reply_to,
+      from: row.from_addr,
+      to: parseJsonArray(row.to_addrs).join(","),
+      date: row.sent_at,
+      subjectSlug: row.subject_slug,
+    });
     return {
       id: row.id,
+      qualifiedId: this.qualifyScopedId(row.id),
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
       folder: row.folder,
       uid: row.uid,
       messageId: row.message_id,
       threadId: row.thread_id,
+      qualifiedThreadId: row.thread_id ? this.qualifyScopedId(row.thread_id) : null,
       inReplyTo: row.in_reply_to,
       subject: row.subject,
       subjectSlug: row.subject_slug,
       from: row.from_addr,
       to: parseJsonArray(row.to_addrs),
       sentAt: row.sent_at,
+      receivedAt: row.created_at,
       body: row.body_text,
-      itemUrl: row.item_url,
+      itemUrl,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     };
@@ -1566,6 +1997,71 @@ export class ImapIndexService {
         last_error = excluded.last_error
       `,
     ).run(folder, lastUid, now, lastError);
+  }
+
+  private qualifyScopedId(id: string): string {
+    return `${this.settings.toolKey}:${id}`;
+  }
+
+  private normalizeQualifiedEmailId(emailId?: string): string | undefined {
+    const value = emailId?.trim();
+    if (!value) return undefined;
+    const prefix = `${this.settings.toolKey}:`;
+    if (value.startsWith(prefix)) {
+      return value.slice(prefix.length);
+    }
+
+    const separatorIndex = value.indexOf(":");
+    if (separatorIndex > 0) {
+      const instanceKey = value.slice(0, separatorIndex);
+      if (instanceKey !== this.settings.toolKey) {
+        throw new Error(`Email id belongs to IMAP instance \"${instanceKey}\", not \"${this.settings.toolKey}\"`);
+      }
+      return value.slice(separatorIndex + 1);
+    }
+
+    return value;
+  }
+
+  private normalizeQualifiedThreadId(threadId?: string): string | undefined {
+    const value = threadId?.trim();
+    if (!value) return undefined;
+    const prefix = `${this.settings.toolKey}:`;
+    return value.startsWith(prefix) ? value.slice(prefix.length) : value;
+  }
+
+  private decorateEmailSummary(
+    email: Pick<EmailRow, "id" | "folder" | "uid" | "message_id" | "thread_id" | "subject" | "subject_slug" | "from_addr" | "to_addrs" | "sent_at" | "in_reply_to" | "created_at" | "updated_at">,
+  ): Record<string, unknown> {
+    const itemUrl = this.generateUrlFromMetadata({
+      messageId: email.message_id,
+      threadId: email.thread_id,
+      uid: email.uid,
+      folder: email.folder,
+      inReplyTo: email.in_reply_to,
+      from: email.from_addr,
+      to: parseJsonArray(email.to_addrs).join(","),
+      date: email.sent_at,
+      subjectSlug: email.subject_slug,
+    });
+    return {
+      id: email.id,
+      qualifiedId: this.qualifyScopedId(email.id),
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
+      folder: email.folder,
+      uid: email.uid,
+      messageId: email.message_id,
+      threadId: email.thread_id,
+      qualifiedThreadId: email.thread_id ? this.qualifyScopedId(email.thread_id) : null,
+      subject: email.subject,
+      from: email.from_addr,
+      sentAt: email.sent_at,
+      receivedAt: email.created_at,
+      createdAt: email.created_at,
+      updatedAt: email.updated_at,
+      itemUrl,
+    };
   }
 
   private async getMaxUid(client: ImapFlow, folder: string): Promise<number> {
@@ -1691,12 +2187,14 @@ export class ImapIndexService {
 
   private resolveSettings(toolKey: string, entry: ImapToolConfig): ResolvedImapSettings {
     const secure = entry.server.secure ?? true;
+    const displayName = entry.displayName?.trim();
     const allFoldersExcept = dedupe(entry.crawl?.allFoldersExcept ?? []);
     const mimeAllowList = entry.attachment?.mimeAllowList && entry.attachment.mimeAllowList.length > 0
       ? dedupe(entry.attachment.mimeAllowList.map((mimeType) => normalizeMimeType(mimeType)))
       : null;
     return {
       toolKey,
+      displayName: displayName && displayName.length > 0 ? displayName : undefined,
       host: entry.server.host,
       port: entry.server.port ?? (secure ? 993 : 143),
       secure,
@@ -1780,6 +2278,82 @@ export class ImapIndexService {
       indexedChunks: this.crawlRuntime.indexedChunks,
       lastFinishedAt: this.crawlRuntime.lastFinishedAtIso,
     };
+  }
+
+  private isEconnResetError(error: unknown): boolean {
+    const details = this.getImapErrorDetails(error);
+    return details.code === "ECONNRESET" || /\beconnreset\b/i.test(details.message);
+  }
+
+  private getImapErrorDetails(error: unknown): ImapErrorDetails {
+    const candidate = error as {
+      code?: unknown;
+      syscall?: unknown;
+      message?: unknown;
+    } | null;
+
+    const code = typeof candidate?.code === "string" ? candidate.code : "UNKNOWN";
+    const syscall = typeof candidate?.syscall === "string" ? candidate.syscall : "unknown";
+    const message = error instanceof Error
+      ? error.message
+      : typeof candidate?.message === "string"
+        ? candidate.message
+        : String(error);
+
+    return {
+      code,
+      syscall,
+      message,
+    };
+  }
+
+  private pruneEconnResetFailures(nowMs: number): void {
+    const cutoff = nowMs - ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS;
+    while (this.econnResetFailureTimestampsMs.length && this.econnResetFailureTimestampsMs[0]! < cutoff) {
+      this.econnResetFailureTimestampsMs.shift();
+    }
+  }
+
+  private recordEconnResetFailure(error: unknown, source: "crawl" | "client-event"): void {
+    const now = Date.now();
+    const details = this.getImapErrorDetails(error);
+    const signature = `${details.code}|${details.syscall}|${details.message}`;
+    if (
+      this.lastEconnResetSignature === signature
+      && now - this.lastEconnResetRecordedAtMs < ImapIndexService.ECONNRESET_DEDUPE_MS
+    ) {
+      return;
+    }
+
+    this.lastEconnResetSignature = signature;
+    this.lastEconnResetRecordedAtMs = now;
+    this.econnResetFailureTimestampsMs.push(now);
+    this.pruneEconnResetFailures(now);
+
+    const failureCount = this.econnResetFailureTimestampsMs.length;
+    process.stderr.write(
+      `[tool-imap] IMAP ${details.code} failure source=${source} syscall=${details.syscall} `
+      + `countLastHour=${failureCount}/${ImapIndexService.ECONNRESET_FAILURE_LIMIT} message=${details.message}\n`,
+    );
+
+    if (failureCount > ImapIndexService.ECONNRESET_FAILURE_LIMIT && !this.crawlStoppedByImapErrors) {
+      this.crawlStoppedByImapErrors = true;
+      this.crawlStopReason =
+        `Stopped after ${failureCount} ECONNRESET failures within ${ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS / 60000} minutes`;
+      this.crawlAbortRequested = true;
+
+      if (this.crawlRuntime) {
+        this.crawlRuntime.active = false;
+        this.crawlRuntime.currentFolder = null;
+      }
+
+      if (this.pollTimer) {
+        clearInterval(this.pollTimer);
+        this.pollTimer = null;
+      }
+
+      process.stderr.write(`[tool-imap] ${this.crawlStopReason}\n`);
+    }
   }
 
   private async estimateRemainingEmails(): Promise<Record<string, unknown>> {
@@ -1914,6 +2488,11 @@ export class ImapIndexService {
     );
   }
 
+  private generateUrlFromMetadata(metadata: Record<string, string | number | null | undefined>): string | null {
+    if (!this.settings.urlTemplate) return null;
+    return this.renderItemUrl(metadata);
+  }
+
   private renderItemUrl(metadata: Record<string, string | number | null | undefined>): string | null {
     if (!this.settings.urlTemplate) return null;
 
@@ -1932,6 +2511,168 @@ function buildEmailId(folder: string, uid: number, messageId: string | null): st
     return `${slugify(folder)}-${uid}-${digest}`;
   }
   return `${slugify(folder)}-${uid}`;
+}
+
+function normalizeSearchDateField(
+  value: SearchInput["dateField"],
+): "sentAt" | "receivedAt" | "updatedAt" {
+  return value ?? "sentAt";
+}
+
+function normalizeSearchSortBy(
+  value: SearchInput["sortBy"],
+): "relevance" | "sentAt" | "receivedAt" | "updatedAt" {
+  return value ?? "relevance";
+}
+
+function normalizeSortDirection(value: SearchInput["sortDirection"]): "asc" | "desc" {
+  return value === "asc" ? "asc" : "desc";
+}
+
+function normalizeSearchYear(value: number | undefined): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1 || value > 9999) {
+    throw new Error('"year" must be an integer between 1 and 9999');
+  }
+  return value;
+}
+
+function normalizeSearchMonth(value: number | undefined): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1 || value > 12) {
+    throw new Error('"month" must be an integer between 1 and 12');
+  }
+  return value;
+}
+
+function normalizeSearchDay(value: number | undefined): number | null {
+  if (value === undefined) return null;
+  if (!Number.isInteger(value) || value < 1 || value > 31) {
+    throw new Error('"day" must be an integer between 1 and 31');
+  }
+  return value;
+}
+
+function isWildcardQuery(query: string, queryTerms: string[]): boolean {
+  if (queryTerms.length > 0) return false;
+  const compact = query.replaceAll(/\s+/g, "");
+  return compact === "*" || compact === "%" || compact === "*:*";
+}
+
+function buildCaseInsensitiveLikePattern(value: string | undefined): string | null {
+  const trimmed = value?.trim().toLowerCase();
+  if (!trimmed) return null;
+  const escaped = trimmed
+    .replaceAll("\\", "\\\\")
+    .replaceAll("%", "\\%")
+    .replaceAll("_", "\\_");
+  return `%${escaped}%`;
+}
+
+function resolveSearchDateColumn(dateField: "sentAt" | "receivedAt" | "updatedAt"): string {
+  switch (dateField) {
+    case "receivedAt":
+      return "m.created_at";
+    case "updatedAt":
+      return "m.updated_at";
+    case "sentAt":
+    default:
+      return "m.sent_at";
+  }
+}
+
+function resolveMetadataSortClause(
+  sortBy: "sentAt" | "receivedAt" | "updatedAt",
+  sortDirection: "asc" | "desc",
+): { sortColumn: string; sortDirectionSql: "ASC" | "DESC" } {
+  const sortColumn = (() => {
+    switch (sortBy) {
+      case "receivedAt":
+        return "m.created_at";
+      case "updatedAt":
+        return "m.updated_at";
+      case "sentAt":
+      default:
+        return "m.sent_at";
+    }
+  })();
+
+  return {
+    sortColumn,
+    sortDirectionSql: sortDirection === "asc" ? "ASC" : "DESC",
+  };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    return promise;
+  }
+
+  let timeoutId: NodeJS.Timeout | undefined;
+  const timeoutPromise = new Promise<T>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(message)), timeoutMs);
+  });
+
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
+function toSortableTimestamp(value: string | null | undefined): number {
+  if (!value) return Number.NEGATIVE_INFINITY;
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : Number.NEGATIVE_INFINITY;
+}
+
+function compareSearchEntries(
+  left: {
+    email: Pick<EmailRow, "sent_at" | "created_at" | "updated_at">;
+    score: number;
+  },
+  right: {
+    email: Pick<EmailRow, "sent_at" | "created_at" | "updated_at">;
+    score: number;
+  },
+  sortBy: "relevance" | "sentAt" | "receivedAt" | "updatedAt",
+  sortDirection: "asc" | "desc",
+): number {
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  if (sortBy === "relevance") {
+    const diff = left.score - right.score;
+    if (diff !== 0) return diff * direction;
+    return (toSortableTimestamp(left.email.sent_at) - toSortableTimestamp(right.email.sent_at)) * -1;
+  }
+
+  const leftTimestamp = (() => {
+    switch (sortBy) {
+      case "receivedAt":
+        return toSortableTimestamp(left.email.created_at);
+      case "updatedAt":
+        return toSortableTimestamp(left.email.updated_at);
+      case "sentAt":
+      default:
+        return toSortableTimestamp(left.email.sent_at);
+    }
+  })();
+
+  const rightTimestamp = (() => {
+    switch (sortBy) {
+      case "receivedAt":
+        return toSortableTimestamp(right.email.created_at);
+      case "updatedAt":
+        return toSortableTimestamp(right.email.updated_at);
+      case "sentAt":
+      default:
+        return toSortableTimestamp(right.email.sent_at);
+    }
+  })();
+
+  const timestampDiff = leftTimestamp - rightTimestamp;
+  if (timestampDiff !== 0) return timestampDiff * direction;
+  return (left.score - right.score) * -1;
 }
 
 function stripHtml(input: string): string {

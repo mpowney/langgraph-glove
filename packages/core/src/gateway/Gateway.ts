@@ -33,6 +33,7 @@ import { HttpRpcClient } from "../rpc/HttpRpcClient";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import type { RpcClient } from "../rpc/RpcClient";
 import { RemoteTool } from "../tools/RemoteTool";
+import { createImapRouterTools, type ImapRouterInstanceConfig } from "../tools/ImapRouterTools.js";
 import { getToolPayloadRefTool } from "../tools/ToolPayloadRefTool";
 import { AdminApi } from "../api/AdminApi";
 import { ConversationMetadataService } from "../api/ConversationMetadataService";
@@ -1128,6 +1129,7 @@ export class Gateway extends EventEmitter {
     toolsConfig: Record<string, ToolServerEntry>,
   ): Promise<StructuredToolInterface[]> {
     const allTools: StructuredToolInterface[] = [getToolPayloadRefTool];
+    const imapInstances: ImapRouterInstanceConfig[] = [];
     this.discoveredToolNamesByServer = {};
 
     // Seed registry with the built-in tool payload ref tool so it appears in the catalog.
@@ -1152,11 +1154,26 @@ export class Gateway extends EventEmitter {
           logger.debug(`Tool server "${name}": connecting...`);
           await client.connect();
           logger.debug(`Tool server "${name}": connected, discovering tools...`);
+          const metadata = await client.listTools();
+
+          if (entry.imap) {
+            imapInstances.push({
+              key: name,
+              displayName: entry.imap.displayName,
+              transport: entry.transport,
+              crawlMode: entry.imap.crawl?.mode,
+              indexingStrategy: entry.imap.vector?.indexingStrategy,
+              indexDbPath: entry.imap.indexDbPath,
+              client,
+              metadata,
+            });
+            logger.info(`Tool server "${name}": ${metadata.length} IMAP backend tool(s) discovered`);
+            return;
+          }
+
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
           this.discoveredToolNamesByServer[name] = [...new Set(tools.map((tool) => tool.name))];
-          // Also capture raw metadata for the registry so the UI can read parameter schemas.
-          const metadata = await client.listTools();
           this.toolRegistry.push(...metadata);
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
         } catch (err) {
@@ -1166,6 +1183,18 @@ export class Gateway extends EventEmitter {
         return;
       })
     );
+
+    if (imapInstances.length > 0) {
+      const imapRouter = createImapRouterTools(imapInstances);
+      allTools.push(...imapRouter.tools);
+      this.toolRegistry.push(...imapRouter.toolDefinitions);
+      for (const instance of imapInstances) {
+        this.discoveredToolNamesByServer[instance.key] = [...imapRouter.toolNames];
+      }
+      logger.info(
+        `IMAP router: ${imapRouter.tools.length} canonical tool(s) synthesized across ${imapInstances.length} instance(s)`,
+      );
+    }
 
     logger.debug("All tool discovery promises resolved");
 

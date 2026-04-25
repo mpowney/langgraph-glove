@@ -155,8 +155,10 @@
   },
   "imap": {
     "modelKey": "azure-kimi",
+    "recursionLimit": 100,
     "systemPrompt": "You are an IMAP email specialist. {tool-descriptions}. Your task is to manage and interact with email accounts using IMAP protocol. Always follow the instructions provided by the user and use the available tools to perform email operations.",
     "description": "Manages and interacts with email accounts using IMAP protocol",
-    "autoToolDiscovery": ["imap-icloud"]
+    "autoToolDiscovery": ["imap-icloud", "imap-gmail"],
+    "tools": ["glove_get_tool_payload"] 
   }
 }

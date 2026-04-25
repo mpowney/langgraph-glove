@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { ChannelEntry } from "@langgraph-glove/config";
-import type { ToolEventMetadata } from "../rpc/RpcProtocol";
+import type { ToolEventMetadata, ToolReference } from "../rpc/RpcProtocol";
 
 /**
  * Check if the given text is a "!stop" command (case-insensitive, whitespace-trimmed).
@@ -42,6 +42,9 @@ export interface OutgoingContentItem {
   /** API path users/channels can use for inline-safe preview rendering. */
   previewPath?: string;
 }
+
+/** Channel-safe descriptor for URL/title references emitted by tool results. */
+export type OutgoingToolReference = ToolReference;
 
 /** An incoming message received from a user via a channel. */
 export interface IncomingMessage {
@@ -98,6 +101,8 @@ export interface OutgoingMessage {
   toolName?: string;
   /** Optional content references associated with this outgoing message. */
   contentItems?: OutgoingContentItem[];
+  /** Optional URL/title references associated with this outgoing message. */
+  references?: OutgoingToolReference[];
 }
 
 /** Callback invoked by a channel when a command (e.g., "!stop") is detected. */

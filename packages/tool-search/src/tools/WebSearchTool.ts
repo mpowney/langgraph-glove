@@ -43,11 +43,18 @@ interface SearxResponse {
   number_of_results: number;
 }
 
+interface ToolReference {
+  url: string;
+  title: string;
+  kind: "web";
+  sourceTool: "web_search";
+}
+
 /** Create a handler bound to a specific SearXNG base URL. */
 export function createWebSearchHandler(searxngUrl: string) {
   return async function handleWebSearch(
     params: Record<string, unknown>,
-  ): Promise<{ results: SearxResult[]; numberOfResults: number }> {
+  ): Promise<{ results: SearxResult[]; numberOfResults: number; references: ToolReference[] }> {
     const query = params["query"] as string;
     const categories = (params["categories"] as string | undefined) ?? "general";
     const language = (params["language"] as string | undefined) ?? "auto";
@@ -80,9 +87,19 @@ export function createWebSearchHandler(searxngUrl: string) {
       content: r.content ?? "",
     }));
 
+    const references = results
+      .filter((result) => result.url.trim().length > 0)
+      .map((result) => ({
+        url: result.url,
+        title: result.title.trim().length > 0 ? result.title : result.url,
+        kind: "web" as const,
+        sourceTool: "web_search" as const,
+      }));
+
     return {
       results,
       numberOfResults: body.number_of_results ?? results.length,
+      references,
     };
   };
 }

@@ -115,6 +115,7 @@
       "packageName": "@langgraph-glove/tool-imap"
     },
     "imap": {
+      "displayName": "Gmail",
       "server": {
         "host": "{SECRET:imap-gmail-host}",
         "port": 993,
@@ -161,6 +162,7 @@
       "packageName": "@langgraph-glove/tool-imap"
     },
     "imap": {
+      "displayName": "iCloud",
       "server": {
         "host": "{SECRET:imap-icloud-host}",
         "port": 993,

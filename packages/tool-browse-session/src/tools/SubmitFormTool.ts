@@ -1,6 +1,13 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
 import { sessionManager } from "../SessionManager";
 
+interface ToolReference {
+  url: string;
+  title: string;
+  kind: "web";
+  sourceTool: "browse_submit_form";
+}
+
 export const submitFormToolMetadata: ToolMetadata = {
   name: "browse_submit_form",
   description:
@@ -55,7 +62,14 @@ interface FieldEntry {
 
 export async function handleSubmitForm(
   params: Record<string, unknown>,
-): Promise<{ sessionId: string; success: boolean; title: string; url: string; content: string }> {
+): Promise<{
+  sessionId: string;
+  success: boolean;
+  title: string;
+  url: string;
+  content: string;
+  references: ToolReference[];
+}> {
   const sessionId = await sessionManager.resolveSessionId(params["sessionId"]);
   const fields = params["fields"] as FieldEntry[];
   const submitSelector = params["submitSelector"] as string | undefined;
@@ -120,5 +134,19 @@ export async function handleSubmitForm(
     return body.length > 2000 ? body.slice(0, 2000) + "…" : body;
   });
 
-  return { sessionId, success: true, title, url, content };
+  return {
+    sessionId,
+    success: true,
+    title,
+    url,
+    content,
+    references: [
+      {
+        url,
+        title: title?.trim().length ? title : url,
+        kind: "web",
+        sourceTool: "browse_submit_form",
+      },
+    ],
+  };
 }

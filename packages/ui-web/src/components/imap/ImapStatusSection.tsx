@@ -19,7 +19,7 @@ import {
   clearImapIndex,
   getImapCrawlStatus,
   getImapRemainingEstimate,
-  listImapTools,
+  listImapInstances,
   stopImapCrawl,
   startImapCrawl,
   type ImapCrawlStatusResult,
@@ -143,7 +143,7 @@ export function ImapStatusSection({
   const loadTools = useCallback(async () => {
     if (!privilegedReady) return;
     try {
-      const toolsResult = await listImapTools(apiBaseUrl, authToken, privilegedGrantId, conversationId);
+      const toolsResult = await listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
       setTools(toolsResult);
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : String(err));
@@ -362,7 +362,7 @@ export function ImapStatusSection({
             return (
               <div key={tool.toolKey} className={styles.card}>
                 <div className={styles.cardHeader}>
-                  <Text className={styles.cardTitle}>{tool.toolKey}</Text>
+                  <Text className={styles.cardTitle}>{tool.displayName?.trim() ? tool.displayName : tool.toolKey}</Text>
                   <Badge appearance="filled" color={runtime?.active ? "success" : "informative"}>
                     {runtime?.active ? "crawling" : "idle"}
                   </Badge>
@@ -371,6 +371,8 @@ export function ImapStatusSection({
                 {toolStatus?.error && <Text className={styles.error}>{toolStatus.error}</Text>}
 
                 <div className={styles.cardGrid}>
+                  <Text className={styles.summaryKey}>Instance key</Text>
+                  <Text className={styles.summaryValue}>{tool.toolKey}</Text>
                   <Text className={styles.summaryKey}>Mode</Text>
                   <Text className={styles.summaryValue}>{tool.crawlMode}</Text>
                   <Text className={styles.summaryKey}>Indexing</Text>

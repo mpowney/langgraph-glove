@@ -4,6 +4,7 @@ import type {
   Channel,
   IncomingMessage,
   OutgoingContentItem,
+  OutgoingToolReference,
   OutgoingStreamChunk,
   StreamSource,
 } from "../channels/Channel";
@@ -149,6 +150,210 @@ function extractContentItems(value: unknown): OutgoingContentItem[] {
 function buildOutgoingContentItemsFromToolOutput(content: string): OutgoingContentItem[] | undefined {
   const items = extractContentItems(content);
   return items.length > 0 ? items : undefined;
+}
+
+function readStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
+  return undefined;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return isObject(value) ? value : undefined;
+}
+
+function isAbsoluteUrl(value: string): boolean {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol.length > 1;
+  } catch {
+    return false;
+  }
+}
+
+function extractAgentKeyFromCallbackMetadata(metadata: unknown): string | undefined {
+  if (!isObject(metadata)) return undefined;
+
+  const readCandidate = (value: unknown): string | undefined => {
+    if (typeof value !== "string") return undefined;
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    const normalized = trimmed.toLowerCase();
+    if (
+      normalized === "default"
+      || normalized === "orchestrator"
+      || normalized === "tools"
+      || normalized === "agent"
+    ) {
+      return undefined;
+    }
+    return trimmed;
+  };
+
+  const direct = readCandidate(metadata.agentKey)
+    ?? readCandidate(metadata.agent_key)
+    ?? readCandidate(metadata.langgraph_node)
+    ?? readCandidate(metadata.node);
+  if (direct) return direct;
+
+  if (isObject(metadata.metadata)) {
+    return extractAgentKeyFromCallbackMetadata(metadata.metadata);
+  }
+  return undefined;
+}
+
+function buildOutgoingToolReferencesFromToolOutput(
+  toolName: string | undefined,
+  output: unknown,
+  toolArgs: unknown,
+): OutgoingToolReference[] | undefined {
+  const referencesByUrl = new Map<string, OutgoingToolReference>();
+  const normalizedOutput = (() => {
+    if (typeof output === "string") {
+      return parseJsonMaybe(output);
+    }
+    if (!isObject(output)) return output;
+
+    if (typeof output.content === "string") {
+      const parsedContent = parseJsonMaybe(output.content);
+      if (parsedContent !== output.content) return parsedContent;
+    }
+
+    const kwargs = isObject(output.kwargs) ? output.kwargs : undefined;
+    if (!kwargs) return output;
+    if (typeof kwargs.content === "string") {
+      const parsed = parseJsonMaybe(kwargs.content);
+      if (parsed !== kwargs.content) return parsed;
+    }
+    if (Object.prototype.hasOwnProperty.call(kwargs, "content")) {
+      return kwargs.content;
+    }
+    return output;
+  })();
+
+  const addReference = (
+    urlCandidate: unknown,
+    titleCandidate: unknown,
+    kind: string,
+    metadata?: Record<string, unknown>,
+  ): void => {
+    if (typeof urlCandidate !== "string") return;
+    const url = urlCandidate.trim();
+    if (!url || !isAbsoluteUrl(url)) return;
+
+    const title =
+      typeof titleCandidate === "string" && titleCandidate.trim().length > 0
+        ? titleCandidate.trim()
+        : url;
+
+    referencesByUrl.set(url, {
+      url,
+      title,
+      kind,
+      ...(toolName ? { sourceTool: toolName } : {}),
+      ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+    });
+  };
+
+  const addReferenceFromRecord = (candidate: unknown, fallbackKind = "resource"): void => {
+    const record = asRecord(candidate);
+    if (!record) return;
+
+    const nestedLink = asRecord(record.link);
+    const nestedResource = asRecord(record.resource);
+    const url = readStringField(record, ["url", "href", "link"])
+      ?? readStringField(nestedLink ?? {}, ["url", "href"])
+      ?? readStringField(nestedResource ?? {}, ["url", "href"]);
+    if (!url) return;
+
+    const title =
+      readStringField(record, ["title", "name", "label"])
+      ?? readStringField(nestedLink ?? {}, ["title", "name", "label"])
+      ?? readStringField(nestedResource ?? {}, ["title", "name", "label"])
+      ?? url;
+    const kind = readStringField(record, ["kind", "type", "category"]) ?? fallbackKind;
+
+    addReference(url, title, kind);
+  };
+
+  if (Array.isArray(normalizedOutput)) {
+    for (const item of normalizedOutput) {
+      addReferenceFromRecord(item);
+    }
+  } else if (isObject(normalizedOutput)) {
+    for (const field of ["references", "links", "resources", "urls"]) {
+      const value = normalizedOutput[field];
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          addReferenceFromRecord(item);
+        }
+      } else {
+        addReferenceFromRecord(value);
+      }
+    }
+
+    if (!Array.isArray(normalizedOutput.references) && !Array.isArray(normalizedOutput.links)) {
+      addReferenceFromRecord(normalizedOutput);
+    }
+  }
+
+  if (toolName === "web_get_content" && isObject(toolArgs)) {
+    addReference(toolArgs.url, toolArgs.url, "web", {
+      ...(typeof toolArgs.selector === "string" ? { selector: toolArgs.selector } : {}),
+    });
+  }
+
+  if (toolName === "web_search" && isObject(normalizedOutput) && Array.isArray(normalizedOutput.results)) {
+    for (const result of normalizedOutput.results) {
+      if (!isObject(result)) continue;
+      addReference(result.url, result.title, "web");
+    }
+  }
+
+  if (
+    (toolName === "imap_search" || toolName === "imap_get_email" || toolName === "imap_get_thread")
+    && isObject(normalizedOutput)
+  ) {
+    const addEmailReference = (emailValue: unknown): void => {
+      if (!isObject(emailValue)) return;
+      const url = readStringField(emailValue, ["itemUrl", "item_url"]);
+      if (!url) return;
+      const title =
+        readStringField(emailValue, ["subject", "title"])
+        ?? readStringField(emailValue, ["messageId", "id"])
+        ?? url;
+      addReference(url, title, "email");
+    };
+
+    if (toolName === "imap_search" && Array.isArray(normalizedOutput.results)) {
+      for (const result of normalizedOutput.results) {
+        if (!isObject(result)) continue;
+        addEmailReference(result.email);
+      }
+    } else if (toolName === "imap_get_thread" && Array.isArray(normalizedOutput.emails)) {
+      for (const email of normalizedOutput.emails) {
+        addEmailReference(email);
+      }
+    } else {
+      addEmailReference(normalizedOutput);
+    }
+  }
+
+  if (
+    (toolName === "browse_open" || toolName === "browse_submit_form")
+    && isObject(normalizedOutput)
+  ) {
+    addReference(normalizedOutput.url, normalizedOutput.title, "web", {
+      ...(typeof normalizedOutput.sessionId === "string" ? { sessionId: normalizedOutput.sessionId } : {}),
+    });
+  }
+
+  const references = [...referencesByUrl.values()];
+  return references.length > 0 ? references : undefined;
 }
 
 function redactSensitiveArgs(value: unknown): unknown {
@@ -621,6 +826,7 @@ export class GloveAgent {
       toolName?: string,
       metadata?: ToolEventMetadata,
       contentItems?: OutgoingContentItem[],
+      references?: OutgoingToolReference[],
     ) => void,
     onToolNameHint?: (toolCallId: string, toolName: string) => void,
     personalToken?: string,
@@ -1019,6 +1225,7 @@ export class GloveAgent {
           toolName?: string,
           toolEventMetadata?: ToolEventMetadata,
           contentItems?: OutgoingContentItem[],
+          references?: OutgoingToolReference[],
         ): void => {
           const resolvedToolName = (() => {
             if (toolName && !isGenericToolName(toolName)) return toolName;
@@ -1037,6 +1244,7 @@ export class GloveAgent {
                 toolName: resolvedToolName,
                 toolEventMetadata,
                 ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
+                ...(references && references.length > 0 ? { references } : {}),
               })
               .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
           }
@@ -1046,6 +1254,8 @@ export class GloveAgent {
     // Emit tool-call and tool-result events from callback hooks so UI
     // observability does not depend on provider-specific stream chunk types.
     const toolRunNameByRunId = new Map<string, string>();
+    const toolStartArgsByRunId = new Map<string, unknown>();
+    const toolAgentKeyByRunId = new Map<string, string>();
     const toolNameByCallId = new Map<string, string>();
     const toolStartCallback = onToolEvent
       ? BaseCallbackHandler.fromMethods({
@@ -1075,9 +1285,14 @@ export class GloveAgent {
                 : resolvedToolName;
             toolRunNameByRunId.set(String(runId), toolName);
             const args = parseJsonMaybe(input);
+            toolStartArgsByRunId.set(String(runId), args);
+            const agentKey = extractAgentKeyFromCallbackMetadata(metadata);
+            if (agentKey) {
+              toolAgentKeyByRunId.set(String(runId), agentKey);
+            }
             const toolDef = toolLookup ? toolLookup(toolName) : undefined;
             const meta: ToolEventMetadata | undefined = toolDef
-              ? { tool: toolDef }
+              ? { tool: toolDef, ...(agentKey ? { agentKey } : {}) }
               : undefined;
             onToolEvent(
               "tool-call",
@@ -1095,6 +1310,10 @@ export class GloveAgent {
             const runKey = String(runId);
             const toolName = toolRunNameByRunId.get(runKey);
             toolRunNameByRunId.delete(runKey);
+            const startArgs = toolStartArgsByRunId.get(runKey);
+            toolStartArgsByRunId.delete(runKey);
+            const agentKey = toolAgentKeyByRunId.get(runKey);
+            toolAgentKeyByRunId.delete(runKey);
             const content = (() => {
               if (typeof output === "string") return output;
               try {
@@ -1105,19 +1324,27 @@ export class GloveAgent {
             })();
             const toolDef = toolName && toolLookup ? toolLookup(toolName) : undefined;
             const meta: ToolEventMetadata | undefined = toolDef
-              ? { tool: toolDef }
+              ? { tool: toolDef, ...(agentKey ? { agentKey } : {}) }
               : undefined;
             const contentItems = buildOutgoingContentItemsFromToolOutput(content);
+            const references = buildOutgoingToolReferencesFromToolOutput(toolName, output, startArgs);
+            const toolResultPayload: Record<string, unknown> = { name: toolName, content };
+            if (references && references.length > 0) {
+              toolResultPayload.references = references;
+            }
             onToolEvent(
               "tool-result",
-              JSON.stringify({ name: toolName, content }),
+              JSON.stringify(toolResultPayload),
               toolName,
               meta,
               contentItems,
+              references,
             );
           },
           handleToolError: (_error, runId): void => {
             toolRunNameByRunId.delete(String(runId));
+            toolStartArgsByRunId.delete(String(runId));
+            toolAgentKeyByRunId.delete(String(runId));
           },
         })
       : undefined;

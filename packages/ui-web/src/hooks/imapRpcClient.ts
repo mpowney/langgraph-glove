@@ -8,6 +8,7 @@ interface RpcResponse<T> {
 
 export interface ImapToolSummary {
   toolKey: string;
+  displayName?: string;
   transport: "http" | "unix-socket";
   enabled: boolean;
   crawlMode: "manual" | "startup" | "continuous-sync";
@@ -96,6 +97,7 @@ export interface ImapRemainingEstimateOptions {
 
 export interface ImapClearIndexResult {
   toolKey: string;
+  displayName?: string;
   clearedAt: string;
   countsBefore: {
     emails: number;
@@ -161,20 +163,45 @@ export async function callImapRpc<T>(
   return payload.result;
 }
 
+export async function listImapInstances(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+): Promise<ImapListToolsResult> {
+  if (!privilegedGrantId.trim() || !conversationId.trim()) {
+    throw new Error("Privileged access is required for IMAP status");
+  }
+
+  const response = await fetch(`${apiBaseUrl}/api/imap/instances`, {
+    method: "GET",
+    headers: buildHeaders(authToken, privilegedGrantId, conversationId),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const payload = (await response.json()) as {
+    generatedAt: string;
+    count: number;
+    instances: ImapToolSummary[];
+  };
+
+  return {
+    generatedAt: payload.generatedAt,
+    count: payload.count,
+    tools: payload.instances,
+  };
+}
+
 export async function listImapTools(
   apiBaseUrl: string,
   authToken: string | undefined,
   privilegedGrantId: string,
   conversationId: string,
 ): Promise<ImapListToolsResult> {
-  return callImapRpc<ImapListToolsResult>(
-    apiBaseUrl,
-    "imap_list_tools",
-    {},
-    authToken,
-    privilegedGrantId,
-    conversationId,
-  );
+  return listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
 }
 
 export async function getImapCrawlStatus(
@@ -183,14 +210,49 @@ export async function getImapCrawlStatus(
   privilegedGrantId: string,
   conversationId: string,
 ): Promise<ImapCrawlStatusResult> {
-  return callImapRpc<ImapCrawlStatusResult>(
-    apiBaseUrl,
-    "imap_get_crawl_status",
-    {},
-    authToken,
-    privilegedGrantId,
-    conversationId,
+  const instances = await listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
+  const tools = await Promise.all(instances.tools.map(async ({ toolKey }) => {
+    try {
+      const status = await callImapRpc<ImapToolStatusEntry["status"]>(
+        apiBaseUrl,
+        "imap_status",
+        { toolKey },
+        authToken,
+        privilegedGrantId,
+        conversationId,
+      );
+      return { toolKey, status } satisfies ImapToolStatusEntry;
+    } catch (err) {
+      return {
+        toolKey,
+        error: err instanceof Error ? err.message : String(err),
+      } satisfies ImapToolStatusEntry;
+    }
+  }));
+
+  const summary = tools.reduce(
+    (acc, entry) => {
+      if (!entry.status) {
+        acc.failedTools += 1;
+        return acc;
+      }
+      if (entry.status.crawlRuntime?.active) {
+        acc.activeCrawls += 1;
+      }
+      return acc;
+    },
+    {
+      totalTools: tools.length,
+      failedTools: 0,
+      activeCrawls: 0,
+    },
   );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    tools,
+    summary,
+  };
 }
 
 export async function getImapRemainingEstimate(
@@ -200,26 +262,67 @@ export async function getImapRemainingEstimate(
   conversationId: string,
   options: ImapRemainingEstimateOptions = {},
 ): Promise<ImapRemainingEstimateResult> {
-  return callImapRpc<ImapRemainingEstimateResult>(
-    apiBaseUrl,
-    "imap_get_remaining_estimate",
-    {
-      forceRefreshEstimate: options.forceRefreshEstimate,
+  const instances = await listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
+  const tools = await Promise.all(instances.tools.map(async ({ toolKey }) => {
+    try {
+      const estimate = await callImapRpc<ImapRemainingEstimateEntry["estimate"]>(
+        apiBaseUrl,
+        "imap_estimate_remaining",
+        {
+          toolKey,
+          forceRefreshEstimate: options.forceRefreshEstimate,
+        },
+        authToken,
+        privilegedGrantId,
+        conversationId,
+      );
+      return { toolKey, estimate } satisfies ImapRemainingEstimateEntry;
+    } catch (err) {
+      return {
+        toolKey,
+        error: err instanceof Error ? err.message : String(err),
+      } satisfies ImapRemainingEstimateEntry;
+    }
+  }));
+
+  const summary = tools.reduce(
+    (acc, entry) => {
+      if (!entry.estimate) {
+        acc.failedTools += 1;
+        return acc;
+      }
+      const remaining = entry.estimate.remainingEmails;
+      if (typeof remaining === "number" && Number.isFinite(remaining)) {
+        acc.toolsWithEstimate += 1;
+        acc.estimatedRemainingEmails += remaining;
+      }
+      return acc;
     },
-    authToken,
-    privilegedGrantId,
-    conversationId,
+    {
+      totalTools: tools.length,
+      failedTools: 0,
+      toolsWithEstimate: 0,
+      estimatedRemainingEmails: 0,
+    },
   );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    tools,
+    summary,
+  };
 }
 
 export interface ImapStopCrawlResult {
   toolKey: string;
+  displayName?: string;
   stopped: boolean;
   reason?: string;
 }
 
 export interface ImapStartCrawlResult {
   toolKey: string;
+  displayName?: string;
   started: boolean;
   reason?: string;
 }
