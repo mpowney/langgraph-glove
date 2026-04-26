@@ -79,6 +79,7 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
       metadata: {
         name: "imap_search",
         description: describeForInstance("Run hybrid lexical + vector search across indexed emails.", displayName),
+        supportsContentUpload: true,
         parameters: {
           type: "object",
           properties: {
@@ -111,25 +112,133 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
               enum: ["email", "attachment"],
               description: "Optional content source filter. When omitted, searches both email and attachment chunks.",
             },
+            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. Defaults to 300 seconds." },
           },
           required: ["query"],
         },
       },
-      handler: async (params: Record<string, unknown>) => service.search({
-        query: params["query"] as string,
-        folder: params["folder"] as string | undefined,
-        limit: params["limit"] as number | undefined,
-        year: params["year"] as number | undefined,
-        month: params["month"] as number | undefined,
-        day: params["day"] as number | undefined,
-        dateField: params["dateField"] as "sentAt" | "receivedAt" | "updatedAt" | undefined,
-        from: params["from"] as string | undefined,
-        subject: params["subject"] as string | undefined,
-        hasAttachments: params["hasAttachments"] as boolean | undefined,
-        sortBy: params["sortBy"] as "relevance" | "sentAt" | "receivedAt" | "updatedAt" | undefined,
-        sortDirection: params["sortDirection"] as "asc" | "desc" | undefined,
-        chunkSource: params["chunkSource"] as "email" | "attachment" | undefined,
-      }),
+      handler: async (params: Record<string, unknown>) => {
+        const searchResult = await service.search({
+          query: params["query"] as string,
+          folder: params["folder"] as string | undefined,
+          limit: params["limit"] as number | undefined,
+          year: params["year"] as number | undefined,
+          month: params["month"] as number | undefined,
+          day: params["day"] as number | undefined,
+          dateField: params["dateField"] as "sentAt" | "receivedAt" | "updatedAt" | undefined,
+          from: params["from"] as string | undefined,
+          subject: params["subject"] as string | undefined,
+          hasAttachments: params["hasAttachments"] as boolean | undefined,
+          sortBy: params["sortBy"] as "relevance" | "sentAt" | "receivedAt" | "updatedAt" | undefined,
+          sortDirection: params["sortDirection"] as "asc" | "desc" | undefined,
+          chunkSource: params["chunkSource"] as "email" | "attachment" | undefined,
+        });
+
+        const ttlSeconds = typeof params["ttlSeconds"] === "number"
+          ? Math.floor(params["ttlSeconds"])
+          : DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS;
+        if (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0) {
+          throw new Error("imap_search: 'ttlSeconds' must be a positive integer when provided");
+        }
+
+        const rawResults = searchResult["results"];
+        if (!Array.isArray(rawResults)) {
+          return searchResult;
+        }
+
+        const emailIds = [...new Set(rawResults
+          .map((entry) => {
+            if (!entry || typeof entry !== "object") return undefined;
+            const email = (entry as Record<string, unknown>)["email"];
+            if (!email || typeof email !== "object") return undefined;
+            const emailId = (email as Record<string, unknown>)["id"];
+            return typeof emailId === "string" && emailId.trim().length > 0 ? emailId : undefined;
+          })
+          .filter((emailId): emailId is string => typeof emailId === "string"))];
+
+        if (emailIds.length === 0) {
+          return {
+            ...searchResult,
+            attachmentCount: 0,
+            attachments: [],
+            contentItems: [],
+          };
+        }
+
+        const attachmentsToUpload = [] as Array<{ emailId: string; attachment: Awaited<ReturnType<ImapIndexService["getEmailAttachmentFiles"]>>["attachments"][number] }>;
+        for (const emailId of emailIds) {
+          const attachmentResult = await service.getEmailAttachmentFiles({ emailId });
+          for (const attachment of attachmentResult.attachments) {
+            attachmentsToUpload.push({ emailId, attachment });
+          }
+        }
+
+        if (attachmentsToUpload.length === 0) {
+          return {
+            ...searchResult,
+            attachmentCount: 0,
+            attachments: [],
+            contentItems: [],
+          };
+        }
+
+        const uploadAuth = readUploadAuth(params, "imap_search");
+        const uploadClient = new GatewayContentUploadClient(uploadAuth);
+        const uploadedAttachments = [] as Array<Record<string, unknown>>;
+        const contentItems = [] as Array<Record<string, unknown>>;
+
+        for (const item of attachmentsToUpload) {
+          const attachment = item.attachment;
+          const sha256 = createHash("sha256").update(attachment.content).digest("hex");
+          const init = await uploadClient.initUpload({
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            expectedBytes: attachment.content.byteLength,
+            ttlSeconds,
+          });
+
+          try {
+            let chunkIndex = 0;
+            for (let offset = 0; offset < attachment.content.byteLength; offset += DEFAULT_UPLOAD_CHUNK_BYTES) {
+              const chunk = attachment.content.subarray(
+                offset,
+                Math.min(offset + DEFAULT_UPLOAD_CHUNK_BYTES, attachment.content.byteLength),
+              );
+              await uploadClient.appendChunk(init.uploadId, chunkIndex, chunk);
+              chunkIndex += 1;
+            }
+
+            const finalized = await uploadClient.finalizeUpload(init.uploadId, sha256);
+            const contentItem = {
+              contentRef: finalized.contentRef,
+              fileName: finalized.fileName ?? attachment.fileName,
+              mimeType: finalized.mimeType ?? attachment.mimeType,
+              byteLength: finalized.byteLength,
+            };
+            contentItems.push(contentItem);
+            uploadedAttachments.push({
+              emailId: item.emailId,
+              attachmentId: attachment.attachmentId,
+              attachmentIndex: attachment.attachmentIndex,
+              fileSizeBytes: attachment.fileSizeBytes,
+              sha256,
+              uploadId: finalized.uploadId,
+              expiresAt: init.expiresAt,
+              ...contentItem,
+            });
+          } catch (error) {
+            await uploadClient.abortUpload(init.uploadId).catch(() => undefined);
+            throw error;
+          }
+        }
+
+        return {
+          ...searchResult,
+          attachmentCount: uploadedAttachments.length,
+          attachments: uploadedAttachments,
+          contentItems,
+        };
+      },
     },
     {
       metadata: {
