@@ -19,8 +19,8 @@ function toFallbackLabel(serverKey: string): string {
  * Rules:
  *  - configured+undiscovered: always included as status='error' (no load fn)
  *  - configured+unhealthy: included as status='error' (no load fn)
- *  - configured+discovered+healthy + has companion: included as status='ok' with load fn
- *  - configured+discovered+healthy + no companion: excluded (silent)
+ *  - configured+discovered+not explicitly unhealthy + has companion: included as status='ok' with load fn
+ *  - configured+discovered+not explicitly unhealthy + no companion: excluded (silent)
  */
 export function useToolPanels(statuses: Map<string, ToolServerStatus>): AvailablePanel[] {
   const [dynamicMetaByServerKey, setDynamicMetaByServerKey] = useState<Map<string, ToolPanelMeta>>(new Map());
