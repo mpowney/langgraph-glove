@@ -1,7 +1,18 @@
 import http from "node:http";
 import express, { type Express } from "express";
 import { ToolServer } from "./ToolServer";
-import type { RpcRequest } from "./RpcProtocol";
+import type { RpcRequest, ToolHealthResult } from "./RpcProtocol";
+
+function isToolHealthResult(value: unknown): value is ToolHealthResult {
+  if (!value || typeof value !== "object") return false;
+  const asRecord = value as Record<string, unknown>;
+  return (
+    typeof asRecord["ok"] === "boolean"
+    && typeof asRecord["summary"] === "string"
+    && Array.isArray(asRecord["dependencies"])
+    && typeof asRecord["latencyMs"] === "number"
+  );
+}
 
 /**
  * A tool server that accepts JSON-RPC calls over HTTP POST at `POST /rpc`.
@@ -82,11 +93,17 @@ export class HttpToolServer extends ToolServer {
         });
         return;
       }
-      if (result.result?.ok === false) {
-        res.status(503).json(result.result);
+      const healthResult = isToolHealthResult(result.result) ? result.result : undefined;
+      if (healthResult?.ok === false) {
+        res.status(503).json(healthResult);
         return;
       }
-      res.json(result.result);
+      res.json(healthResult ?? {
+        ok: true,
+        summary: "ok",
+        dependencies: [],
+        latencyMs,
+      });
     });
   }
 }
