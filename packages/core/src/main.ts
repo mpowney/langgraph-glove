@@ -29,6 +29,7 @@ import {
 } from "@langgraph-glove/config";
 import { Gateway } from "./gateway/Gateway";
 import { LogService } from "./logging/LogService";
+import { ConsoleSubscriber } from "./logging/ConsoleSubscriber";
 import { FileSubscriber } from "./logging/FileSubscriber";
 import { LogLevel } from "./logging/LogLevel";
 import { getChannelEntryByKey } from "./channels/Channel";
@@ -63,6 +64,12 @@ for (const arg of args) {
 const logLevel = (process.env["LOG_LEVEL"] ?? "INFO").toUpperCase();
 const level = LogLevel[logLevel as keyof typeof LogLevel] ?? LogLevel.INFO;
 const logger = new Logger("main");
+const isDebugProcess = process.execArgv.some((arg) => arg.startsWith("--inspect"));
+const enableConsoleLogging = isDebugProcess && args.includes("--no-cli");
+
+if (enableConsoleLogging) {
+  LogService.subscribe(new ConsoleSubscriber(level));
+}
 
 if (process.env["LOG_FILE"]) {
   LogService.subscribe(new FileSubscriber(level));

@@ -252,6 +252,7 @@ export class ImapIndexService {
   };
   private static readonly ESTIMATE_CACHE_TTL_MS = 30_000;
   private static readonly DEFAULT_PDF_DPI = 180;
+  private static readonly IMAP_SOCKET_TIMEOUT_MS = 10 * 60 * 1000;
   private static readonly ECONNRESET_FAILURE_WINDOW_MS = 60 * 60 * 1000;
   private static readonly ECONNRESET_FAILURE_LIMIT = 5;
   private static readonly ECONNRESET_DEDUPE_MS = 5000;
@@ -308,7 +309,7 @@ export class ImapIndexService {
         await this.crawl({ full: false });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (this.isEconnResetError(error)) {
+        if (this.isRecoverableImapConnectionError(error)) {
           process.stderr.write(`[tool-imap] startup crawl recoverable IMAP failure: ${message}\n`);
         } else {
           throw error;
@@ -327,7 +328,7 @@ export class ImapIndexService {
         }
         void this.crawl({ full: false }).catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
-          if (this.isEconnResetError(error)) {
+          if (this.isRecoverableImapConnectionError(error)) {
             process.stderr.write(`[tool-imap] poll crawl recoverable IMAP failure: ${message}\n`);
             return;
           }
@@ -638,7 +639,7 @@ export class ImapIndexService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (this.isEconnResetError(error)) {
+      if (this.isRecoverableImapConnectionError(error)) {
         this.recordEconnResetFailure(error, "crawl");
       }
       for (const folder of folders) {
@@ -1227,6 +1228,7 @@ export class ImapIndexService {
       host: this.settings.host,
       port: this.settings.port,
       secure: this.settings.secure,
+      socketTimeout: ImapIndexService.IMAP_SOCKET_TIMEOUT_MS,
       auth: {
         user: this.settings.user,
         pass: this.settings.password,
@@ -1240,9 +1242,9 @@ export class ImapIndexService {
 
     client.on("error", (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      if (this.isEconnResetError(error)) {
+      if (this.isRecoverableImapConnectionError(error)) {
         this.recordEconnResetFailure(error, "client-event");
-        process.stderr.write(`[tool-imap] IMAP connection reset observed: ${message}\n`);
+        process.stderr.write(`[tool-imap] IMAP recoverable connection error observed: ${message}\n`);
         return;
       }
       process.stderr.write(`[tool-imap] IMAP client error: ${message}\n`);
@@ -2285,6 +2287,15 @@ export class ImapIndexService {
     return details.code === "ECONNRESET" || /\beconnreset\b/i.test(details.message);
   }
 
+  private isSocketTimeoutError(error: unknown): boolean {
+    const details = this.getImapErrorDetails(error);
+    return details.code === "ETIMEDOUT" || /socket timeout|timed out/i.test(details.message);
+  }
+
+  private isRecoverableImapConnectionError(error: unknown): boolean {
+    return this.isEconnResetError(error) || this.isSocketTimeoutError(error);
+  }
+
   private getImapErrorDetails(error: unknown): ImapErrorDetails {
     const candidate = error as {
       code?: unknown;
@@ -2339,7 +2350,7 @@ export class ImapIndexService {
     if (failureCount > ImapIndexService.ECONNRESET_FAILURE_LIMIT && !this.crawlStoppedByImapErrors) {
       this.crawlStoppedByImapErrors = true;
       this.crawlStopReason =
-        `Stopped after ${failureCount} ECONNRESET failures within ${ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS / 60000} minutes`;
+        `Stopped after ${failureCount} recoverable IMAP connection failures within ${ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS / 60000} minutes`;
       this.crawlAbortRequested = true;
 
       if (this.crawlRuntime) {
