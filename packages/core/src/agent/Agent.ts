@@ -152,6 +152,41 @@ function buildOutgoingContentItemsFromToolOutput(content: string): OutgoingConte
   return items.length > 0 ? items : undefined;
 }
 
+function mergeOutgoingContentItems(
+  ...groups: Array<OutgoingContentItem[] | undefined>
+): OutgoingContentItem[] | undefined {
+  const merged = new Map<string, OutgoingContentItem>();
+
+  for (const group of groups) {
+    if (!group) continue;
+    for (const item of group) {
+      const existing = merged.get(item.contentRef);
+      merged.set(item.contentRef, {
+        ...(existing ?? {}),
+        ...item,
+      });
+    }
+  }
+
+  return merged.size > 0 ? [...merged.values()] : undefined;
+}
+
+function mergeOutgoingToolReferences(
+  ...groups: Array<OutgoingToolReference[] | undefined>
+): OutgoingToolReference[] | undefined {
+  const merged = new Map<string, OutgoingToolReference>();
+
+  for (const group of groups) {
+    if (!group) continue;
+    for (const reference of group) {
+      const key = `${reference.url}|${reference.title ?? ""}|${reference.sourceTool ?? ""}`;
+      merged.set(key, reference);
+    }
+  }
+
+  return merged.size > 0 ? [...merged.values()] : undefined;
+}
+
 function readStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
   for (const key of keys) {
     const value = record[key];
@@ -1215,41 +1250,48 @@ export class GloveAgent {
         }
       : undefined;
     const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
+    let pendingToolContentItems: OutgoingContentItem[] | undefined;
+    let pendingToolReferences: OutgoingToolReference[] | undefined;
 
     // Forward tool calls, results, and agent transfers to receiveAgentProcessing channels.
     const toolLookup = this.config.toolLookup;
-    const onToolEvent = observabilityTargets.length
-      ? (
-          role: "tool-call" | "tool-result" | "agent-transfer",
-          text: string,
-          toolName?: string,
-          toolEventMetadata?: ToolEventMetadata,
-          contentItems?: OutgoingContentItem[],
-          references?: OutgoingToolReference[],
-        ): void => {
-          const resolvedToolName = (() => {
-            if (toolName && !isGenericToolName(toolName)) return toolName;
-            const metaToolName = toolEventMetadata?.tool?.name;
-            if (typeof metaToolName === "string" && !isGenericToolName(metaToolName)) {
-              return metaToolName;
-            }
-            return toolName;
-          })();
-          for (const ch of observabilityTargets) {
-            ch
-              .sendMessage({
-                conversationId: message.conversationId,
-                text,
-                role,
-                toolName: resolvedToolName,
-                toolEventMetadata,
-                ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
-                ...(references && references.length > 0 ? { references } : {}),
-              })
-              .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
-          }
+    const onToolEvent = (
+      role: "tool-call" | "tool-result" | "agent-transfer",
+      text: string,
+      toolName?: string,
+      toolEventMetadata?: ToolEventMetadata,
+      contentItems?: OutgoingContentItem[],
+      references?: OutgoingToolReference[],
+    ): void => {
+      if (role === "tool-result") {
+        pendingToolContentItems = mergeOutgoingContentItems(pendingToolContentItems, contentItems);
+        pendingToolReferences = mergeOutgoingToolReferences(pendingToolReferences, references);
+      }
+
+      if (observabilityTargets.length === 0) return;
+
+      const resolvedToolName = (() => {
+        if (toolName && !isGenericToolName(toolName)) return toolName;
+        const metaToolName = toolEventMetadata?.tool?.name;
+        if (typeof metaToolName === "string" && !isGenericToolName(metaToolName)) {
+          return metaToolName;
         }
-      : undefined;
+        return toolName;
+      })();
+      for (const ch of observabilityTargets) {
+        ch
+          .sendMessage({
+            conversationId: message.conversationId,
+            text,
+            role,
+            toolName: resolvedToolName,
+            toolEventMetadata,
+            ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
+            ...(references && references.length > 0 ? { references } : {}),
+          })
+          .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
+      }
+    };
 
     // Emit tool-call and tool-result events from callback hooks so UI
     // observability does not depend on provider-specific stream chunk types.
@@ -1257,8 +1299,7 @@ export class GloveAgent {
     const toolStartArgsByRunId = new Map<string, unknown>();
     const toolAgentKeyByRunId = new Map<string, string>();
     const toolNameByCallId = new Map<string, string>();
-    const toolStartCallback = onToolEvent
-      ? BaseCallbackHandler.fromMethods({
+    const toolStartCallback = BaseCallbackHandler.fromMethods({
           handleToolStart: (
             tool,
             input,
@@ -1346,8 +1387,7 @@ export class GloveAgent {
             toolStartArgsByRunId.delete(String(runId));
             toolAgentKeyByRunId.delete(String(runId));
           },
-        })
-      : undefined;
+        });
     const callbacks: BaseCallbackHandler[] = toolStartCallback
       ? [handler, toolStartCallback]
       : [handler];
@@ -1455,11 +1495,19 @@ export class GloveAgent {
           conversationId: message.conversationId,
           text: fallbackResponse,
           role: "agent",
+          ...(pendingToolContentItems ? { contentItems: pendingToolContentItems } : {}),
+          ...(pendingToolReferences ? { references: pendingToolReferences } : {}),
         });
 
         for (const ch of mirrorTargets) {
           await ch
-            .sendMessage({ conversationId: message.conversationId, text: fallbackResponse, role: "agent" })
+            .sendMessage({
+              conversationId: message.conversationId,
+              text: fallbackResponse,
+              role: "agent",
+              ...(pendingToolContentItems ? { contentItems: pendingToolContentItems } : {}),
+              ...(pendingToolReferences ? { references: pendingToolReferences } : {}),
+            })
             .catch((e: unknown) => logger.error(`Failed to broadcast fallback response to channel "${ch.name}"`, e));
         }
         emitTurnComplete(fallbackResponse);
@@ -1478,11 +1526,22 @@ export class GloveAgent {
           privilegeGrantId,
           runtimeContext,
         );
-        await sourceChannel.sendMessage({ conversationId: message.conversationId, text: response });
+        await sourceChannel.sendMessage({
+          conversationId: message.conversationId,
+          text: response,
+          ...(pendingToolContentItems ? { contentItems: pendingToolContentItems } : {}),
+          ...(pendingToolReferences ? { references: pendingToolReferences } : {}),
+        });
 
         for (const ch of mirrorTargets) {
           await ch
-            .sendMessage({ conversationId: message.conversationId, text: response, role: "agent" })
+            .sendMessage({
+              conversationId: message.conversationId,
+              text: response,
+              role: "agent",
+              ...(pendingToolContentItems ? { contentItems: pendingToolContentItems } : {}),
+              ...(pendingToolReferences ? { references: pendingToolReferences } : {}),
+            })
             .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
         }
         emitTurnComplete(response);

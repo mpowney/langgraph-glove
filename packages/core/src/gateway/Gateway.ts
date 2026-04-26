@@ -202,6 +202,11 @@ export class Gateway extends EventEmitter {
           const cleanupDeletedContent = () => {
             if (!this.contentStore) return;
             try {
+              const expiredPurged = this.contentStore.purgeExpiredContent();
+              if (expiredPurged > 0) {
+                logger.info(`Expired content cleanup purged ${expiredPurged} row(s)`);
+              }
+
               const purged = this.contentStore.purgeDeletedContentOlderThanDays(deletedRetentionDays);
               if (purged > 0) {
                 logger.info(
@@ -1569,8 +1574,27 @@ export class Gateway extends EventEmitter {
       switch (request.method) {
         case "__content_upload_init__": {
           const expectedBytes = readNumber("expectedBytes");
+          const requestedTtlSeconds = readNumber("ttlSeconds");
           const uploadId = randomUUID();
           const contentRef = `content_${randomUUID()}`;
+          const effectiveExpiresAt = (() => {
+            if (requestedTtlSeconds === undefined) {
+              return claims.expiresAt;
+            }
+
+            if (!Number.isInteger(requestedTtlSeconds) || requestedTtlSeconds <= 0) {
+              throw new Error("ttlSeconds must be a positive integer when provided");
+            }
+
+            const maxTtlSeconds = this.config?.gateway.contentUploadTokenTtlSeconds ?? 300;
+            const boundedTtlSeconds = Math.min(requestedTtlSeconds, maxTtlSeconds);
+            const requestedExpiresAtMs = Date.now() + boundedTtlSeconds * 1000;
+            const claimExpiresAtMs = Date.parse(claims.expiresAt);
+            const effectiveExpiresAtMs = Number.isFinite(claimExpiresAtMs)
+              ? Math.min(requestedExpiresAtMs, claimExpiresAtMs)
+              : requestedExpiresAtMs;
+            return new Date(effectiveExpiresAtMs).toISOString();
+          })();
 
           this.contentStore.createUploadSession({
             uploadId,
@@ -1582,7 +1606,7 @@ export class Gateway extends EventEmitter {
             expectedBytes,
             systemPromptText: readString("systemPromptText"),
             systemPromptHash: readString("systemPromptHash"),
-            expiresAt: claims.expiresAt,
+            expiresAt: effectiveExpiresAt,
           });
 
           return {
@@ -1590,7 +1614,7 @@ export class Gateway extends EventEmitter {
             result: {
               uploadId,
               contentRef,
-              expiresAt: claims.expiresAt,
+              expiresAt: effectiveExpiresAt,
             },
           };
         }

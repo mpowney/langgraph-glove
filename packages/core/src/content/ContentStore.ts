@@ -37,6 +37,7 @@ export interface ContentMetadata {
   byteLength: number;
   sha256?: string;
   createdAt: string;
+  expiresAt?: string;
   deletedAt?: string;
 }
 
@@ -76,6 +77,7 @@ export class ContentStore {
         system_prompt_text TEXT,
         system_prompt_hash TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        expires_at TEXT,
         deleted_at TEXT
       );
 
@@ -93,6 +95,9 @@ export class ContentStore {
 
       CREATE INDEX IF NOT EXISTS idx_content_items_tool_name
         ON content_items(tool_name, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_content_items_expires_at
+        ON content_items(expires_at);
 
       CREATE TABLE IF NOT EXISTS content_upload_sessions (
         upload_id TEXT PRIMARY KEY,
@@ -114,6 +119,15 @@ export class ContentStore {
       CREATE INDEX IF NOT EXISTS idx_upload_sessions_status
         ON content_upload_sessions(status, expires_at);
     `);
+
+    const contentItemColumns = this.db
+      .prepare<[], { name: string }>("PRAGMA table_info(content_items)")
+      .all()
+      .map((column) => column.name);
+    if (!contentItemColumns.includes("expires_at")) {
+      this.db.exec("ALTER TABLE content_items ADD COLUMN expires_at TEXT");
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_content_items_expires_at ON content_items(expires_at)");
+    }
   }
 
   createUploadSession(input: CreateUploadSessionInput): void {
@@ -128,9 +142,10 @@ export class ContentStore {
               file_name,
               mime_type,
               byte_length,
+              expires_at,
               system_prompt_text,
               system_prompt_hash
-            ) VALUES (?, ?, ?, ?, ?, 0, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
           `,
         )
         .run(
@@ -139,6 +154,7 @@ export class ContentStore {
           input.toolName,
           input.fileName ?? null,
           input.mimeType ?? null,
+          input.expiresAt,
           input.systemPromptText ?? null,
           input.systemPromptHash ?? null,
         );
@@ -350,11 +366,12 @@ export class ContentStore {
           byte_length: number;
           sha256: string | null;
           created_at: string;
+          expires_at: string | null;
           deleted_at: string | null;
         }
       >(
         `
-          SELECT content_ref, conversation_id, tool_name, file_name, mime_type, byte_length, sha256, created_at, deleted_at
+          SELECT content_ref, conversation_id, tool_name, file_name, mime_type, byte_length, sha256, created_at, expires_at, deleted_at
           FROM content_items
           WHERE content_ref = ?
           LIMIT 1
@@ -363,6 +380,7 @@ export class ContentStore {
       .get(contentRef);
 
     if (!row) return undefined;
+    if (this.isExpired(row.expires_at)) return undefined;
     return {
       contentRef: row.content_ref,
       conversationId: row.conversation_id,
@@ -372,19 +390,21 @@ export class ContentStore {
       byteLength: row.byte_length,
       sha256: row.sha256 ?? undefined,
       createdAt: row.created_at,
+      expiresAt: row.expires_at ?? undefined,
       deletedAt: row.deleted_at ?? undefined,
     };
   }
 
   getContentBytes(contentRef: string): Buffer | undefined {
     const row = this.db
-      .prepare<[string], { deleted_at: string | null }>(
-        `SELECT deleted_at FROM content_items WHERE content_ref = ? LIMIT 1`,
+      .prepare<[string], { deleted_at: string | null; expires_at: string | null }>(
+        `SELECT deleted_at, expires_at FROM content_items WHERE content_ref = ? LIMIT 1`,
       )
       .get(contentRef);
 
     if (!row) return undefined;
     if (row.deleted_at) return undefined;
+    if (this.isExpired(row.expires_at)) return undefined;
 
     const chunks = this.db
       .prepare<[string], { data: Buffer }>(
@@ -432,6 +452,21 @@ export class ContentStore {
     return result.changes;
   }
 
+  purgeExpiredContent(referenceTime = new Date()): number {
+    const referenceIso = referenceTime.toISOString();
+    const result = this.db
+      .prepare(
+        `
+          DELETE FROM content_items
+          WHERE expires_at IS NOT NULL
+            AND expires_at <= ?
+        `,
+      )
+      .run(referenceIso);
+
+    return result.changes;
+  }
+
   listContentMetadata(options: ListContentMetadataOptions = {}): ContentMetadata[] {
     const clauses: string[] = [];
     const params: unknown[] = [];
@@ -450,6 +485,8 @@ export class ContentStore {
       clauses.push("deleted_at IS NULL");
     }
 
+    clauses.push("(expires_at IS NULL OR expires_at > (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))) ");
+
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     const limit = Number.isFinite(options.limit) ? Math.min(Math.max(options.limit ?? 100, 1), 500) : 100;
     const offset = Number.isFinite(options.offset) ? Math.max(options.offset ?? 0, 0) : 0;
@@ -466,11 +503,12 @@ export class ContentStore {
           byte_length: number;
           sha256: string | null;
           created_at: string;
+          expires_at: string | null;
           deleted_at: string | null;
         }
       >(
         `
-          SELECT content_ref, conversation_id, tool_name, file_name, mime_type, byte_length, sha256, created_at, deleted_at
+          SELECT content_ref, conversation_id, tool_name, file_name, mime_type, byte_length, sha256, created_at, expires_at, deleted_at
           FROM content_items
           ${whereClause}
           ORDER BY created_at DESC, content_ref DESC
@@ -488,8 +526,16 @@ export class ContentStore {
       byteLength: row.byte_length,
       sha256: row.sha256 ?? undefined,
       createdAt: row.created_at,
+      expiresAt: row.expires_at ?? undefined,
       deletedAt: row.deleted_at ?? undefined,
     }));
+  }
+
+  private isExpired(expiresAt: string | null | undefined): boolean {
+    if (!expiresAt) return false;
+    const expiresAtMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiresAtMs)) return false;
+    return Date.now() >= expiresAtMs;
   }
 
   close(): void {

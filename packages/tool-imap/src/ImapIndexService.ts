@@ -73,6 +73,10 @@ export interface GetAttachmentInput {
   attachmentId: string;
 }
 
+export interface GetAttachmentFileInput extends GetEmailInput {
+  fileName: string;
+}
+
 interface ResolvedImapSettings {
   toolKey: string;
   displayName?: string;
@@ -175,6 +179,20 @@ interface ParsedAttachmentRecord {
   fileSizeBytes: number;
   contentHash: string;
   content: Buffer;
+}
+
+export interface RetrievedAttachmentFile {
+  attachmentId: string;
+  attachmentIndex: number;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  content: Buffer;
+}
+
+export interface RetrievedEmailAttachmentFiles {
+  email: Record<string, unknown>;
+  attachments: RetrievedAttachmentFile[];
 }
 
 interface ChunkRecord {
@@ -1480,6 +1498,35 @@ export class ImapIndexService {
     };
   }
 
+  async getAttachmentFiles(input: GetAttachmentFileInput): Promise<RetrievedEmailAttachmentFiles> {
+    const requestedFileName = normalizeAttachmentFilename(input.fileName);
+    if (!requestedFileName) {
+      throw new Error("fileName is required");
+    }
+
+    const row = this.resolveEmail(input);
+    const email = await this.fetchIndexedEmailSource(row);
+    const attachments = email.attachments
+      .filter((attachment) => normalizeAttachmentFilename(attachment.filename) === requestedFileName)
+      .map((attachment) => ({
+        attachmentId: buildAttachmentId(row.id, attachment.attachmentIndex),
+        attachmentIndex: attachment.attachmentIndex,
+        fileName: attachment.filename,
+        mimeType: attachment.contentType,
+        fileSizeBytes: attachment.fileSizeBytes,
+        content: attachment.content,
+      } satisfies RetrievedAttachmentFile));
+
+    if (attachments.length === 0) {
+      throw new Error(`No attachment named "${input.fileName}" found for the requested email`);
+    }
+
+    return {
+      email: this.decorateEmailSummary(row),
+      attachments,
+    };
+  }
+
   async clearIndex(): Promise<Record<string, unknown>> {
     if (this.crawlRuntime?.active) {
       this.crawlAbortRequested = true;
@@ -2267,6 +2314,39 @@ export class ImapIndexService {
     return row;
   }
 
+  private async fetchIndexedEmailSource(row: EmailRow): Promise<ParsedEmailRecord> {
+    const client = this.createClient();
+
+    try {
+      await client.connect();
+      await client.mailboxOpen(row.folder);
+
+      for await (const message of client.fetch(String(row.uid), {
+        uid: true,
+        envelope: true,
+        source: true,
+        threadId: true,
+      })) {
+        if (message.uid !== row.uid || !message.source) continue;
+
+        return this.normalizeMessage({
+          folder: row.folder,
+          uid: row.uid,
+          source: message.source,
+          threadId: message.threadId ? String(message.threadId) : row.thread_id,
+          fallbackSubject: message.envelope?.subject ?? row.subject,
+          fallbackInReplyTo: message.envelope?.inReplyTo?.[0]
+            ? String(message.envelope.inReplyTo[0])
+            : row.in_reply_to,
+        });
+      }
+    } finally {
+      await client.logout().catch(() => undefined);
+    }
+
+    throw new Error(`Email source not found on IMAP server for folder "${row.folder}" uid ${row.uid}`);
+  }
+
   private toEmailResult(row: EmailRow): Record<string, unknown> {
     const itemUrl = this.generateUrlFromMetadata({
       messageId: row.message_id,
@@ -3041,6 +3121,10 @@ function slugify(value: string): string {
 
 function normalizeMessageId(value: string): string {
   return value.trim().replace(/^<|>$/g, "");
+}
+
+function normalizeAttachmentFilename(value: string | null | undefined): string {
+  return value?.trim().toLowerCase() ?? "";
 }
 
 function hashText(value: string): string {

@@ -1,4 +1,10 @@
-import type { ToolHandler, ToolMetadata } from "@langgraph-glove/tool-server";
+import { createHash } from "node:crypto";
+import {
+  GatewayContentUploadClient,
+  type ContentUploadAuthPayload,
+  type ToolHandler,
+  type ToolMetadata,
+} from "@langgraph-glove/tool-server";
 import { ImapIndexService } from "../ImapIndexService";
 
 export interface ImapToolDefinition {
@@ -6,10 +12,42 @@ export interface ImapToolDefinition {
   handler: ToolHandler;
 }
 
+const DEFAULT_UPLOAD_CHUNK_BYTES = 256 * 1024;
+
 function describeForInstance(description: string, displayName?: string): string {
   const label = displayName?.trim();
   if (!label) return description;
   return `${description} IMAP instance: ${label}.`;
+}
+
+function readUploadAuth(params: Record<string, unknown>): ContentUploadAuthPayload {
+  const raw = params["contentUploadAuth"];
+  if (!raw || typeof raw !== "object") {
+    throw new Error("imap_get_attachment_file: missing runtime contentUploadAuth payload");
+  }
+
+  const payload = raw as Record<string, unknown>;
+  if (typeof payload.token !== "string") {
+    throw new Error("imap_get_attachment_file: invalid contentUploadAuth.token");
+  }
+  if (typeof payload.expiresAt !== "string") {
+    throw new Error("imap_get_attachment_file: invalid contentUploadAuth.expiresAt");
+  }
+  if (payload.transport !== "http" && payload.transport !== "unix-socket") {
+    throw new Error("imap_get_attachment_file: invalid contentUploadAuth.transport");
+  }
+
+  return {
+    token: payload.token,
+    expiresAt: payload.expiresAt,
+    transport: payload.transport,
+    ...(typeof payload.gatewayBaseUrl === "string"
+      ? { gatewayBaseUrl: payload.gatewayBaseUrl }
+      : {}),
+    ...(typeof payload.socketName === "string"
+      ? { socketName: payload.socketName }
+      : {}),
+  };
 }
 
 export function createImapTools(service: ImapIndexService): ImapToolDefinition[] {
@@ -166,6 +204,118 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
       handler: async (params: Record<string, unknown>) => service.getAttachment({
         attachmentId: params["attachmentId"] as string,
       }),
+    },
+    {
+      metadata: {
+        name: "imap_get_attachment_file",
+        description: describeForInstance(
+          "Retrieve attachment file bytes for a specific indexed email message-id and filename, then return the match or matches as content items for downstream channel delivery.",
+          displayName,
+        ),
+        requiresPrivilegedAccess: true,
+        supportsContentUpload: true,
+        parameters: {
+          type: "object",
+          properties: {
+            messageId: { type: "string", description: "RFC822 message-id of the indexed email." },
+            fileName: { type: "string", description: "Attachment filename to retrieve. Duplicate filename matches are all returned." },
+            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. When omitted, the gateway default upload TTL is used." },
+          },
+          required: ["messageId", "fileName"],
+        },
+      },
+      handler: async (params: Record<string, unknown>) => {
+        const messageId = typeof params["messageId"] === "string" ? params["messageId"].trim() : "";
+        const fileName = typeof params["fileName"] === "string" ? params["fileName"].trim() : "";
+        if (!messageId) {
+          throw new Error("imap_get_attachment_file: 'messageId' is required");
+        }
+        if (!fileName) {
+          throw new Error("imap_get_attachment_file: 'fileName' is required");
+        }
+
+        const ttlSeconds = typeof params["ttlSeconds"] === "number"
+          ? Math.floor(params["ttlSeconds"])
+          : undefined;
+        if (ttlSeconds !== undefined && ttlSeconds <= 0) {
+          throw new Error("imap_get_attachment_file: 'ttlSeconds' must be a positive integer when provided");
+        }
+
+        const uploadAuth = readUploadAuth(params);
+        const uploadClient = new GatewayContentUploadClient(uploadAuth);
+        const result = await service.getAttachmentFiles({
+          messageId,
+          fileName,
+        });
+
+        const uploadedAttachments = [] as Array<Record<string, unknown>>;
+        const contentItems = [] as Array<Record<string, unknown>>;
+
+        for (const attachment of result.attachments) {
+          const sha256 = createHash("sha256").update(attachment.content).digest("hex");
+          const init = await uploadClient.initUpload({
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            expectedBytes: attachment.content.byteLength,
+            ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+          });
+
+          try {
+            let chunkIndex = 0;
+            for (let offset = 0; offset < attachment.content.byteLength; offset += DEFAULT_UPLOAD_CHUNK_BYTES) {
+              const chunk = attachment.content.subarray(
+                offset,
+                Math.min(offset + DEFAULT_UPLOAD_CHUNK_BYTES, attachment.content.byteLength),
+              );
+              await uploadClient.appendChunk(init.uploadId, chunkIndex, chunk);
+              chunkIndex += 1;
+            }
+
+            const finalized = await uploadClient.finalizeUpload(init.uploadId, sha256);
+            const contentItem = {
+              contentRef: finalized.contentRef,
+              fileName: finalized.fileName ?? attachment.fileName,
+              mimeType: finalized.mimeType ?? attachment.mimeType,
+              byteLength: finalized.byteLength,
+            };
+            contentItems.push(contentItem);
+            uploadedAttachments.push({
+              attachmentId: attachment.attachmentId,
+              attachmentIndex: attachment.attachmentIndex,
+              fileSizeBytes: attachment.fileSizeBytes,
+              sha256,
+              uploadId: finalized.uploadId,
+              expiresAt: init.expiresAt,
+              ...contentItem,
+            });
+          } catch (error) {
+            await uploadClient.abortUpload(init.uploadId).catch(() => undefined);
+            throw error;
+          }
+        }
+
+        const itemUrl = typeof result.email["itemUrl"] === "string" ? result.email["itemUrl"] : undefined;
+        const subject = typeof result.email["subject"] === "string" ? result.email["subject"] : undefined;
+        const references = itemUrl
+          ? [{
+              url: itemUrl,
+              title: subject?.trim().length ? subject : itemUrl,
+              kind: "email",
+              sourceTool: "imap_get_attachment_file",
+            }]
+          : [];
+
+        return {
+          displayName,
+          messageId,
+          requestedFileName: fileName,
+          matchCount: uploadedAttachments.length,
+          email: result.email,
+          attachments: uploadedAttachments,
+          contentItems,
+          references,
+        };
+      },
     },
     {
       metadata: {
