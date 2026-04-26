@@ -146,17 +146,29 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
           return searchResult;
         }
 
-        const emailIds = [...new Set(rawResults
-          .map((entry) => {
-            if (!entry || typeof entry !== "object") return undefined;
-            const email = (entry as Record<string, unknown>)["email"];
-            if (!email || typeof email !== "object") return undefined;
-            const emailId = (email as Record<string, unknown>)["id"];
-            return typeof emailId === "string" && emailId.trim().length > 0 ? emailId : undefined;
-          })
-          .filter((emailId): emailId is string => typeof emailId === "string"))];
+        const emailRefByKey = new Map<string, { messageId?: string; emailId?: string }>();
+        for (const entry of rawResults) {
+          if (!entry || typeof entry !== "object") continue;
+          const email = (entry as Record<string, unknown>)["email"];
+          if (!email || typeof email !== "object") continue;
 
-        if (emailIds.length === 0) {
+          const emailRecord = email as Record<string, unknown>;
+          const messageIdValue = emailRecord["messageId"];
+          const emailIdValue = emailRecord["id"];
+          const messageId = typeof messageIdValue === "string" && messageIdValue.trim().length > 0
+            ? messageIdValue.trim()
+            : undefined;
+          const emailId = typeof emailIdValue === "string" && emailIdValue.trim().length > 0
+            ? emailIdValue.trim()
+            : undefined;
+
+          if (!messageId && !emailId) continue;
+          const refKey = messageId ? `message:${messageId}` : `email:${emailId}`;
+          emailRefByKey.set(refKey, { messageId, emailId });
+        }
+        const emailRefs = [...emailRefByKey.values()];
+
+        if (emailRefs.length === 0) {
           return {
             ...searchResult,
             attachmentCount: 0,
@@ -165,11 +177,17 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
           };
         }
 
-        const attachmentsToUpload = [] as Array<{ emailId: string; attachment: Awaited<ReturnType<ImapIndexService["getEmailAttachmentFiles"]>>["attachments"][number] }>;
-        for (const emailId of emailIds) {
-          const attachmentResult = await service.getEmailAttachmentFiles({ emailId });
+        const attachmentsToUpload = [] as Array<{ emailId?: string; messageId?: string; attachment: Awaited<ReturnType<ImapIndexService["getEmailAttachmentFiles"]>>["attachments"][number] }>;
+        for (const emailRef of emailRefs) {
+          const attachmentResult = emailRef.messageId
+            ? await service.getEmailAttachmentFiles({ messageId: emailRef.messageId })
+            : await service.getEmailAttachmentFiles({ emailId: emailRef.emailId });
           for (const attachment of attachmentResult.attachments) {
-            attachmentsToUpload.push({ emailId, attachment });
+            attachmentsToUpload.push({
+              emailId: emailRef.emailId,
+              messageId: emailRef.messageId,
+              attachment,
+            });
           }
         }
 
@@ -218,6 +236,7 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
             contentItems.push(contentItem);
             uploadedAttachments.push({
               emailId: item.emailId,
+              messageId: item.messageId,
               attachmentId: attachment.attachmentId,
               attachmentIndex: attachment.attachmentIndex,
               fileSizeBytes: attachment.fileSizeBytes,
