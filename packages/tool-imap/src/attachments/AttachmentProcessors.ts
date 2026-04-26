@@ -19,6 +19,7 @@ export interface AttachmentExtractionRuntime {
 
 export interface AttachmentExtractionOutput {
   text: string;
+  markdownText?: string;
 }
 
 export interface AttachmentProcessor {

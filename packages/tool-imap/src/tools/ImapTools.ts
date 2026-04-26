@@ -134,6 +134,41 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
     },
     {
       metadata: {
+        name: "imap_list_attachments",
+        description: describeForInstance("List unique indexed attachments with linked email metadata.", displayName),
+        requiresPrivilegedAccess: true,
+        parameters: {
+          type: "object",
+          properties: {
+            limit: { type: "number", description: "Maximum attachments to return (1-200)." },
+            offset: { type: "number", description: "Offset for paginated attachment browsing." },
+          },
+        },
+      },
+      handler: async (params: Record<string, unknown>) => service.listAttachments({
+        limit: params["limit"] as number | undefined,
+        offset: params["offset"] as number | undefined,
+      }),
+    },
+    {
+      metadata: {
+        name: "imap_get_attachment",
+        description: describeForInstance("Get one indexed attachment including extracted OCR/text and linked email metadata.", displayName),
+        requiresPrivilegedAccess: true,
+        parameters: {
+          type: "object",
+          properties: {
+            attachmentId: { type: "string", description: "Internal indexed attachment id." },
+          },
+          required: ["attachmentId"],
+        },
+      },
+      handler: async (params: Record<string, unknown>) => service.getAttachment({
+        attachmentId: params["attachmentId"] as string,
+      }),
+    },
+    {
+      metadata: {
         name: "imap_reindex",
         description: describeForInstance("Rebuild chunk/vector rows for one email or the entire indexed mailbox.", displayName),
         requiresPrivilegedAccess: true,

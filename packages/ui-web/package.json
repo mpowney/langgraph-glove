@@ -15,6 +15,7 @@
   "scripts": {
     "build": "vite build && tsup src/node/index.ts --format esm --dts --out-dir dist/node --tsconfig tsconfig.node.json",
     "dev": "vite",
+    "dev:diag": "VITE_DEV_DIAGNOSTICS=1 vite",
     "typecheck": "tsc --noEmit && tsc --noEmit --project tsconfig.node.json",
     "clean": "rm -rf dist"
   },

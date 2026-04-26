@@ -21,7 +21,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
-    "@langgraph-glove/ui-shared": "workspace:*"
+    "@langgraph-glove/ui-shared": "workspace:*",
+    "react-markdown": "^10.1.0",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "peerDependencies": {
     "@fluentui/react-components": ">=9",

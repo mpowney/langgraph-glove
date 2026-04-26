@@ -1448,6 +1448,62 @@ export class AdminApi {
               return;
             }
 
+            case "imap_list_attachments": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const listParams: Record<string, unknown> = {};
+              if (typeof rpcRequest.params["limit"] === "number" && Number.isFinite(rpcRequest.params["limit"])) {
+                listParams.limit = rpcRequest.params["limit"];
+              }
+              if (typeof rpcRequest.params["offset"] === "number" && Number.isFinite(rpcRequest.params["offset"])) {
+                listParams.offset = rpcRequest.params["offset"];
+              }
+
+              const listResult = await this.callToolRpc(target.entry, "imap_list_attachments", listParams);
+              res.json({ id: rpcRequest.id, result: listResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_get_attachment": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              const attachmentId = typeof rpcRequest.params["attachmentId"] === "string"
+                ? rpcRequest.params["attachmentId"].trim()
+                : "";
+
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+              if (!attachmentId) {
+                res.json({ id: rpcRequest.id, error: "attachmentId is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const detailResult = await this.callToolRpc(target.entry, "imap_get_attachment", { attachmentId });
+              res.json({ id: rpcRequest.id, result: detailResult } satisfies RpcResponse);
+              return;
+            }
+
             case "imap_stop_crawl": {
               const toolKey = typeof rpcRequest.params["toolKey"] === "string"
                 ? rpcRequest.params["toolKey"].trim()

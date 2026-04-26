@@ -114,6 +114,60 @@ export interface ImapClearIndexResult {
   note: string;
 }
 
+export interface ImapAttachmentEmailMeta {
+  subject?: string;
+  from?: string;
+  sentAt?: string | null;
+  messageId?: string | null;
+  threadId?: string | null;
+  uid?: number;
+  folder?: string;
+  itemUrl?: string | null;
+}
+
+export interface ImapAttachmentListItem {
+  attachmentId: string;
+  emailId: string;
+  attachmentIndex: number;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  extractionStatus: string;
+  extractionError?: string;
+  createdAt: string;
+  updatedAt: string;
+  chunkCount: number;
+  textPreview: string;
+  email?: ImapAttachmentEmailMeta;
+}
+
+export interface ImapAttachmentListResult {
+  toolKey: string;
+  displayName?: string;
+  total: number;
+  limit: number;
+  offset: number;
+  items: ImapAttachmentListItem[];
+}
+
+export interface ImapAttachmentDetailResult {
+  toolKey: string;
+  displayName?: string;
+  attachmentId: string;
+  emailId: string;
+  attachmentIndex: number;
+  fileName: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  extractionStatus: string;
+  extractionError?: string;
+  createdAt: string;
+  updatedAt: string;
+  text: string;
+  markdownText?: string;
+  email?: ImapAttachmentEmailMeta;
+}
+
 function buildHeaders(
   authToken: string | undefined,
   privilegedGrantId: string,
@@ -315,6 +369,54 @@ export async function clearImapIndex(
     apiBaseUrl,
     "imap_clear_index",
     { toolKey },
+    authToken,
+    privilegedGrantId,
+    conversationId,
+  );
+}
+
+export async function listImapAttachments(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+  params: {
+    toolKey: string;
+    limit?: number;
+    offset?: number;
+  },
+): Promise<ImapAttachmentListResult> {
+  return callImapRpc<ImapAttachmentListResult>(
+    apiBaseUrl,
+    "imap_list_attachments",
+    {
+      toolKey: params.toolKey,
+      limit: params.limit,
+      offset: params.offset,
+    },
+    authToken,
+    privilegedGrantId,
+    conversationId,
+  );
+}
+
+export async function getImapAttachment(
+  apiBaseUrl: string,
+  authToken: string | undefined,
+  privilegedGrantId: string,
+  conversationId: string,
+  params: {
+    toolKey: string;
+    attachmentId: string;
+  },
+): Promise<ImapAttachmentDetailResult> {
+  return callImapRpc<ImapAttachmentDetailResult>(
+    apiBaseUrl,
+    "imap_get_attachment",
+    {
+      toolKey: params.toolKey,
+      attachmentId: params.attachmentId,
+    },
     authToken,
     privilegedGrantId,
     conversationId,

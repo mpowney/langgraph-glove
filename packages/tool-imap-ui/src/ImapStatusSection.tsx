@@ -27,6 +27,7 @@ import {
   type ImapRemainingEstimateOptions,
   type ImapRemainingEstimateResult,
 } from "./imapRpcClient.js";
+import { ImapAttachmentBrowserDrawer } from "./ImapAttachmentBrowserDrawer.js";
 
 const useStyles = makeStyles({
   section: {
@@ -137,6 +138,7 @@ export function ImapStatusSection({
   const [tools, setTools] = useState<ImapListToolsResult | null>(null);
   const [status, setStatus] = useState<ImapCrawlStatusResult | null>(null);
   const [estimate, setEstimate] = useState<ImapRemainingEstimateResult | null>(null);
+  const [attachmentBrowserTool, setAttachmentBrowserTool] = useState<{ toolKey: string; toolLabel: string } | null>(null);
 
   const privilegedReady = privilegedGrantId.trim().length > 0 && conversationId.trim().length > 0;
 
@@ -437,6 +439,18 @@ export function ImapStatusSection({
                 <Button
                   appearance="secondary"
                   className={styles.clearIndexButton}
+                  onClick={() => setAttachmentBrowserTool({
+                    toolKey: tool.toolKey,
+                    toolLabel: tool.displayName?.trim() ? tool.displayName : tool.toolKey,
+                  })}
+                  disabled={!privilegedReady || statusLoading}
+                >
+                  Browse attachments
+                </Button>
+
+                <Button
+                  appearance="secondary"
+                  className={styles.clearIndexButton}
                   onClick={() => {
                     if (isCrawlActive) {
                       void handleStopCrawl(tool.toolKey);
@@ -506,6 +520,19 @@ export function ImapStatusSection({
           </DialogBody>
         </DialogSurface>
       </Dialog>
+
+      {attachmentBrowserTool && (
+        <ImapAttachmentBrowserDrawer
+          open={Boolean(attachmentBrowserTool)}
+          onClose={() => setAttachmentBrowserTool(null)}
+          apiBaseUrl={apiBaseUrl}
+          authToken={authToken}
+          privilegedGrantId={privilegedGrantId}
+          conversationId={conversationId}
+          toolKey={attachmentBrowserTool.toolKey}
+          toolLabel={attachmentBrowserTool.toolLabel}
+        />
+      )}
     </div>
   );
 }
