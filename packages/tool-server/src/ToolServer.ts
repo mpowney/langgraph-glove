@@ -78,7 +78,12 @@ export abstract class ToolServer {
     }
 
     const result = await this.healthCheck();
-    const latencyMs = "latencyMs" in result ? result.latencyMs : Date.now() - startedAt;
+    const latencyMs =
+      "latencyMs" in result &&
+      typeof result.latencyMs === "number" &&
+      Number.isFinite(result.latencyMs)
+        ? result.latencyMs
+        : Date.now() - startedAt;
     return {
       ...result,
       latencyMs,
