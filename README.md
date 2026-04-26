@@ -4,6 +4,45 @@ A TypeScript pnpm monorepo that wraps [LangGraph](https://github.com/langchain-a
 
 Requires **Node.js 22+** (pinned via `.nvmrc`).
 
+## IMAP PDF Dependencies (macOS)
+
+`tool-imap` attachment indexing uses `pdftotext` and `pdftoppm` (provided by Poppler).
+
+1. Install Poppler from an account that has sudo/admin rights:
+
+```bash
+brew install poppler
+```
+
+2. Ensure the unprivileged runtime account can resolve Homebrew binaries by adding `/opt/homebrew/bin` to its PATH (for example in `~/.zshrc`):
+
+```bash
+export PATH="/opt/homebrew/bin:$PATH"
+```
+
+3. Verify from the unprivileged account:
+
+```bash
+which pdftotext
+which pdftoppm
+```
+
+## IMAP PDF Dependencies (Linux)
+
+On Debian/Ubuntu, install Poppler utilities:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y poppler-utils
+```
+
+Verify from the runtime account:
+
+```bash
+which pdftotext
+which pdftoppm
+```
+
 ---
 
 ## Packages
