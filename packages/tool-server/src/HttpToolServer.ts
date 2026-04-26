@@ -75,6 +75,10 @@ export class HttpToolServer extends ToolServer {
         res.status(500).json({ ok: false, error: result.error });
         return;
       }
+      if (result.result?.ok === false) {
+        res.status(503).json(result.result);
+        return;
+      }
       res.json(result.result);
     });
   }
