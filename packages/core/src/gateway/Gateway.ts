@@ -1177,8 +1177,8 @@ export class Gateway extends EventEmitter {
       const title = normalizeConversationTitle(generatedTitle) ?? fallbackTitle;
       this.conversationMetadataService.upsertTitle(params.conversationId, title);
 
-      // Broadcast the generated title to all channels as a metadata event.
-      const allChannels = this.options.channels ?? [];
+      // Broadcast the generated title to channels that opted into metadata events.
+      const allChannels = (this.options.channels ?? []).filter((channel) => channel.receiveConversationMetadata);
       const metadataPayload = JSON.stringify({ title });
       for (const channel of allChannels) {
         channel

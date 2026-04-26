@@ -126,6 +126,12 @@ export interface ChannelConfig {
    * Default: `false`.
    */
   receiveSystem?: boolean;
+  /**
+   * When `true`, this channel receives conversation metadata events such as
+   * generated title updates.
+   * Default: `true`.
+   */
+  receiveConversationMetadata?: boolean;
 }
 
 /**
@@ -159,6 +165,9 @@ export abstract class Channel extends EventEmitter {
   /** When `true`, this channel receives runtime system events. */
   readonly receiveSystem: boolean;
 
+  /** When `true`, this channel receives conversation metadata events. */
+  readonly receiveConversationMetadata: boolean;
+
   /** Optional handler for commands like \"!stop\". Set by the agent. */
   protected commandHandler?: CommandHandler;
 
@@ -169,6 +178,7 @@ export abstract class Channel extends EventEmitter {
     super();
     this.receiveAgentProcessing = config.receiveAgentProcessing ?? false;
     this.receiveSystem = config.receiveSystem ?? false;
+    this.receiveConversationMetadata = config.receiveConversationMetadata ?? true;
   }
 
   /**
