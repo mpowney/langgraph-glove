@@ -23,6 +23,7 @@
     "debug": "node scripts/debug-gateway.mjs",
     "debug:cli": "node scripts/debug-gateway.mjs --cli",
     "ui:web": "pnpm --filter @langgraph-glove/ui-web dev",
+    "ui:web:diag": "pnpm --filter @langgraph-glove/ui-web dev:diag",
     "ui:observability": "pnpm --filter @langgraph-glove/ui-observability dev",
     "macos:bundle": "bash scripts/macos-bundle-control-app.sh",
     "macos:bundle:open": "bash scripts/macos-bundle-control-app.sh --open"

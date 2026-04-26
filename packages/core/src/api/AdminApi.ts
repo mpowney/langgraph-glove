@@ -16,6 +16,7 @@ import type { AuthService, AuthenticatedUser } from "../auth/AuthService";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import type {
   ToolDefinition,
+  ToolServerStatus,
   AgentCapabilityEntry,
   AgentCapabilityRegistry,
   RpcRequest,
@@ -337,6 +338,8 @@ export interface AdminApiConfig {
   toolsConfig?: Record<string, ToolServerEntry>;
   /** Discovered tool definitions served by `GET /api/tools/registry`. */
   toolRegistry?: ToolDefinition[];
+  /** Per-server bootstrap status served by `GET /api/tools/server-status`. */
+  toolServerStatuses?: Map<string, ToolServerStatus>;
   /** Agent capability entries served by `GET /api/agents/capabilities`. */
   agentCapabilities?: AgentCapabilityEntry[];
   /** Loaded runtime config used to build topology payloads. */
@@ -430,6 +433,7 @@ export class AdminApi {
   private readonly authService?: AuthService;
   private readonly toolsConfig: Record<string, ToolServerEntry>;
   private readonly toolRegistry: ToolDefinition[];
+  private readonly toolServerStatuses: Map<string, ToolServerStatus>;
   private readonly agentCapabilities: AgentCapabilityEntry[];
   private readonly config?: GloveConfig;
   private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
@@ -455,6 +459,7 @@ export class AdminApi {
     this.authService = config.authService;
     this.toolsConfig = config.toolsConfig ?? {};
     this.toolRegistry = config.toolRegistry ?? [];
+    this.toolServerStatuses = config.toolServerStatuses ?? new Map();
     this.agentCapabilities = config.agentCapabilities ?? [];
     this.config = config.config;
     this.invokeAgent = config.invokeAgent;
@@ -1106,6 +1111,18 @@ export class AdminApi {
     });
 
     // -----------------------------------------------------------------------
+    // Tool server status — per-server bootstrap discovery results
+    // -----------------------------------------------------------------------
+    this.app.get("/api/tools/server-status", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      const payload: Record<string, ToolServerStatus> = {};
+      for (const [key, status] of this.toolServerStatuses) {
+        payload[key] = status;
+      }
+      res.json(payload);
+    });
+
+    // -----------------------------------------------------------------------
     // Agent capability registry — agent/sub-agent to tool mapping
     // -----------------------------------------------------------------------
     this.app.get("/api/agents/capabilities", (req, res) => {
@@ -1428,6 +1445,62 @@ export class AdminApi {
 
               const reindexResult = await this.callToolRpc(target.entry, "imap_reindex", reindexParams);
               res.json({ id: rpcRequest.id, result: reindexResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_list_attachments": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const listParams: Record<string, unknown> = {};
+              if (typeof rpcRequest.params["limit"] === "number" && Number.isFinite(rpcRequest.params["limit"])) {
+                listParams.limit = rpcRequest.params["limit"];
+              }
+              if (typeof rpcRequest.params["offset"] === "number" && Number.isFinite(rpcRequest.params["offset"])) {
+                listParams.offset = rpcRequest.params["offset"];
+              }
+
+              const listResult = await this.callToolRpc(target.entry, "imap_list_attachments", listParams);
+              res.json({ id: rpcRequest.id, result: listResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_get_attachment": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              const attachmentId = typeof rpcRequest.params["attachmentId"] === "string"
+                ? rpcRequest.params["attachmentId"].trim()
+                : "";
+
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+              if (!attachmentId) {
+                res.json({ id: rpcRequest.id, error: "attachmentId is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const detailResult = await this.callToolRpc(target.entry, "imap_get_attachment", { attachmentId });
+              res.json({ id: rpcRequest.id, result: detailResult } satisfies RpcResponse);
               return;
             }
 

@@ -1,0 +1,43 @@
+{
+  "name": "@langgraph-glove/tool-config-ui",
+  "version": "0.1.0",
+  "description": "UI panel companion for the config tool server — lazy-loaded by ui-web ControlPanel",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./meta": {
+      "import": "./dist/meta.js",
+      "types": "./dist/meta.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup --config tsup.config.ts",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@langgraph-glove/ui-shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "@fluentui/react-components": ">=9",
+    "@fluentui/react-icons": ">=2",
+    "@monaco-editor/react": ">=4",
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@fluentui/react-components": "^9.62.0",
+    "@fluentui/react-icons": "^2.0.286",
+    "@monaco-editor/react": "4.7.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.23",
+    "monaco-editor": "0.55.1",
+    "react": "^18.3.1",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}

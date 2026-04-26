@@ -19,6 +19,8 @@ interface ContextWindowInfo {
   contextWindowSource?: "config" | "ollama-show";
 }
 
+const OLLAMA_SHOW_PROBE_TIMEOUT_MS = 4000;
+
 /**
  * Probes one or more configured models at startup to verify connectivity,
  * authentication, and routing (e.g. correct `api-version`).
@@ -47,6 +49,11 @@ export class ModelHealthChecker {
   async check(key: string): Promise<ModelHealthResult> {
     const start = Date.now();
     const entry = this.registry.resolveEntry(key);
+
+    if (entry.provider === "ollama" && isLikelyVisionOrOcrModel(key, entry.model)) {
+      return this.checkOllamaOcrModel(key, entry, start);
+    }
+
     const contextWindow = await this.detectContextWindow(entry);
     try {
       const model = this.registry.get(key);
@@ -92,6 +99,32 @@ export class ModelHealthChecker {
     }
   }
 
+  private async checkOllamaOcrModel(
+    key: string,
+    entry: ReturnType<ModelRegistry["resolveEntry"]>,
+    start: number,
+  ): Promise<ModelHealthResult> {
+    const showResult = await probeOllamaShow(entry.model, entry.baseUrl);
+    const latencyMs = Date.now() - start;
+
+    if (!showResult.ok) {
+      return {
+        key,
+        ok: false,
+        latencyMs,
+        error: showResult.error,
+      };
+    }
+
+    const contextWindow = resolveContextWindowInfo(entry, showResult.payload);
+    return {
+      key,
+      ok: true,
+      latencyMs,
+      ...contextWindow,
+    };
+  }
+
   /**
    * Probe every model key in the registry concurrently.
    *
@@ -130,6 +163,80 @@ export class ModelHealthChecker {
     }
 
     return {};
+  }
+}
+
+function isLikelyVisionOrOcrModel(key: string, model: string): boolean {
+  const combined = `${key} ${model}`.toLowerCase();
+  return (
+    combined.includes("ocr")
+    || combined.includes("vision")
+    || combined.includes("llava")
+  );
+}
+
+function resolveContextWindowInfo(
+  entry: ReturnType<ModelRegistry["resolveEntry"]>,
+  showPayload?: unknown,
+): ContextWindowInfo {
+  if (entry.contextWindowTokens) {
+    return {
+      contextWindowTokens: entry.contextWindowTokens,
+      contextWindowSource: "config",
+    };
+  }
+
+  const inferred = parseContextWindowFromShowResponse(showPayload);
+  if (inferred) {
+    return {
+      contextWindowTokens: inferred,
+      contextWindowSource: "ollama-show",
+    };
+  }
+
+  return {};
+}
+
+async function probeOllamaShow(
+  model: string,
+  baseUrl?: string,
+): Promise<{ ok: true; payload: unknown } | { ok: false; error: string }> {
+  const root = (baseUrl ?? "http://localhost:11434").replace(/\/$/, "");
+  const url = `${root}/api/show`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), OLLAMA_SHOW_PROBE_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeout);
+
+    if (!response.ok) {
+      return {
+        ok: false,
+        error: `Ollama show probe failed status=${response.status} model=${model}`,
+      };
+    }
+
+    const payload = (await response.json()) as unknown;
+    return { ok: true, payload };
+  } catch (err) {
+    clearTimeout(timeout);
+    const error =
+      err instanceof Error
+        ? err.message
+        : typeof err === "string"
+          ? err
+          : "Unknown error";
+    return {
+      ok: false,
+      error: `Ollama show probe failed model=${model}: ${error}`,
+    };
   }
 }
 

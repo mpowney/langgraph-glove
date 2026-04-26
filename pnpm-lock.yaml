@@ -235,6 +235,40 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
+  packages/tool-config-ui:
+    dependencies:
+      '@langgraph-glove/ui-shared':
+        specifier: workspace:*
+        version: link:../ui-shared
+    devDependencies:
+      '@fluentui/react-components':
+        specifier: ^9.62.0
+        version: 9.73.6(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(scheduler@0.23.2)
+      '@fluentui/react-icons':
+        specifier: ^2.0.286
+        version: 2.0.323(react@18.3.1)
+      '@monaco-editor/react':
+        specifier: 4.7.0
+        version: 4.7.0(monaco-editor@0.55.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/react':
+        specifier: ^18.3.23
+        version: 18.3.28
+      monaco-editor:
+        specifier: 0.55.1
+        version: 0.55.1
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/tool-context-compression:
     dependencies:
       '@langgraph-glove/tool-server':
@@ -266,6 +300,31 @@ importers:
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.19.0
+        version: 4.21.0
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/tool-docker:
+    dependencies:
+      '@langgraph-glove/tool-server':
+        specifier: workspace:*
+        version: link:../tool-server
+      uuid:
+        specifier: ^10.0.0
+        version: 10.0.0
+    devDependencies:
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/uuid':
+        specifier: ^10.0.0
+        version: 10.0.0
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
@@ -313,27 +372,39 @@ importers:
         specifier: ^5.6.0
         version: 5.9.3
 
-  packages/tool-docker:
+  packages/tool-imap-ui:
     dependencies:
-      '@langgraph-glove/tool-server':
+      '@langgraph-glove/ui-shared':
         specifier: workspace:*
-        version: link:../tool-server
-      uuid:
-        specifier: ^10.0.0
-        version: 10.0.0
+        version: link:../ui-shared
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@18.3.28)(react@18.3.1)
+      rehype-sanitize:
+        specifier: ^6.0.0
+        version: 6.0.0
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
     devDependencies:
+      '@fluentui/react-components':
+        specifier: ^9.62.0
+        version: 9.73.6(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(scheduler@0.23.2)
+      '@fluentui/react-icons':
+        specifier: ^2.0.286
+        version: 2.0.323(react@18.3.1)
       '@types/node':
         specifier: ^22.0.0
         version: 22.19.15
-      '@types/uuid':
-        specifier: ^10.0.0
-        version: 10.0.0
+      '@types/react':
+        specifier: ^18.3.23
+        version: 18.3.28
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
       tsup:
         specifier: ^8.3.0
         version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
-      tsx:
-        specifier: ^4.19.0
-        version: 4.21.0
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -409,6 +480,43 @@ importers:
       tsx:
         specifier: ^4.19.0
         version: 4.21.0
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
+  packages/tool-memory-ui:
+    dependencies:
+      '@langgraph-glove/ui-shared':
+        specifier: workspace:*
+        version: link:../ui-shared
+    devDependencies:
+      '@fluentui/react-components':
+        specifier: ^9.62.0
+        version: 9.73.6(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(scheduler@0.23.2)
+      '@fluentui/react-icons':
+        specifier: ^2.0.286
+        version: 2.0.323(react@18.3.1)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/react':
+        specifier: ^18.3.23
+        version: 18.3.28
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-markdown:
+        specifier: ^9.0.3
+        version: 9.1.0(@types/react@18.3.28)(react@18.3.1)
+      rehype-sanitize:
+        specifier: ^6.0.0
+        version: 6.0.0
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
       typescript:
         specifier: ^5.6.0
         version: 5.9.3
@@ -594,6 +702,30 @@ importers:
         specifier: ^5.4.0
         version: 5.4.21(@types/node@22.19.15)
 
+  packages/ui-shared:
+    devDependencies:
+      '@fluentui/react-components':
+        specifier: ^9.62.0
+        version: 9.73.6(@types/react-dom@18.3.7(@types/react@18.3.28))(@types/react@18.3.28)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(scheduler@0.23.2)
+      '@fluentui/react-icons':
+        specifier: ^2.0.286
+        version: 2.0.323(react@18.3.1)
+      '@types/node':
+        specifier: ^22.0.0
+        version: 22.19.15
+      '@types/react':
+        specifier: ^18.3.23
+        version: 18.3.28
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      tsup:
+        specifier: ^8.3.0
+        version: 8.5.1(postcss@8.5.8)(tsx@4.21.0)(typescript@5.9.3)
+      typescript:
+        specifier: ^5.6.0
+        version: 5.9.3
+
   packages/ui-web:
     dependencies:
       '@fluentui/react-components':
@@ -602,6 +734,18 @@ importers:
       '@fluentui/react-icons':
         specifier: ^2.0.286
         version: 2.0.323(react@18.3.1)
+      '@langgraph-glove/tool-config-ui':
+        specifier: workspace:*
+        version: link:../tool-config-ui
+      '@langgraph-glove/tool-imap-ui':
+        specifier: workspace:*
+        version: link:../tool-imap-ui
+      '@langgraph-glove/tool-memory-ui':
+        specifier: workspace:*
+        version: link:../tool-memory-ui
+      '@langgraph-glove/ui-shared':
+        specifier: workspace:*
+        version: link:../ui-shared
       '@monaco-editor/react':
         specifier: 4.7.0
         version: 4.7.0(monaco-editor@0.55.1)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -3180,6 +3324,12 @@ packages:
     resolution: {integrity: sha512-5m4nQKp+rZRb09LNH59GM4BxTh9251/ylbKIbpe7TpGxfJ+9kv6BLkLBXIjjspbgbnIBNqlI23tRnTWT0snUIw==}
     peerDependencies:
       react: ^18.3.1
+
+  react-markdown@10.1.0:
+    resolution: {integrity: sha512-qKxVopLT/TyA6BX3Ue5NwabOsAzm0Q7kAPwq6L+wWDwisYs7R8vZ0nRXqq6rkueboxpkjvLGU9fWifiX/ZZFxQ==}
+    peerDependencies:
+      '@types/react': '>=18'
+      react: '>=18'
 
   react-markdown@9.1.0:
     resolution: {integrity: sha512-xaijuJB0kzGiUdG7nc2MOMDUDBWPyGAjZtUrow9XxUeua8IqeP+VlIfAZ3bphpcLTnSZXz6z9jcVC/TCwbfgdw==}
@@ -6957,6 +7107,24 @@ snapshots:
       loose-envify: 1.4.0
       react: 18.3.1
       scheduler: 0.23.2
+
+  react-markdown@10.1.0(@types/react@18.3.28)(react@18.3.1):
+    dependencies:
+      '@types/hast': 3.0.4
+      '@types/mdast': 4.0.4
+      '@types/react': 18.3.28
+      devlop: 1.1.0
+      hast-util-to-jsx-runtime: 2.3.6
+      html-url-attributes: 3.0.1
+      mdast-util-to-hast: 13.2.1
+      react: 18.3.1
+      remark-parse: 11.0.0
+      remark-rehype: 11.1.2
+      unified: 11.0.5
+      unist-util-visit: 5.1.0
+      vfile: 6.0.3
+    transitivePeerDependencies:
+      - supports-color
 
   react-markdown@9.1.0(@types/react@18.3.28)(react@18.3.1):
     dependencies:

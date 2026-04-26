@@ -26,7 +26,12 @@ export class ImageAttachmentProcessor implements AttachmentProcessor {
     })).trim();
 
     if (!shouldAddPhotoCaption(input.contentType, ocrText)) {
-      return { text: ocrText };
+      return {
+        text: ocrText,
+        markdownText: buildMarkdown([
+          { title: "OCR text", content: ocrText },
+        ]),
+      };
     }
 
     const caption = (await runtime.describePhoto({
@@ -36,16 +41,45 @@ export class ImageAttachmentProcessor implements AttachmentProcessor {
     })).trim();
 
     if (!ocrText) {
-      return { text: caption };
+      return {
+        text: caption,
+        markdownText: buildMarkdown([
+          { title: "Photo description", content: caption },
+        ]),
+      };
     }
     if (!caption) {
-      return { text: ocrText };
+      return {
+        text: ocrText,
+        markdownText: buildMarkdown([
+          { title: "OCR text", content: ocrText },
+        ]),
+      };
     }
 
     return {
       text: `${ocrText}\n\n[Photo description]\n${caption}`,
+      markdownText: buildMarkdown([
+        { title: "OCR text", content: ocrText },
+        { title: "Photo description", content: caption },
+      ]),
     };
   }
+}
+
+function buildMarkdown(sections: Array<{ title: string; content: string }>): string | undefined {
+  const normalizedSections = sections
+    .map((section) => ({
+      title: section.title.trim(),
+      content: section.content.trim(),
+    }))
+    .filter((section) => section.title.length > 0 && section.content.length > 0);
+
+  if (normalizedSections.length === 0) return undefined;
+
+  return normalizedSections
+    .map((section) => `## ${section.title}\n\n\`\`\`text\n${section.content}\n\`\`\``)
+    .join("\n\n");
 }
 
 function shouldAddPhotoCaption(contentType: string, ocrText: string): boolean {

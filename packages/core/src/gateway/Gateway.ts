@@ -46,6 +46,7 @@ import { WebChannel } from "../channels/WebChannel";
 import type { OutgoingContentItem } from "../channels/Channel";
 import type {
   ToolDefinition,
+  ToolServerStatus,
   AgentCapabilityEntry,
   ContentUploadAuthPayload,
   RpcRequest,
@@ -58,6 +59,14 @@ import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
 const logger = new Logger("Gateway");
 const CONVERSATION_TITLE_GRAPH_KEY = "conversation-title";
 const CONVERSATION_TITLE_MAX_CHARS = 80;
+const STARTUP_SLOW_STEP_MS = 2000;
+const IMAP_CRAWL_CONTROL_TIMEOUT_MS = 1500;
+
+interface StartupPhaseTiming {
+  phase: string;
+  durationMs: number;
+  slow: boolean;
+}
 
 export interface GatewayOptions {
   /** Path to the config directory. */
@@ -112,6 +121,8 @@ export class Gateway extends EventEmitter {
   private toolRegistry: ToolDefinition[] = [];
   /** Mapping of tools.json server key -> discovered tool names. */
   private discoveredToolNamesByServer: Record<string, string[]> = {};
+  /** Per-server bootstrap status, populated after `discoverTools()`. */
+  private toolServerStatuses = new Map<string, ToolServerStatus>();
   /** Agent capability entries, populated after `buildAgentGraph()`. */
   private agentCapabilities: AgentCapabilityEntry[] = [];
   /** Tool set discovered during startup, reused to build non-default graphs on demand. */
@@ -123,6 +134,10 @@ export class Gateway extends EventEmitter {
 
   get state(): GatewayState {
     return this._state;
+  }
+
+  get toolServerStatusMap(): Map<string, ToolServerStatus> {
+    return this.toolServerStatuses;
   }
 
   private setState(state: GatewayState): void {
@@ -138,248 +153,271 @@ export class Gateway extends EventEmitter {
     this.setState("starting");
 
     try {
-      // 1. Config + secrets
-      logger.info("Loading configuration...");
-      this.configLoader = new ConfigLoader(
-        this.options.configDir,
-        this.options.secretsDir,
-      );
-      this.config = this.configLoader.load();
-      LogService.addRedactions(this.configLoader.secrets.values);
-      logger.info("Configuration loaded");
+      const startupStartedAt = Date.now();
+      const startupPhases: StartupPhaseTiming[] = [];
+      let dbPath = "data/checkpoints.sqlite";
+      let tools: StructuredToolInterface[] = [];
 
-      // 2. Model registry
-      this.models = new ModelRegistry(this.config.models);
-
-      // 3. Model health checks — probe only models used by configured agents
-      const modelHealth = await this.checkModelHealth(this.models, this.config);
-      this.updateWebChannelModelInfo(this.config, modelHealth);
-
-      // 4. Persistence
-      const dbPath = this.config.gateway.dbPath ?? "data/checkpoints.sqlite";
-      this.checkpointer = SqliteSaver.fromConnString(dbPath);
-      this.conversationMetadataService = new ConversationMetadataService(dbPath);
-      this.conversationMetadataService.ensureSchema();
-      logger.info(`SQLite persistence: ${dbPath}`);
-
-      const contentDbPath = this.config.gateway.contentDbPath ?? "data/content.sqlite";
-      this.contentStore = new ContentStore({ dbPath: contentDbPath });
-      this.contentStore.ensureSchema();
-      logger.info(`SQLite content store: ${contentDbPath}`);
-
-      const deletedRetentionDays = this.config.gateway.deletedContentRetentionDays;
-      if (deletedRetentionDays && deletedRetentionDays > 0) {
-        const cleanupDeletedContent = () => {
-          if (!this.contentStore) return;
-          try {
-            const purged = this.contentStore.purgeDeletedContentOlderThanDays(deletedRetentionDays);
-            if (purged > 0) {
-              logger.info(
-                `Deleted-content retention cleanup purged ${purged} row(s) older than ${deletedRetentionDays} day(s)`,
-              );
-            }
-          } catch (err) {
-            logger.error("Deleted-content retention cleanup failed", err);
-          }
-        };
-
-        cleanupDeletedContent();
-
-        const cleanupIntervalMs = 60 * 60 * 1000;
-        const cleanupTimer = setInterval(cleanupDeletedContent, cleanupIntervalMs);
-        cleanupTimer.unref();
-        this.shutdownHandlers.push(() => clearInterval(cleanupTimer));
-
-        logger.info(
-          `Deleted-content retention enabled: ${deletedRetentionDays} day(s) (hourly cleanup)`,
+      await this.measureStartupPhase("config+secrets", startupPhases, async () => {
+        logger.info("Loading configuration...");
+        this.configLoader = new ConfigLoader(
+          this.options.configDir,
+          this.options.secretsDir,
         );
-      }
-
-      const contentSocketName = process.env["GLOVE_GATEWAY_CONTENT_UPLOAD_SOCKET"] ?? "gateway_content_upload";
-      this.contentUnixSocketServer = new GatewayContentUnixSocketServer({
-        socketName: contentSocketName,
-        handler: async (request) => this.handleContentRpcRequest(request),
-      });
-      await this.contentUnixSocketServer.start();
-      logger.info(`Gateway content unix-socket RPC: ${contentSocketName}`);
-
-      // 5. Auth bootstrap
-      this.authService = new AuthService({
-        dbPath,
-        config: this.config.gateway.auth,
-      });
-      const setupToken = this.authService.ensureBootstrapToken();
-      if (setupToken) {
-        logger.warn("Initial setup is required.");
-        logger.warn("Use this setup token in the web UI to create your password:");
-        logger.warn(`Setup token (expires ${setupToken.expiresAt}): ${setupToken.token}`);
-        logger.warn("You can regenerate it with: pnpm --filter @langgraph-glove/core debug -- --regenerate-setup-token");
-      }
-
-      // 6. Tool discovery
-      const tools = await this.discoverTools(this.config.tools);
-      this.discoveredTools = tools;
-      logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config.tools).length} server(s)`);
-      this.reportUnavailableConfiguredTools(this.config, tools);
-
-      // 7. Build agent graph (single-agent or multi-agent orchestrator) using graphs.json "default" key
-      const graph = this.buildAgentGraph(tools, "default");
-
-      // Populate agent capability list from resolved agent config
-      this.agentCapabilities = this.buildAgentCapabilities(this.config);
-
-      const defaultGraphEntry = this.config.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
-      const orchestratorEntry = resolveConfigEntry(
-        this.config.agents as Record<string, AgentEntry>,
-        defaultGraphEntry.orchestratorAgentKey,
-      );
-      this.agent = new GloveAgent(graph, {
-        recursionLimit: orchestratorEntry.recursionLimit,
-        toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
-        getContentUploadAuthByTool: (conversationId) => this.buildContentUploadAuthByTool(conversationId),
-        authService: this.authService ?? undefined,
-        graphInfo: {
-          graphKey: "default",
-          mode: (defaultGraphEntry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent",
-          orchestratorAgentKey: defaultGraphEntry.orchestratorAgentKey,
-          subAgentKeys: defaultGraphEntry.subAgentKeys ?? [],
-        },
-        onTurnComplete: ({ conversationId, userText, assistantText, graphKey }) => {
-          this.maybeScheduleConversationTitleGeneration({
-            graphKey: graphKey ?? "default",
-            conversationId,
-            userPrompt: userText,
-            assistantResponse: assistantText,
-          });
-        },
+        this.config = this.configLoader.load();
+        LogService.addRedactions(this.configLoader.secrets.values);
+        logger.info("Configuration loaded");
       });
 
-      // 8. Channels
-      // Inject the auth service into any channel that supports it — this
-      // gates WebSocket upgrades behind the session token check.
-      for (const ch of this.options.channels ?? []) {
-        if (typeof (ch as unknown as { setAuthService?: unknown }).setAuthService === "function") {
-          (ch as unknown as { setAuthService: (svc: AuthService) => void }).setAuthService(
-            this.authService,
+      await this.measureStartupPhase("model-registry", startupPhases, async () => {
+        this.models = new ModelRegistry(this.config!.models);
+      });
+
+      await this.measureStartupPhase("model-health-checks", startupPhases, async () => {
+        const resumeImapCrawls = await this.pauseImapCrawlsForHealthChecks(this.config!.tools);
+        try {
+          const modelHealth = await this.checkModelHealth(this.models!, this.config!);
+          this.updateWebChannelModelInfo(this.config!, modelHealth);
+        } finally {
+          await resumeImapCrawls();
+        }
+      });
+
+      await this.measureStartupPhase("persistence-init", startupPhases, async () => {
+        dbPath = this.config!.gateway.dbPath ?? "data/checkpoints.sqlite";
+        this.checkpointer = SqliteSaver.fromConnString(dbPath);
+        this.conversationMetadataService = new ConversationMetadataService(dbPath);
+        this.conversationMetadataService.ensureSchema();
+        logger.info(`SQLite persistence: ${dbPath}`);
+
+        const contentDbPath = this.config!.gateway.contentDbPath ?? "data/content.sqlite";
+        this.contentStore = new ContentStore({ dbPath: contentDbPath });
+        this.contentStore.ensureSchema();
+        logger.info(`SQLite content store: ${contentDbPath}`);
+
+        const deletedRetentionDays = this.config!.gateway.deletedContentRetentionDays;
+        if (deletedRetentionDays && deletedRetentionDays > 0) {
+          const cleanupDeletedContent = () => {
+            if (!this.contentStore) return;
+            try {
+              const purged = this.contentStore.purgeDeletedContentOlderThanDays(deletedRetentionDays);
+              if (purged > 0) {
+                logger.info(
+                  `Deleted-content retention cleanup purged ${purged} row(s) older than ${deletedRetentionDays} day(s)`,
+                );
+              }
+            } catch (err) {
+              logger.error("Deleted-content retention cleanup failed", err);
+            }
+          };
+
+          cleanupDeletedContent();
+
+          const cleanupIntervalMs = 60 * 60 * 1000;
+          const cleanupTimer = setInterval(cleanupDeletedContent, cleanupIntervalMs);
+          cleanupTimer.unref();
+          this.shutdownHandlers.push(() => clearInterval(cleanupTimer));
+
+          logger.info(
+            `Deleted-content retention enabled: ${deletedRetentionDays} day(s) (hourly cleanup)`,
           );
         }
-      }
-      for (const channel of this.options.channels ?? []) {
-        this.agent.addChannel(channel);
-      }
-      await this.agent.start();
-      logger.info("Agent and channels started");
-
-      // 9. Health server
-      const healthPort = this.config.gateway.healthPort ?? 9090;
-      const healthHost = this.config.gateway.healthHost ?? "0.0.0.0";
-      this.healthServer = new HealthServer(this);
-      await this.healthServer.listen(healthPort, healthHost);
-      logger.info(`Health endpoint: http://${healthHost}:${healthPort}/health`);
-
-      // 10. Admin API
-      const apiPort = this.config.gateway.apiPort ?? 8081;
-      const apiHost = this.config.gateway.apiHost ?? "0.0.0.0";
-      this.adminApi = new AdminApi({
-        port: apiPort,
-        host: apiHost,
-        dbPath: this.config.gateway.dbPath,
-        authService: this.authService,
-        config: this.config,
-        toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
-        toolRegistry: this.toolRegistry,
-        agentCapabilities: this.agentCapabilities,
-        invokeAgent: async ({ conversationId, prompt, graphKey, personalToken, observability }) => {
-          return this.invokeConfiguredGraph({
-            conversationId,
-            prompt,
-            personalToken,
-            graphKey,
-            observability,
-          });
-        },
-        sendSystemMessage: async ({ conversationId, text, role }) => {
-          const targets = (this.options.channels ?? []).filter((channel) => channel.receiveSystem);
-          for (const channel of targets) {
-            await channel
-              .sendMessage({
-                conversationId,
-                text,
-                role: role ?? "system-event",
-              })
-              .catch((err: unknown) =>
-                logger.error(`Failed to send system message to channel "${channel.name}"`, err),
-              );
-          }
-        },
-        sendChannelMessage: async ({ conversationId, text, role, channelName }) => {
-          const allChannels = this.options.channels ?? [];
-          const targets = channelName
-            ? allChannels.filter((channel) => channel.name === channelName)
-            : allChannels;
-
-          if (targets.length === 0) {
-            throw new Error(`No channel target available for channelName="${channelName ?? "*"}"`);
-          }
-
-          for (const channel of targets) {
-            await channel
-              .sendMessage({
-                conversationId,
-                text,
-                role: role ?? "agent",
-              })
-              .catch((err: unknown) =>
-                logger.error(`Failed to send channel message to channel "${channel.name}"`, err),
-              );
-          }
-        },
-        handleContentRpc: async (request) => this.handleContentRpcRequest(request),
-        listContent: ({ conversationId, toolName, includeDeleted, limit, offset }) => {
-          const rows = this.contentStore?.listContentMetadata({
-            conversationId,
-            toolName,
-            includeDeleted,
-            limit,
-            offset,
-          }) ?? [];
-          return rows.map((item) => ({
-            contentRef: item.contentRef,
-            conversationId: item.conversationId,
-            toolName: item.toolName,
-            fileName: item.fileName,
-            mimeType: item.mimeType,
-            byteLength: item.byteLength,
-            createdAt: item.createdAt,
-            deletedAt: item.deletedAt,
-          }));
-        },
-        getContentByRef: (contentRef) => {
-          const item = this.contentStore?.getContentMetadata(contentRef);
-          if (!item) return undefined;
-          return {
-            contentRef: item.contentRef,
-            conversationId: item.conversationId,
-            toolName: item.toolName,
-            fileName: item.fileName,
-            mimeType: item.mimeType,
-            byteLength: item.byteLength,
-            createdAt: item.createdAt,
-            deletedAt: item.deletedAt,
-          };
-        },
-        getContentBytesByRef: (contentRef) => this.contentStore?.getContentBytes(contentRef),
-        deleteContentByRef: (contentRef) => {
-          this.contentStore?.deleteContent(contentRef);
-        },
       });
-      await this.adminApi.listen();
-      logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
+
+      await this.measureStartupPhase("content-socket", startupPhases, async () => {
+        const contentSocketName = process.env["GLOVE_GATEWAY_CONTENT_UPLOAD_SOCKET"] ?? "gateway_content_upload";
+        this.contentUnixSocketServer = new GatewayContentUnixSocketServer({
+          socketName: contentSocketName,
+          handler: async (request) => this.handleContentRpcRequest(request),
+        });
+        await this.contentUnixSocketServer.start();
+        logger.info(`Gateway content unix-socket RPC: ${contentSocketName}`);
+      });
+
+      await this.measureStartupPhase("auth-bootstrap", startupPhases, async () => {
+        this.authService = new AuthService({
+          dbPath,
+          config: this.config!.gateway.auth,
+        });
+        const setupToken = this.authService.ensureBootstrapToken();
+        if (setupToken) {
+          logger.warn("Initial setup is required.");
+          logger.warn("Use this setup token in the web UI to create your password:");
+          logger.warn(`Setup token (expires ${setupToken.expiresAt}): ${setupToken.token}`);
+          logger.warn("You can regenerate it with: pnpm --filter @langgraph-glove/core debug -- --regenerate-setup-token");
+        }
+      });
+
+      await this.measureStartupPhase("tool-discovery", startupPhases, async () => {
+        tools = await this.discoverTools(this.config!.tools);
+        this.discoveredTools = tools;
+        logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config!.tools).length} server(s)`);
+        this.reportUnavailableConfiguredTools(this.config!, tools);
+      });
+
+      const graph = await this.measureStartupPhase("graph-build", startupPhases, async () => {
+        return this.buildAgentGraph(tools, "default");
+      });
+
+      await this.measureStartupPhase("agent+channels", startupPhases, async () => {
+        this.agentCapabilities = this.buildAgentCapabilities(this.config!);
+
+        const defaultGraphEntry = this.config!.graphs["default"] ?? DEFAULT_GRAPH_ENTRY;
+        const orchestratorEntry = resolveConfigEntry(
+          this.config!.agents as Record<string, AgentEntry>,
+          defaultGraphEntry.orchestratorAgentKey,
+        );
+        this.agent = new GloveAgent(graph, {
+          recursionLimit: orchestratorEntry.recursionLimit,
+          toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
+          getContentUploadAuthByTool: (conversationId) => this.buildContentUploadAuthByTool(conversationId),
+          authService: this.authService ?? undefined,
+          graphInfo: {
+            graphKey: "default",
+            mode: (defaultGraphEntry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent",
+            orchestratorAgentKey: defaultGraphEntry.orchestratorAgentKey,
+            subAgentKeys: defaultGraphEntry.subAgentKeys ?? [],
+          },
+          onTurnComplete: ({ conversationId, userText, assistantText, graphKey }) => {
+            this.maybeScheduleConversationTitleGeneration({
+              graphKey: graphKey ?? "default",
+              conversationId,
+              userPrompt: userText,
+              assistantResponse: assistantText,
+            });
+          },
+        });
+
+        // Inject the auth service into any channel that supports it — this
+        // gates WebSocket upgrades behind the session token check.
+        for (const ch of this.options.channels ?? []) {
+          if (typeof (ch as unknown as { setAuthService?: unknown }).setAuthService === "function") {
+            (ch as unknown as { setAuthService: (svc: AuthService) => void }).setAuthService(
+              this.authService!,
+            );
+          }
+        }
+        for (const channel of this.options.channels ?? []) {
+          this.agent.addChannel(channel);
+        }
+        await this.agent.start();
+        logger.info("Agent and channels started");
+      });
+
+      await this.measureStartupPhase("health-server", startupPhases, async () => {
+        const healthPort = this.config!.gateway.healthPort ?? 9090;
+        const healthHost = this.config!.gateway.healthHost ?? "0.0.0.0";
+        this.healthServer = new HealthServer(this);
+        await this.healthServer.listen(healthPort, healthHost);
+        logger.info(`Health endpoint: http://${healthHost}:${healthPort}/health`);
+      });
+
+      await this.measureStartupPhase("admin-api", startupPhases, async () => {
+        const apiPort = this.config!.gateway.apiPort ?? 8081;
+        const apiHost = this.config!.gateway.apiHost ?? "0.0.0.0";
+        this.adminApi = new AdminApi({
+          port: apiPort,
+          host: apiHost,
+          dbPath: this.config!.gateway.dbPath,
+          authService: this.authService ?? undefined,
+          config: this.config!,
+          toolsConfig: this.config!.tools as Record<string, ToolServerEntry>,
+          toolRegistry: this.toolRegistry,
+          toolServerStatuses: this.toolServerStatuses,
+          agentCapabilities: this.agentCapabilities,
+          invokeAgent: async ({ conversationId, prompt, graphKey, personalToken, observability }) => {
+            return this.invokeConfiguredGraph({
+              conversationId,
+              prompt,
+              personalToken,
+              graphKey,
+              observability,
+            });
+          },
+          sendSystemMessage: async ({ conversationId, text, role }) => {
+            const targets = (this.options.channels ?? []).filter((channel) => channel.receiveSystem);
+            for (const channel of targets) {
+              await channel
+                .sendMessage({
+                  conversationId,
+                  text,
+                  role: role ?? "system-event",
+                })
+                .catch((err: unknown) =>
+                  logger.error(`Failed to send system message to channel "${channel.name}"`, err),
+                );
+            }
+          },
+          sendChannelMessage: async ({ conversationId, text, role, channelName }) => {
+            const allChannels = this.options.channels ?? [];
+            const targets = channelName
+              ? allChannels.filter((channel) => channel.name === channelName)
+              : allChannels;
+
+            if (targets.length === 0) {
+              throw new Error(`No channel target available for channelName="${channelName ?? "*"}"`);
+            }
+
+            for (const channel of targets) {
+              await channel
+                .sendMessage({
+                  conversationId,
+                  text,
+                  role: role ?? "agent",
+                })
+                .catch((err: unknown) =>
+                  logger.error(`Failed to send channel message to channel "${channel.name}"`, err),
+                );
+            }
+          },
+          handleContentRpc: async (request) => this.handleContentRpcRequest(request),
+          listContent: ({ conversationId, toolName, includeDeleted, limit, offset }) => {
+            const rows = this.contentStore?.listContentMetadata({
+              conversationId,
+              toolName,
+              includeDeleted,
+              limit,
+              offset,
+            }) ?? [];
+            return rows.map((item) => ({
+              contentRef: item.contentRef,
+              conversationId: item.conversationId,
+              toolName: item.toolName,
+              fileName: item.fileName,
+              mimeType: item.mimeType,
+              byteLength: item.byteLength,
+              createdAt: item.createdAt,
+              deletedAt: item.deletedAt,
+            }));
+          },
+          getContentByRef: (contentRef) => {
+            const item = this.contentStore?.getContentMetadata(contentRef);
+            if (!item) return undefined;
+            return {
+              contentRef: item.contentRef,
+              conversationId: item.conversationId,
+              toolName: item.toolName,
+              fileName: item.fileName,
+              mimeType: item.mimeType,
+              byteLength: item.byteLength,
+              createdAt: item.createdAt,
+              deletedAt: item.deletedAt,
+            };
+          },
+          getContentBytesByRef: (contentRef) => this.contentStore?.getContentBytes(contentRef),
+          deleteContentByRef: (contentRef) => {
+            this.contentStore?.deleteContent(contentRef);
+          },
+        });
+        await this.adminApi.listen();
+        logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
+      });
 
       // 11. Signal handlers
       this.installSignalHandlers();
 
       this.setState("running");
+      this.logStartupSummary(startupStartedAt, startupPhases);
       logger.info("Gateway is running");
     } catch (err) {
       this.setState("stopped");
@@ -459,25 +497,125 @@ export class Gateway extends EventEmitter {
 
     if (usedKeys.size === 0) return [];
 
-    logger.info(`Model health checks: probing [${[...usedKeys].join(", ")}]…`);
+    const keys = [...usedKeys];
+    logger.info(`Model health checks: probing [${keys.join(", ")}]…`);
     const checker = new ModelHealthChecker(models);
-    const results = await checker.checkKeys([...usedKeys]);
+    const results = await Promise.all(
+      keys.map(async (key) => {
+        logger.info(`  … ${key}: probe started`);
+        const result = await checker.check(key);
+        const slowMarker = result.latencyMs >= STARTUP_SLOW_STEP_MS ? " [slow]" : "";
+        if (result.ok) {
+          const contextPart = result.contextWindowTokens
+            ? `, ctx=${result.contextWindowTokens}${result.contextWindowSource ? ` (${result.contextWindowSource})` : ""}`
+            : "";
+          logger.info(`  ✓ ${result.key} (${result.latencyMs}ms${contextPart})${slowMarker}`);
+        } else {
+          const contextPart = result.contextWindowTokens
+            ? `, ctx=${result.contextWindowTokens}${result.contextWindowSource ? ` (${result.contextWindowSource})` : ""}`
+            : "";
+          logger.warn(`  ✗ ${result.key} — ${result.error ?? "unknown error"} (${result.latencyMs}ms${contextPart})${slowMarker}`);
+        }
+        return result;
+      }),
+    );
 
-    for (const result of results) {
-      if (result.ok) {
-        const contextPart = result.contextWindowTokens
-          ? `, ctx=${result.contextWindowTokens}${result.contextWindowSource ? ` (${result.contextWindowSource})` : ""}`
-          : "";
-        logger.info(`  ✓ ${result.key} (${result.latencyMs}ms${contextPart})`);
+    const rankedResults = [...results].sort((a, b) => b.latencyMs - a.latencyMs);
+    logger.info(
+      `Model health checks by duration: ${rankedResults
+        .map((result) => `${result.key}=${result.latencyMs}ms`)
+        .join(", ")}`,
+    );
+    const slowest = rankedResults[0];
+    if (slowest) {
+      const message = `Slowest model health check: ${slowest.key} (${slowest.latencyMs}ms)`;
+      if (slowest.latencyMs >= STARTUP_SLOW_STEP_MS) {
+        logger.warn(`${message} [slow]`);
       } else {
-        const contextPart = result.contextWindowTokens
-          ? `, ctx=${result.contextWindowTokens}${result.contextWindowSource ? ` (${result.contextWindowSource})` : ""}`
-          : "";
-        logger.warn(`  ✗ ${result.key} — ${result.error ?? "unknown error"} (${result.latencyMs}ms${contextPart})`);
+        logger.info(message);
       }
     }
 
     return results;
+  }
+
+  private async pauseImapCrawlsForHealthChecks(
+    toolsConfig: Record<string, ToolServerEntry>,
+  ): Promise<() => Promise<void>> {
+    const imapEntries = Object.entries(toolsConfig).filter(
+      ([, entry]) => entry.enabled !== false && Boolean(entry.imap),
+    );
+    if (imapEntries.length === 0) {
+      return async () => {};
+    }
+
+    const pausedClients: Array<{ key: string; client: RpcClient }> = [];
+    logger.info(`IMAP crawl pause: attempting ${imapEntries.length} instance(s) before model health checks`);
+
+    for (const [key, entry] of imapEntries) {
+      const client = this.createRpcClient(key, entry);
+      try {
+        await this.withTimeout(
+          client.connect(),
+          IMAP_CRAWL_CONTROL_TIMEOUT_MS,
+          `IMAP pause connect timeout for "${key}"`,
+        );
+        const result = await this.withTimeout(
+          client.call("imap_stop_crawl", {}),
+          IMAP_CRAWL_CONTROL_TIMEOUT_MS,
+          `IMAP pause RPC timeout for "${key}"`,
+        );
+
+        if (this.wasImapCrawlStopped(result)) {
+          pausedClients.push({ key, client });
+          logger.info(`IMAP crawl pause: "${key}" paused for model health checks`);
+        } else {
+          await client.disconnect().catch(() => undefined);
+          logger.debug(`IMAP crawl pause: "${key}" had no active crawl to pause`);
+        }
+      } catch (err) {
+        await client.disconnect().catch(() => undefined);
+        logger.debug(`IMAP crawl pause skipped for "${key}": ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+
+    return async () => {
+      if (pausedClients.length === 0) return;
+      logger.info(`IMAP crawl resume: restoring ${pausedClients.length} paused instance(s)`);
+      for (const { key, client } of pausedClients) {
+        try {
+          await this.withTimeout(
+            client.call("imap_start_crawl", {}),
+            IMAP_CRAWL_CONTROL_TIMEOUT_MS,
+            `IMAP resume RPC timeout for "${key}"`,
+          );
+          logger.info(`IMAP crawl resume: "${key}" resumed`);
+        } catch (err) {
+          logger.warn(`IMAP crawl resume failed for "${key}": ${err instanceof Error ? err.message : String(err)}`);
+        } finally {
+          await client.disconnect().catch(() => undefined);
+        }
+      }
+    };
+  }
+
+  private wasImapCrawlStopped(result: unknown): boolean {
+    if (!result || typeof result !== "object") return false;
+    const value = (result as Record<string, unknown>)["stopped"];
+    return value === true;
+  }
+
+  private async withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+    let timeoutId: NodeJS.Timeout | undefined;
+    const timeoutPromise = new Promise<T>((_resolve, reject) => {
+      timeoutId = setTimeout(() => reject(new Error(label)), timeoutMs);
+    });
+
+    try {
+      return await Promise.race([promise, timeoutPromise]);
+    } finally {
+      if (timeoutId) clearTimeout(timeoutId);
+    }
   }
 
   private updateWebChannelModelInfo(
@@ -1131,6 +1269,7 @@ export class Gateway extends EventEmitter {
     const allTools: StructuredToolInterface[] = [getToolPayloadRefTool];
     const imapInstances: ImapRouterInstanceConfig[] = [];
     this.discoveredToolNamesByServer = {};
+    this.toolServerStatuses = new Map();
 
     // Seed registry with the built-in tool payload ref tool so it appears in the catalog.
     this.toolRegistry = [
@@ -1145,8 +1284,14 @@ export class Gateway extends EventEmitter {
       ([, entry]) => entry.enabled !== false,
     );
 
+    // Seed every enabled server as configured-but-not-yet-discovered.
+    for (const [name] of entries) {
+      this.toolServerStatuses.set(name, { key: name, configured: true, discovered: false, toolNames: [] });
+    }
+
     await Promise.all(
       entries.map(async ([name, entry]): Promise<void> => {
+        const startedAt = Date.now();
         try {
           logger.debug(`Tool server "${name}": creating client...`);
           const client = this.createRpcClient(name, entry);
@@ -1167,17 +1312,29 @@ export class Gateway extends EventEmitter {
               client,
               metadata,
             });
+            this.logStartupSubstep("tool-discovery", `server:${name}`, startedAt);
             logger.info(`Tool server "${name}": ${metadata.length} IMAP backend tool(s) discovered`);
             return;
           }
 
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
-          this.discoveredToolNamesByServer[name] = [...new Set(tools.map((tool) => tool.name))];
+          const toolNames = [...new Set(tools.map((tool) => tool.name))];
+          this.discoveredToolNamesByServer[name] = toolNames;
           this.toolRegistry.push(...metadata);
+          this.toolServerStatuses.set(name, { key: name, configured: true, discovered: true, toolNames });
+          this.logStartupSubstep("tool-discovery", `server:${name}`, startedAt);
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
         } catch (err) {
+          this.logStartupSubstep("tool-discovery", `server:${name}`, startedAt, false);
           this.discoveredToolNamesByServer[name] = [];
+          this.toolServerStatuses.set(name, {
+            key: name,
+            configured: true,
+            discovered: false,
+            error: err instanceof Error ? err.message : String(err),
+            toolNames: [],
+          });
           logger.error(`Failed to connect to tool server "${name}"`, err);
         }
         return;
@@ -1188,8 +1345,15 @@ export class Gateway extends EventEmitter {
       const imapRouter = createImapRouterTools(imapInstances);
       allTools.push(...imapRouter.tools);
       this.toolRegistry.push(...imapRouter.toolDefinitions);
+      const imapToolNames = [...imapRouter.toolNames];
       for (const instance of imapInstances) {
-        this.discoveredToolNamesByServer[instance.key] = [...imapRouter.toolNames];
+        this.discoveredToolNamesByServer[instance.key] = imapToolNames;
+        this.toolServerStatuses.set(instance.key, {
+          key: instance.key,
+          configured: true,
+          discovered: true,
+          toolNames: imapToolNames,
+        });
       }
       logger.info(
         `IMAP router: ${imapRouter.tools.length} canonical tool(s) synthesized across ${imapInstances.length} instance(s)`,
@@ -1199,6 +1363,70 @@ export class Gateway extends EventEmitter {
     logger.debug("All tool discovery promises resolved");
 
     return allTools;
+  }
+
+  private async measureStartupPhase<T>(
+    phase: string,
+    startupPhases: StartupPhaseTiming[],
+    action: () => Promise<T> | T,
+  ): Promise<T> {
+    logger.info(`Startup phase "${phase}": begin`);
+    const startedAt = Date.now();
+    try {
+      const result = await action();
+      const durationMs = Date.now() - startedAt;
+      const slow = durationMs >= STARTUP_SLOW_STEP_MS;
+      startupPhases.push({ phase, durationMs, slow });
+      if (slow) {
+        logger.warn(`Startup phase "${phase}": complete in ${durationMs}ms [slow]`);
+      } else {
+        logger.info(`Startup phase "${phase}": complete in ${durationMs}ms`);
+      }
+      return result;
+    } catch (err) {
+      const durationMs = Date.now() - startedAt;
+      logger.error(`Startup phase "${phase}": failed after ${durationMs}ms`, err);
+      throw err;
+    }
+  }
+
+  private logStartupSubstep(
+    phase: string,
+    substep: string,
+    startedAt: number,
+    ok: boolean = true,
+  ): void {
+    const durationMs = Date.now() - startedAt;
+    const slow = durationMs >= STARTUP_SLOW_STEP_MS;
+    const base = `Startup substep "${phase}/${substep}": ${ok ? "complete" : "failed"} in ${durationMs}ms`;
+    if (!ok) {
+      logger.warn(`${base}${slow ? " [slow]" : ""}`);
+      return;
+    }
+    if (slow) {
+      logger.warn(`${base} [slow]`);
+      return;
+    }
+    logger.info(base);
+  }
+
+  private logStartupSummary(startupStartedAt: number, startupPhases: StartupPhaseTiming[]): void {
+    const totalDurationMs = Date.now() - startupStartedAt;
+    const slowPhases = startupPhases
+      .filter((phase) => phase.slow)
+      .sort((a, b) => b.durationMs - a.durationMs);
+
+    if (slowPhases.length === 0) {
+      logger.info(`Startup summary: total ${totalDurationMs}ms; no slow phases (threshold=${STARTUP_SLOW_STEP_MS}ms)`);
+      return;
+    }
+
+    const slowPhaseSummary = slowPhases
+      .map((phase) => `${phase.phase}=${phase.durationMs}ms`)
+      .join(", ");
+    logger.warn(
+      `Startup summary: total ${totalDurationMs}ms; slow phases (threshold=${STARTUP_SLOW_STEP_MS}ms): ${slowPhaseSummary}`,
+    );
   }
 
   private createRpcClient(name: string, entry: ToolServerEntry): RpcClient {

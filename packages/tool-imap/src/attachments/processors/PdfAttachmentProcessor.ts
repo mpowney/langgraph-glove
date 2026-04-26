@@ -26,7 +26,12 @@ export class PdfAttachmentProcessor implements AttachmentProcessor {
     })).trim();
 
     if (!layoutText) {
-      return { text: ocrText };
+      return {
+        text: ocrText,
+        markdownText: buildMarkdown([
+          { title: "OCR text", content: ocrText },
+        ]),
+      };
     }
 
     if (!ocrText) {
@@ -35,8 +40,27 @@ export class PdfAttachmentProcessor implements AttachmentProcessor {
 
     return {
       text: `${layoutText}\n\n[OCR fallback]\n${ocrText}`,
+      markdownText: buildMarkdown([
+        { title: "Layout text", content: layoutText },
+        { title: "OCR fallback", content: ocrText },
+      ]),
     };
   }
+}
+
+function buildMarkdown(sections: Array<{ title: string; content: string }>): string | undefined {
+  const normalizedSections = sections
+    .map((section) => ({
+      title: section.title.trim(),
+      content: section.content.trim(),
+    }))
+    .filter((section) => section.title.length > 0 && section.content.length > 0);
+
+  if (normalizedSections.length === 0) return undefined;
+
+  return normalizedSections
+    .map((section) => `## ${section.title}\n\n\`\`\`text\n${section.content}\n\`\`\``)
+    .join("\n\n");
 }
 
 function looksConfidentPdfText(text: string): boolean {

@@ -14,13 +14,14 @@ import {
 } from "@fluentui/react-components";
 import {
   ArrowReset24Regular,
-  Brain24Regular,
   Chat24Regular,
   Dismiss24Regular,
   DocumentEdit24Regular,
-  Mail24Regular,
   Wrench24Regular,
 } from "@fluentui/react-icons";
+import { Badge } from "@fluentui/react-components";
+import { PlugDisconnected24Regular } from "@fluentui/react-icons";
+import type { AvailablePanel } from "../types";
 
 const useStyles = makeStyles({
   body: {
@@ -48,11 +49,34 @@ const useStyles = makeStyles({
   panelButtons: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    gap: tokens.spacingVerticalXXS,
   },
   panelButton: {
     width: "100%",
     justifyContent: "flex-start",
+    minHeight: "40px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
+  },
+  toolPanelButton: {
+    width: "100%",
+    justifyContent: "flex-start",
+    minHeight: "40px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
+  },
+  toolPanelButtonError: {
+    width: "100%",
+    justifyContent: "flex-start",
+    minHeight: "40px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
+    opacity: "0.7",
+  },
+  toolPanelHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: tokens.spacingHorizontalXS,
   },
   startButton: {
     width: "100%",
@@ -75,10 +99,9 @@ interface ControlPanelProps {
   onOpenBrowser: () => void;
   onOpenContentBrowser: () => void;
   onOpenToolsPanel: () => void;
-  onOpenImapStatusPanel: () => void;
-  onOpenConfigAdmin: () => void;
-  onOpenMemoryAdmin: () => void;
-  memoryAdminEnabled: boolean;
+  /** Dynamically resolved tool panels from useToolPanels(). */
+  toolPanels: AvailablePanel[];
+  onOpenToolPanel: (panelKey: string) => void;
 }
 
 export function ControlPanel({
@@ -96,10 +119,8 @@ export function ControlPanel({
   onOpenBrowser,
   onOpenContentBrowser,
   onOpenToolsPanel,
-  onOpenImapStatusPanel,
-  onOpenConfigAdmin,
-  onOpenMemoryAdmin,
-  memoryAdminEnabled,
+  toolPanels,
+  onOpenToolPanel,
 }: ControlPanelProps) {
   const styles = useStyles();
 
@@ -181,10 +202,10 @@ export function ControlPanel({
 
           <Divider />
 
-          {/* ── Open panel ── */}
+          {/* ── Tool Configuration ── */}
           <div className={styles.section}>
             <Text size={100} weight="semibold" className={styles.sectionLabel}>
-              Open panel
+              Tool Configuration
             </Text>
             <div className={styles.panelButtons}>
               <CompoundButton
@@ -223,43 +244,40 @@ export function ControlPanel({
               >
                 Tools &amp; agents
               </CompoundButton>
-              <CompoundButton
-                appearance="subtle"
-                icon={<Mail24Regular />}
-                secondaryContent="Monitor IMAP crawl indexing progress"
-                onClick={() => {
-                  onClose();
-                  onOpenImapStatusPanel();
-                }}
-                className={styles.panelButton}
-              >
-                IMAP crawl status
-              </CompoundButton>
-              <CompoundButton
-                appearance="subtle"
-                icon={<DocumentEdit24Regular />}
-                secondaryContent="Edit system settings and config"
-                onClick={() => {
-                  onClose();
-                  onOpenConfigAdmin();
-                }}
-                className={styles.panelButton}
-              >
-                Configuration
-              </CompoundButton>
-              <CompoundButton
-                appearance="subtle"
-                icon={<Brain24Regular />}
-                secondaryContent="Manage stored memories"
-                onClick={() => {
-                  onClose();
-                  onOpenMemoryAdmin();
-                }}
-                disabled={!memoryAdminEnabled}
-                className={styles.panelButton}
-              >
-                Memory
-              </CompoundButton>
+              {toolPanels.map((panel) =>
+                panel.status === "error" ? (
+                  <CompoundButton
+                    key={panel.panelKey}
+                    appearance="subtle"
+                    icon={<PlugDisconnected24Regular />}
+                    secondaryContent={
+                      <span className={styles.toolPanelHeader}>
+                        <Badge appearance="filled" color="warning" size="small">
+                          Not connected
+                        </Badge>
+                      </span>
+                    }
+                    disabled
+                    className={styles.toolPanelButtonError}
+                  >
+                    {panel.label}
+                  </CompoundButton>
+                ) : (
+                  <CompoundButton
+                    key={panel.panelKey}
+                    appearance="subtle"
+                    icon={<Wrench24Regular />}
+                    secondaryContent={panel.description}
+                    onClick={() => {
+                      onClose();
+                      onOpenToolPanel(panel.panelKey);
+                    }}
+                    className={styles.toolPanelButton}
+                  >
+                    {panel.label}
+                  </CompoundButton>
+                )
+              )}
             </div>
           </div>
 

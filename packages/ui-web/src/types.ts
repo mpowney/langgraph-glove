@@ -1,3 +1,5 @@
+import type { ComponentType } from "react";
+
 /** Messages sent from server → browser client. */
 export interface CheckpointMetadata {
   id: string;
@@ -278,3 +280,72 @@ export interface ConfigValidationIssue {
   message: string;
   severity: "error" | "warning";
 }
+
+// ---------------------------------------------------------------------------
+// Tool server status & dynamic panel registry
+// ---------------------------------------------------------------------------
+
+/** Mirror of the backend ToolServerStatus — returned by GET /api/tools/server-status. */
+export interface ToolServerStatus {
+  key: string;
+  configured: boolean;
+  discovered: boolean;
+  error?: string;
+  toolNames: string[];
+}
+
+/**
+ * Props passed by ui-web into every dynamically-loaded tool panel component.
+ * Companion packages that export a panel must accept this interface as their
+ * component props (they may ignore fields they don't need).
+ */
+export interface ToolPanelProps {
+  open: boolean;
+  onClose: () => void;
+  adminApiBaseUrl?: string;
+  authToken?: string;
+  personalToken?: string;
+  privilegedGrantId?: string;
+  conversationId?: string;
+  privilegedAccessActive?: boolean;
+  privilegedAccessExpiresAt?: string;
+  onEnablePrivilegedAccessWithToken?: (token: string) => Promise<boolean>;
+  onEnablePrivilegedAccessWithPasskey?: () => Promise<boolean>;
+  onDisablePrivilegedAccess?: () => void;
+  privilegeTokenRegistered?: boolean;
+  onRegisterPrivilegeToken?: (newToken: string, currentToken?: string) => Promise<boolean>;
+  authError?: string | null;
+  passkeyEnabled?: boolean;
+}
+
+/** Static metadata exported by a tool UI companion package alongside its default component. */
+export interface ToolPanelMeta {
+  /** Used to match against server keys in tools.json. */
+  serverKey: string;
+  /** 'exact' matches one server key; 'prefix' matches all keys starting with serverKey. */
+  matchStrategy: "exact" | "prefix";
+  /** Label shown in ControlPanel CompoundButton. */
+  label: string;
+  /** Secondary text shown in ControlPanel CompoundButton. */
+  description: string;
+}
+
+/**
+ * A resolved panel entry passed to ControlPanel for rendering.
+ * If status is 'error', `load` is absent (no panel to open).
+ */
+export interface AvailablePanel {
+  /** Group key: the serverKey from ToolPanelMeta, or first instanceKey for prefix groups. */
+  panelKey: string;
+  label: string;
+  description: string;
+  /** 'ok' = all matching instances discovered; 'error' = at least one failed. */
+  status: "ok" | "error";
+  /** All matching server keys covered by this panel entry. */
+  instanceKeys: string[];
+  /** Per-key error messages, populated when status='error'. */
+  errors: Record<string, string>;
+  /** Lazy loader — only present when status='ok' and a UI companion package is registered. */
+  load?: () => Promise<{ default: ComponentType<ToolPanelProps> }>;
+}
+

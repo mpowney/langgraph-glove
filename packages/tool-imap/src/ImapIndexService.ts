@@ -63,6 +63,15 @@ export interface ReindexInput {
   uid?: number;
 }
 
+export interface ListAttachmentsInput {
+  limit?: number;
+  offset?: number;
+}
+
+export interface GetAttachmentInput {
+  attachmentId: string;
+}
+
 interface ResolvedImapSettings {
   toolKey: string;
   displayName?: string;
@@ -252,6 +261,7 @@ export class ImapIndexService {
   };
   private static readonly ESTIMATE_CACHE_TTL_MS = 30_000;
   private static readonly DEFAULT_PDF_DPI = 180;
+  private static readonly IMAP_SOCKET_TIMEOUT_MS = 10 * 60 * 1000;
   private static readonly ECONNRESET_FAILURE_WINDOW_MS = 60 * 60 * 1000;
   private static readonly ECONNRESET_FAILURE_LIMIT = 5;
   private static readonly ECONNRESET_DEDUPE_MS = 5000;
@@ -308,7 +318,7 @@ export class ImapIndexService {
         await this.crawl({ full: false });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (this.isEconnResetError(error)) {
+        if (this.isRecoverableImapConnectionError(error)) {
           process.stderr.write(`[tool-imap] startup crawl recoverable IMAP failure: ${message}\n`);
         } else {
           throw error;
@@ -327,7 +337,7 @@ export class ImapIndexService {
         }
         void this.crawl({ full: false }).catch((error) => {
           const message = error instanceof Error ? error.message : String(error);
-          if (this.isEconnResetError(error)) {
+          if (this.isRecoverableImapConnectionError(error)) {
             process.stderr.write(`[tool-imap] poll crawl recoverable IMAP failure: ${message}\n`);
             return;
           }
@@ -352,6 +362,7 @@ export class ImapIndexService {
     ).get() as { count: number };
     const attachmentCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_attachments").get() as { count: number };
     const attachmentChunkCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_chunks").get() as { count: number };
+    const attachmentMarkdownCount = this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_markdown").get() as { count: number };
     const attachmentEmbeddingCount = this.db.prepare(
       "SELECT COUNT(*) AS count FROM imap_attachment_embeddings WHERE status = 'indexed'",
     ).get() as { count: number };
@@ -408,6 +419,7 @@ export class ImapIndexService {
         indexedEmbeddings: embeddingCount.count,
         attachments: attachmentCount.count,
         attachmentChunks: attachmentChunkCount.count,
+        attachmentMarkdown: attachmentMarkdownCount.count,
         indexedAttachmentEmbeddings: attachmentEmbeddingCount.count,
         queuedFiles: queuedFileCount.count,
         indexedFiles: indexedFileCount.count,
@@ -638,7 +650,7 @@ export class ImapIndexService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (this.isEconnResetError(error)) {
+      if (this.isRecoverableImapConnectionError(error)) {
         this.recordEconnResetFailure(error, "crawl");
       }
       for (const folder of folders) {
@@ -1143,6 +1155,257 @@ export class ImapIndexService {
     };
   }
 
+  listAttachments(input: ListAttachmentsInput = {}): Record<string, unknown> {
+    const limit = Math.max(1, Math.min(200, input.limit ?? 100));
+    const offset = Math.max(0, input.offset ?? 0);
+
+    const total = (this.db.prepare(
+      "SELECT COUNT(DISTINCT content_hash) AS count FROM imap_email_attachments",
+    ).get() as { count: number }).count;
+
+    const rows = this.db.prepare(
+      `
+      SELECT
+        a.id,
+        a.email_id,
+        a.attachment_index,
+        a.filename,
+        a.mime_type,
+        a.file_size_bytes,
+        a.extraction_status,
+        a.extraction_error,
+        a.created_at,
+        a.updated_at,
+        m.subject,
+        m.subject_slug,
+        m.from_addr,
+        m.to_addrs,
+        m.sent_at,
+        m.message_id,
+        m.thread_id,
+        m.in_reply_to,
+        m.uid,
+        m.folder,
+        (
+          SELECT COUNT(*)
+          FROM imap_attachment_chunks c
+          WHERE c.attachment_id = a.id
+        ) AS chunk_count,
+        (
+          SELECT c.content
+          FROM imap_attachment_chunks c
+          WHERE c.attachment_id = a.id
+          ORDER BY c.chunk_index ASC
+          LIMIT 1
+        ) AS text_preview
+      FROM imap_email_attachments a
+      INNER JOIN imap_emails m ON m.id = a.email_id
+      WHERE a.id = (
+        SELECT a2.id
+        FROM imap_email_attachments a2
+        WHERE a2.content_hash = a.content_hash
+        ORDER BY a2.updated_at DESC, a2.id DESC
+        LIMIT 1
+      )
+      ORDER BY a.updated_at DESC, a.id DESC
+      LIMIT ? OFFSET ?
+      `,
+    ).all(limit, offset) as Array<{
+      id: string;
+      email_id: string;
+      attachment_index: number;
+      filename: string;
+      mime_type: string;
+      file_size_bytes: number;
+      extraction_status: string;
+      extraction_error: string | null;
+      created_at: string;
+      updated_at: string;
+      subject: string;
+      subject_slug: string;
+      from_addr: string;
+      to_addrs: string;
+      sent_at: string | null;
+      message_id: string | null;
+      thread_id: string | null;
+      in_reply_to: string | null;
+      uid: number;
+      folder: string;
+      chunk_count: number;
+      text_preview: string | null;
+    }>;
+
+    return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
+      total,
+      limit,
+      offset,
+      items: rows.map((row) => {
+        const itemUrl = this.generateUrlFromMetadata({
+          messageId: row.message_id,
+          threadId: row.thread_id,
+          uid: row.uid,
+          folder: row.folder,
+          inReplyTo: row.in_reply_to,
+          from: row.from_addr,
+          to: parseJsonArray(row.to_addrs).join(","),
+          date: row.sent_at,
+          subjectSlug: row.subject_slug,
+        });
+
+        return {
+        attachmentId: row.id,
+        emailId: row.email_id,
+        attachmentIndex: row.attachment_index,
+        fileName: row.filename,
+        mimeType: row.mime_type,
+        fileSizeBytes: row.file_size_bytes,
+        extractionStatus: row.extraction_status,
+        extractionError: row.extraction_error ?? undefined,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        chunkCount: row.chunk_count,
+        textPreview: row.text_preview ?? "",
+        email: {
+          subject: row.subject,
+          from: row.from_addr,
+          sentAt: row.sent_at,
+          messageId: row.message_id,
+          threadId: row.thread_id,
+          uid: row.uid,
+          folder: row.folder,
+          itemUrl,
+        },
+        };
+      }),
+    };
+  }
+
+  getAttachment(input: GetAttachmentInput): Record<string, unknown> {
+    const attachmentId = input.attachmentId?.trim();
+    if (!attachmentId) {
+      throw new Error("attachmentId is required");
+    }
+
+    const row = this.db.prepare(
+      `
+      SELECT
+        a.id,
+        a.email_id,
+        a.attachment_index,
+        a.filename,
+        a.mime_type,
+        a.file_size_bytes,
+        a.extraction_status,
+        a.extraction_error,
+        a.created_at,
+        a.updated_at,
+        m.subject,
+        m.subject_slug,
+        m.from_addr,
+        m.to_addrs,
+        m.sent_at,
+        m.message_id,
+        m.thread_id,
+        m.in_reply_to,
+        m.uid,
+        m.folder,
+        md.markdown_content
+      FROM imap_email_attachments a
+      INNER JOIN imap_emails m ON m.id = a.email_id
+      LEFT JOIN imap_attachment_markdown md ON md.attachment_id = a.id
+      WHERE a.id = ?
+      LIMIT 1
+      `,
+    ).get(attachmentId) as {
+      id: string;
+      email_id: string;
+      attachment_index: number;
+      filename: string;
+      mime_type: string;
+      file_size_bytes: number;
+      extraction_status: string;
+      extraction_error: string | null;
+      created_at: string;
+      updated_at: string;
+      subject: string;
+      subject_slug: string;
+      from_addr: string;
+      to_addrs: string;
+      sent_at: string | null;
+      message_id: string | null;
+      thread_id: string | null;
+      in_reply_to: string | null;
+      uid: number;
+      folder: string;
+      markdown_content: string | null;
+    } | undefined;
+
+    if (!row) {
+      throw new Error(`Attachment not found: ${attachmentId}`);
+    }
+
+    const chunks = this.db.prepare(
+      `
+      SELECT content
+      FROM imap_attachment_chunks
+      WHERE attachment_id = ?
+      ORDER BY chunk_index ASC
+      `,
+    ).all(attachmentId) as Array<{ content: string }>;
+
+    const text = chunks.map((chunk) => chunk.content).join("\n\n");
+    const itemUrl = this.generateUrlFromMetadata({
+      messageId: row.message_id,
+      threadId: row.thread_id,
+      uid: row.uid,
+      folder: row.folder,
+      inReplyTo: row.in_reply_to,
+      from: row.from_addr,
+      to: parseJsonArray(row.to_addrs).join(","),
+      date: row.sent_at,
+      subjectSlug: row.subject_slug,
+    });
+
+    const references = itemUrl
+      ? [{
+          url: itemUrl,
+          title: row.subject?.trim().length ? row.subject : itemUrl,
+          kind: "email",
+          sourceTool: "imap_get_attachment",
+        }]
+      : [];
+
+    return {
+      toolKey: this.settings.toolKey,
+      displayName: this.settings.displayName,
+      attachmentId: row.id,
+      emailId: row.email_id,
+      attachmentIndex: row.attachment_index,
+      fileName: row.filename,
+      mimeType: row.mime_type,
+      fileSizeBytes: row.file_size_bytes,
+      extractionStatus: row.extraction_status,
+      extractionError: row.extraction_error ?? undefined,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      text,
+      markdownText: row.markdown_content ?? undefined,
+      email: {
+        subject: row.subject,
+        from: row.from_addr,
+        sentAt: row.sent_at,
+        messageId: row.message_id,
+        threadId: row.thread_id,
+        uid: row.uid,
+        folder: row.folder,
+        itemUrl,
+      },
+      references,
+    };
+  }
+
   async reindex(input: ReindexInput = {}): Promise<Record<string, unknown>> {
     if (input.emailId || (input.folder && input.uid)) {
       const row = this.resolveEmail({
@@ -1186,6 +1449,7 @@ export class ImapIndexService {
       embeddings: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_chunk_embeddings").get() as { count: number }).count,
       attachments: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_email_attachments").get() as { count: number }).count,
       attachmentChunks: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_chunks").get() as { count: number }).count,
+      attachmentMarkdown: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_markdown").get() as { count: number }).count,
       attachmentEmbeddings: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_attachment_embeddings").get() as { count: number }).count,
       folderState: (this.db.prepare("SELECT COUNT(*) AS count FROM imap_crawl_state").get() as { count: number }).count,
     };
@@ -1227,6 +1491,7 @@ export class ImapIndexService {
       host: this.settings.host,
       port: this.settings.port,
       secure: this.settings.secure,
+      socketTimeout: ImapIndexService.IMAP_SOCKET_TIMEOUT_MS,
       auth: {
         user: this.settings.user,
         pass: this.settings.password,
@@ -1240,9 +1505,9 @@ export class ImapIndexService {
 
     client.on("error", (error: unknown) => {
       const message = error instanceof Error ? error.message : String(error);
-      if (this.isEconnResetError(error)) {
+      if (this.isRecoverableImapConnectionError(error)) {
         this.recordEconnResetFailure(error, "client-event");
-        process.stderr.write(`[tool-imap] IMAP connection reset observed: ${message}\n`);
+        process.stderr.write(`[tool-imap] IMAP recoverable connection error observed: ${message}\n`);
         return;
       }
       process.stderr.write(`[tool-imap] IMAP client error: ${message}\n`);
@@ -1582,6 +1847,7 @@ export class ImapIndexService {
     );
 
     if (!this.isAttachmentMimeAllowed(attachment.contentType)) {
+      this.replaceAttachmentMarkdown(attachment.id, null);
       this.attachmentLogState.processed += 1;
       this.attachmentLogState.skipped += 1;
       this.logAttachmentEvent(
@@ -1592,6 +1858,7 @@ export class ImapIndexService {
     }
 
     if (attachment.fileSizeBytes > this.settings.attachment.maxFileSizeBytes) {
+      this.replaceAttachmentMarkdown(attachment.id, null);
       this.attachmentLogState.processed += 1;
       this.attachmentLogState.skipped += 1;
       this.logAttachmentEvent(
@@ -1603,6 +1870,7 @@ export class ImapIndexService {
 
     const processor = this.attachmentProcessors.resolve(attachment.contentType);
     if (!processor) {
+      this.replaceAttachmentMarkdown(attachment.id, null);
       this.attachmentLogState.processed += 1;
       this.attachmentLogState.skipped += 1;
       this.logAttachmentEvent(
@@ -1629,8 +1897,10 @@ export class ImapIndexService {
         },
       );
       const text = extraction.text.trim();
+      const markdownText = extraction.markdownText?.trim() ?? "";
 
       if (!text) {
+        this.replaceAttachmentMarkdown(attachment.id, null);
         this.replaceAttachmentChunksAndEmbeddings(attachment.id, attachment.emailId, []);
         this.attachmentLogState.processed += 1;
         this.attachmentLogState.skipped += 1;
@@ -1644,6 +1914,7 @@ export class ImapIndexService {
       const chunks = chunkText(text, this.settings.chunkSize, this.settings.chunkOverlap);
       const vectors = await this.embedChunks(chunks);
       this.replaceAttachmentChunksAndEmbeddings(attachment.id, attachment.emailId, chunks, vectors);
+      this.replaceAttachmentMarkdown(attachment.id, markdownText.length > 0 ? markdownText : null);
       this.attachmentLogState.processed += 1;
       this.attachmentLogState.indexed += 1;
       this.logAttachmentEvent(
@@ -1652,6 +1923,7 @@ export class ImapIndexService {
       this.markAttachmentStatus(attachment.id, "indexed", null);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.replaceAttachmentMarkdown(attachment.id, null);
       this.attachmentLogState.processed += 1;
       this.attachmentLogState.failed += 1;
       this.logAttachmentEvent(
@@ -1742,6 +2014,30 @@ export class ImapIndexService {
           now,
         );
       }
+    });
+
+    tx();
+  }
+
+  private replaceAttachmentMarkdown(attachmentId: string, markdownText: string | null): void {
+    const normalized = markdownText?.trim() ?? "";
+    const now = new Date().toISOString();
+
+    const tx = this.db.transaction(() => {
+      this.db.prepare("DELETE FROM imap_attachment_markdown WHERE attachment_id = ?").run(attachmentId);
+      if (!normalized) {
+        return;
+      }
+      this.db.prepare(
+        `
+        INSERT INTO imap_attachment_markdown (
+          attachment_id,
+          markdown_content,
+          created_at,
+          updated_at
+        ) VALUES (?, ?, ?, ?)
+        `,
+      ).run(attachmentId, normalized, now, now);
     });
 
     tx();
@@ -2182,6 +2478,14 @@ export class ImapIndexService {
 
       CREATE INDEX IF NOT EXISTS idx_imap_attachment_embeddings_attachment_id ON imap_attachment_embeddings(attachment_id);
       CREATE INDEX IF NOT EXISTS idx_imap_attachment_embeddings_email_id ON imap_attachment_embeddings(email_id);
+
+      CREATE TABLE IF NOT EXISTS imap_attachment_markdown (
+        attachment_id TEXT PRIMARY KEY,
+        markdown_content TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(attachment_id) REFERENCES imap_email_attachments(id) ON DELETE CASCADE
+      );
     `);
   }
 
@@ -2285,6 +2589,15 @@ export class ImapIndexService {
     return details.code === "ECONNRESET" || /\beconnreset\b/i.test(details.message);
   }
 
+  private isSocketTimeoutError(error: unknown): boolean {
+    const details = this.getImapErrorDetails(error);
+    return details.code === "ETIMEDOUT" || /socket timeout|timed out/i.test(details.message);
+  }
+
+  private isRecoverableImapConnectionError(error: unknown): boolean {
+    return this.isEconnResetError(error) || this.isSocketTimeoutError(error);
+  }
+
   private getImapErrorDetails(error: unknown): ImapErrorDetails {
     const candidate = error as {
       code?: unknown;
@@ -2339,7 +2652,7 @@ export class ImapIndexService {
     if (failureCount > ImapIndexService.ECONNRESET_FAILURE_LIMIT && !this.crawlStoppedByImapErrors) {
       this.crawlStoppedByImapErrors = true;
       this.crawlStopReason =
-        `Stopped after ${failureCount} ECONNRESET failures within ${ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS / 60000} minutes`;
+        `Stopped after ${failureCount} recoverable IMAP connection failures within ${ImapIndexService.ECONNRESET_FAILURE_WINDOW_MS / 60000} minutes`;
       this.crawlAbortRequested = true;
 
       if (this.crawlRuntime) {
