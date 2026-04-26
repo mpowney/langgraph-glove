@@ -1,12 +1,6 @@
-import type { ToolPanelMeta, ToolPanelProps } from "./types.js";
+import type { ToolPanelProps } from "./types.js";
 import { ConfigAdmin } from "./ConfigAdmin.js";
-
-export const meta: ToolPanelMeta = {
-  serverKey: "config",
-  matchStrategy: "exact",
-  label: "Configuration",
-  description: "Edit system settings and config",
-};
+export { meta } from "./meta.js";
 
 function ConfigPanel(props: ToolPanelProps) {
   const base = props.adminApiBaseUrl?.replace(/\/$/, "") ?? "";

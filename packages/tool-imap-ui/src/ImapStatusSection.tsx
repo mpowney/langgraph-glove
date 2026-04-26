@@ -140,22 +140,30 @@ export function ImapStatusSection({
 
   const privilegedReady = privilegedGrantId.trim().length > 0 && conversationId.trim().length > 0;
 
-  const loadTools = useCallback(async () => {
-    if (!privilegedReady) return;
+  const loadTools = useCallback(async (): Promise<ImapListToolsResult | null> => {
+    if (!privilegedReady) return null;
     try {
       const toolsResult = await listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
       setTools(toolsResult);
+      return toolsResult;
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : String(err));
+      return null;
     }
   }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady]);
 
-  const loadStatus = useCallback(async () => {
+  const loadStatus = useCallback(async (toolKeys?: string[]) => {
     if (!privilegedReady) return;
     setStatusLoading(true);
     setStatusError(null);
     try {
-      const statusResult = await getImapCrawlStatus(apiBaseUrl, authToken, privilegedGrantId, conversationId);
+      const statusResult = await getImapCrawlStatus(
+        apiBaseUrl,
+        authToken,
+        privilegedGrantId,
+        conversationId,
+        { toolKeys },
+      );
       setStatus(statusResult);
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : String(err));
@@ -163,6 +171,11 @@ export function ImapStatusSection({
       setStatusLoading(false);
     }
   }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady]);
+
+  const knownToolKeys = useMemo(
+    () => (tools?.tools ?? []).map((tool) => tool.toolKey),
+    [tools],
+  );
 
   const loadEstimate = useCallback(async (options: ImapRemainingEstimateOptions = {}) => {
     if (!privilegedReady) return;
@@ -200,15 +213,15 @@ export function ImapStatusSection({
       }
       await clearImapIndex(apiBaseUrl, authToken, privilegedGrantId, conversationId, toolKey);
       await Promise.all([
-        loadStatus(),
-        loadEstimate({ forceRefreshEstimate: true }),
+        loadStatus(knownToolKeys),
+        loadEstimate({ forceRefreshEstimate: true, toolKeys: knownToolKeys }),
       ]);
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : String(err));
     } finally {
       setClearingToolKey(null);
     }
-  }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady, loadEstimate, loadStatus, status]);
+  }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady, loadEstimate, loadStatus, knownToolKeys, status]);
 
   const handleStopCrawl = useCallback(async (toolKey: string) => {
     if (!privilegedReady) return;
@@ -218,7 +231,9 @@ export function ImapStatusSection({
       // Poll until crawl is confirmed stopped (abort is async — crawl finishes its current message first)
       for (let i = 0; i < 10; i++) {
         await new Promise((resolve) => setTimeout(resolve, 800));
-        const updated = await getImapCrawlStatus(apiBaseUrl, authToken, privilegedGrantId, conversationId);
+        const updated = await getImapCrawlStatus(apiBaseUrl, authToken, privilegedGrantId, conversationId, {
+          toolKeys: knownToolKeys,
+        });
         setStatus(updated);
         const toolEntry = updated.tools.find((t) => t.toolKey === toolKey);
         if (!toolEntry?.status?.crawlRuntime?.active) break;
@@ -228,39 +243,63 @@ export function ImapStatusSection({
     } finally {
       setStoppingToolKey(null);
     }
-  }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady]);
+  }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady, knownToolKeys]);
 
   const handleStartCrawl = useCallback(async (toolKey: string) => {
     if (!privilegedReady) return;
     setStartingToolKey(toolKey);
     try {
       await startImapCrawl(apiBaseUrl, authToken, privilegedGrantId, conversationId, toolKey);
-      await loadStatus();
+      await loadStatus(knownToolKeys);
     } catch (err) {
       setStatusError(err instanceof Error ? err.message : String(err));
     } finally {
       setStartingToolKey(null);
     }
-  }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady, loadStatus]);
+  }, [apiBaseUrl, authToken, privilegedGrantId, conversationId, privilegedReady, loadStatus, knownToolKeys]);
 
   useEffect(() => {
     if (!open || !privilegedReady) return;
-    void loadTools();
-    void loadStatus();
-    void loadEstimate();
+
+    let cancelled = false;
+
+    const initialize = async () => {
+      const toolsResult = await loadTools();
+      if (cancelled) return;
+
+      const toolKeys = (toolsResult?.tools ?? []).map((tool) => tool.toolKey);
+      await loadStatus(toolKeys);
+      if (cancelled) return;
+
+      // Defer estimate until status has rendered at least once on first open.
+      window.setTimeout(() => {
+        if (cancelled) return;
+        void loadEstimate({ toolKeys });
+      }, 0);
+    };
+
+    void initialize();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open, privilegedReady, loadEstimate, loadStatus, loadTools]);
+
+  useEffect(() => {
+    if (!open || !privilegedReady) return;
 
     const statusTimer = window.setInterval(() => {
-      void loadStatus();
+      void loadStatus(knownToolKeys);
     }, 10000);
     const estimateTimer = window.setInterval(() => {
-      void loadEstimate();
+      void loadEstimate({ toolKeys: knownToolKeys });
     }, 30000);
 
     return () => {
       window.clearInterval(statusTimer);
       window.clearInterval(estimateTimer);
     };
-  }, [open, privilegedReady, loadEstimate, loadStatus, loadTools]);
+  }, [open, privilegedReady, loadEstimate, loadStatus, knownToolKeys]);
 
   const statusesByKey = useMemo(() => {
     const map = new Map<string, NonNullable<ImapCrawlStatusResult["tools"][number]>>();
@@ -307,8 +346,8 @@ export function ImapStatusSection({
           appearance="subtle"
           icon={<ArrowClockwise24Regular />}
           onClick={() => {
-            void loadStatus();
-            void loadEstimate({ forceRefreshEstimate: true });
+            void loadStatus(knownToolKeys);
+            void loadEstimate({ forceRefreshEstimate: true, toolKeys: knownToolKeys });
           }}
           disabled={!privilegedReady || statusLoading || estimateLoading}
         >
@@ -320,20 +359,20 @@ export function ImapStatusSection({
         <Text className={styles.hint}>Enable privileged access to query IMAP indexing status.</Text>
       )}
 
-      {privilegedReady && statusLoading && !status && (
+      {privilegedReady && statusLoading && !status && !(tools && tools.tools.length > 0) && (
         <Spinner size="tiny" label="Loading IMAP status..." />
       )}
 
       {statusError && <Text className={styles.error}>{statusError}</Text>}
       {!statusError && estimateError && <Text className={styles.error}>{estimateError}</Text>}
 
-      {status && (
+      {(status || tools) && (
         <>
           <div className={styles.summary}>
             <Text className={styles.summaryKey}>Configured tools</Text>
-            <Text className={styles.summaryValue}>{formatNumber(status.summary.totalTools)}</Text>
+            <Text className={styles.summaryValue}>{formatNumber(status?.summary.totalTools ?? tools?.count)}</Text>
             <Text className={styles.summaryKey}>Active crawls</Text>
-            <Text className={styles.summaryValue}>{formatNumber(status.summary.activeCrawls)}</Text>
+            <Text className={styles.summaryValue}>{formatNumber(status?.summary.activeCrawls)}</Text>
             <Text className={styles.summaryKey}>Estimated emails remaining</Text>
             <Text className={styles.summaryValue}>
               {typeof estimate?.summary.estimatedRemainingEmails === "number"
@@ -345,7 +384,7 @@ export function ImapStatusSection({
                     : "-"}
             </Text>
             <Text className={styles.summaryKey}>Tools with status errors</Text>
-            <Text className={styles.summaryValue}>{formatNumber(status.summary.failedTools)}</Text>
+            <Text className={styles.summaryValue}>{formatNumber(status?.summary.failedTools)}</Text>
           </div>
 
           <Divider />

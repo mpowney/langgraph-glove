@@ -49,19 +49,28 @@ const useStyles = makeStyles({
   panelButtons: {
     display: "flex",
     flexDirection: "column",
-    gap: tokens.spacingVerticalS,
+    gap: tokens.spacingVerticalXXS,
   },
   panelButton: {
     width: "100%",
     justifyContent: "flex-start",
+    minHeight: "40px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
   },
   toolPanelButton: {
     width: "100%",
     justifyContent: "flex-start",
+    minHeight: "40px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
   },
   toolPanelButtonError: {
     width: "100%",
     justifyContent: "flex-start",
+    minHeight: "40px",
+    paddingTop: tokens.spacingVerticalXXS,
+    paddingBottom: tokens.spacingVerticalXXS,
     opacity: "0.7",
   },
   toolPanelHeader: {
@@ -193,10 +202,10 @@ export function ControlPanel({
 
           <Divider />
 
-          {/* ── Open panel ── */}
+          {/* ── Tool Configuration ── */}
           <div className={styles.section}>
             <Text size={100} weight="semibold" className={styles.sectionLabel}>
-              Open panel
+              Tool Configuration
             </Text>
             <div className={styles.panelButtons}>
               <CompoundButton

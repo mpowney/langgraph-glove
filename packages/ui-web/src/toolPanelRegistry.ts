@@ -13,37 +13,31 @@ import type { ToolPanelMeta, ToolPanelProps } from "./types";
 import type { ComponentType } from "react";
 
 export interface ToolPanelRegistryEntry {
-  meta: ToolPanelMeta;
+  serverKey: string;
+  matchStrategy: "exact" | "prefix";
   load: () => Promise<{ default: ComponentType<ToolPanelProps> }>;
+  /** Dynamic meta loader from companion package (source of truth for labels/descriptions). */
+  loadMeta: () => Promise<ToolPanelMeta>;
 }
 
 const registry: ToolPanelRegistryEntry[] = [
   {
-    meta: {
-      serverKey: "imap-",
-      matchStrategy: "prefix",
-      label: "IMAP",
-      description: "Monitor IMAP crawl indexing progress",
-    },
+    serverKey: "imap-",
+    matchStrategy: "prefix",
     load: () => import("@langgraph-glove/tool-imap-ui"),
+    loadMeta: () => import("@langgraph-glove/tool-imap-ui/meta").then((mod) => mod.meta),
   },
   {
-    meta: {
-      serverKey: "memory",
-      matchStrategy: "exact",
-      label: "Memory",
-      description: "Manage stored memories",
-    },
+    serverKey: "memory",
+    matchStrategy: "exact",
     load: () => import("@langgraph-glove/tool-memory-ui"),
+    loadMeta: () => import("@langgraph-glove/tool-memory-ui/meta").then((mod) => mod.meta),
   },
   {
-    meta: {
-      serverKey: "config",
-      matchStrategy: "exact",
-      label: "Configuration",
-      description: "Edit system settings and config",
-    },
+    serverKey: "config",
+    matchStrategy: "exact",
     load: () => import("@langgraph-glove/tool-config-ui"),
+    loadMeta: () => import("@langgraph-glove/tool-config-ui/meta").then((mod) => mod.meta),
   },
 ];
 

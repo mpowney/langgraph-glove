@@ -93,6 +93,11 @@ export interface ImapRemainingEstimateResult {
 
 export interface ImapRemainingEstimateOptions {
   forceRefreshEstimate?: boolean;
+  toolKeys?: string[];
+}
+
+export interface ImapCrawlStatusOptions {
+  toolKeys?: string[];
 }
 
 export interface ImapClearIndexResult {
@@ -209,50 +214,22 @@ export async function getImapCrawlStatus(
   authToken: string | undefined,
   privilegedGrantId: string,
   conversationId: string,
+  options: ImapCrawlStatusOptions = {},
 ): Promise<ImapCrawlStatusResult> {
-  const instances = await listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
-  const tools = await Promise.all(instances.tools.map(async ({ toolKey }) => {
-    try {
-      const status = await callImapRpc<ImapToolStatusEntry["status"]>(
-        apiBaseUrl,
-        "imap_status",
-        { toolKey },
-        authToken,
-        privilegedGrantId,
-        conversationId,
-      );
-      return { toolKey, status } satisfies ImapToolStatusEntry;
-    } catch (err) {
-      return {
-        toolKey,
-        error: err instanceof Error ? err.message : String(err),
-      } satisfies ImapToolStatusEntry;
-    }
-  }));
+  const requestedToolKeys = (options.toolKeys ?? [])
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
 
-  const summary = tools.reduce(
-    (acc, entry) => {
-      if (!entry.status) {
-        acc.failedTools += 1;
-        return acc;
-      }
-      if (entry.status.crawlRuntime?.active) {
-        acc.activeCrawls += 1;
-      }
-      return acc;
-    },
+  return callImapRpc<ImapCrawlStatusResult>(
+    apiBaseUrl,
+    "imap_get_crawl_status",
     {
-      totalTools: tools.length,
-      failedTools: 0,
-      activeCrawls: 0,
+      ...(requestedToolKeys.length > 0 ? { toolKeys: requestedToolKeys } : {}),
     },
+    authToken,
+    privilegedGrantId,
+    conversationId,
   );
-
-  return {
-    generatedAt: new Date().toISOString(),
-    tools,
-    summary,
-  };
 }
 
 export async function getImapRemainingEstimate(
@@ -262,55 +239,21 @@ export async function getImapRemainingEstimate(
   conversationId: string,
   options: ImapRemainingEstimateOptions = {},
 ): Promise<ImapRemainingEstimateResult> {
-  const instances = await listImapInstances(apiBaseUrl, authToken, privilegedGrantId, conversationId);
-  const tools = await Promise.all(instances.tools.map(async ({ toolKey }) => {
-    try {
-      const estimate = await callImapRpc<ImapRemainingEstimateEntry["estimate"]>(
-        apiBaseUrl,
-        "imap_estimate_remaining",
-        {
-          toolKey,
-          forceRefreshEstimate: options.forceRefreshEstimate,
-        },
-        authToken,
-        privilegedGrantId,
-        conversationId,
-      );
-      return { toolKey, estimate } satisfies ImapRemainingEstimateEntry;
-    } catch (err) {
-      return {
-        toolKey,
-        error: err instanceof Error ? err.message : String(err),
-      } satisfies ImapRemainingEstimateEntry;
-    }
-  }));
+  const requestedToolKeys = (options.toolKeys ?? [])
+    .map((key) => key.trim())
+    .filter((key) => key.length > 0);
 
-  const summary = tools.reduce(
-    (acc, entry) => {
-      if (!entry.estimate) {
-        acc.failedTools += 1;
-        return acc;
-      }
-      const remaining = entry.estimate.remainingEmails;
-      if (typeof remaining === "number" && Number.isFinite(remaining)) {
-        acc.toolsWithEstimate += 1;
-        acc.estimatedRemainingEmails += remaining;
-      }
-      return acc;
-    },
+  return callImapRpc<ImapRemainingEstimateResult>(
+    apiBaseUrl,
+    "imap_get_remaining_estimate",
     {
-      totalTools: tools.length,
-      failedTools: 0,
-      toolsWithEstimate: 0,
-      estimatedRemainingEmails: 0,
+      ...(requestedToolKeys.length > 0 ? { toolKeys: requestedToolKeys } : {}),
+      forceRefreshEstimate: options.forceRefreshEstimate,
     },
+    authToken,
+    privilegedGrantId,
+    conversationId,
   );
-
-  return {
-    generatedAt: new Date().toISOString(),
-    tools,
-    summary,
-  };
 }
 
 export interface ImapStopCrawlResult {

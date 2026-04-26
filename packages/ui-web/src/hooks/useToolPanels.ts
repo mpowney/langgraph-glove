@@ -1,6 +1,15 @@
-import { useMemo } from "react";
-import type { AvailablePanel, ToolServerStatus } from "../types";
+import { useEffect, useMemo, useRef, useState } from "react";
+import type { AvailablePanel, ToolPanelMeta, ToolServerStatus } from "../types";
 import registry from "../toolPanelRegistry";
+
+function toFallbackLabel(serverKey: string): string {
+  const trimmed = serverKey.replace(/-+$/, "");
+  if (!trimmed) return "Tool";
+  return trimmed
+    .split(/[-_]+/)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
 
 /**
  * Combines the live tool server status map with the static panel registry to
@@ -13,6 +22,49 @@ import registry from "../toolPanelRegistry";
  *  - configured+discovered + no companion: excluded (silent)
  */
 export function useToolPanels(statuses: Map<string, ToolServerStatus>): AvailablePanel[] {
+  const [dynamicMetaByServerKey, setDynamicMetaByServerKey] = useState<Map<string, ToolPanelMeta>>(new Map());
+  const requestedMetaKeys = useRef<Set<string>>(new Set());
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadDynamicMeta = async () => {
+      for (const entry of registry) {
+        const { serverKey, matchStrategy, loadMeta } = entry;
+        if (requestedMetaKeys.current.has(serverKey)) continue;
+
+        const hasMatchingStatus =
+          matchStrategy === "prefix"
+            ? [...statuses.keys()].some((k) => k.startsWith(serverKey))
+            : statuses.has(serverKey);
+
+        if (!hasMatchingStatus) continue;
+
+        requestedMetaKeys.current.add(serverKey);
+
+        try {
+          const loadedMeta = await loadMeta();
+          if (cancelled) return;
+
+          setDynamicMetaByServerKey((prev) => {
+            if (prev.has(serverKey)) return prev;
+            const next = new Map(prev);
+            next.set(serverKey, loadedMeta);
+            return next;
+          });
+        } catch {
+          requestedMetaKeys.current.delete(serverKey);
+        }
+      }
+    };
+
+    void loadDynamicMeta();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [statuses]);
+
   return useMemo(() => {
     const panels: AvailablePanel[] = [];
 
@@ -30,14 +82,15 @@ export function useToolPanels(statuses: Map<string, ToolServerStatus>): Availabl
 
     // Walk the registry and produce an AvailablePanel per entry.
     for (const entry of registry) {
-      const { meta, load } = entry;
+      const { serverKey, matchStrategy, load } = entry;
+      const resolvedMeta = dynamicMetaByServerKey.get(serverKey);
 
       // Find all matching server keys.
       const matchingKeys: string[] =
-        meta.matchStrategy === "prefix"
-          ? [...statuses.keys()].filter((k) => k.startsWith(meta.serverKey))
-          : statuses.has(meta.serverKey)
-            ? [meta.serverKey]
+        matchStrategy === "prefix"
+          ? [...statuses.keys()].filter((k) => k.startsWith(serverKey))
+          : statuses.has(serverKey)
+            ? [serverKey]
             : [];
 
       if (matchingKeys.length === 0) continue;
@@ -53,12 +106,12 @@ export function useToolPanels(statuses: Map<string, ToolServerStatus>): Availabl
       }
 
       const hasErrors = Object.keys(errors).length > 0;
-      const panelKey = meta.matchStrategy === "prefix" ? matchingKeys[0]! : meta.serverKey;
+      const panelKey = matchStrategy === "prefix" ? matchingKeys[0]! : serverKey;
 
       panels.push({
         panelKey,
-        label: meta.label,
-        description: meta.description,
+        label: resolvedMeta?.label ?? toFallbackLabel(serverKey),
+        description: resolvedMeta?.description ?? "Open tool panel",
         status: hasErrors ? "error" : "ok",
         instanceKeys: matchingKeys,
         errors,
@@ -80,5 +133,5 @@ export function useToolPanels(statuses: Map<string, ToolServerStatus>): Availabl
     }
 
     return panels;
-  }, [statuses]);
+  }, [statuses, dynamicMetaByServerKey]);
 }

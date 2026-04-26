@@ -1,13 +1,7 @@
 import React from "react";
-import type { ToolPanelMeta, ToolPanelProps } from "./types.js";
+import type { ToolPanelProps } from "./types.js";
 import { ImapStatusDrawer } from "./ImapStatusDrawer.js";
-
-export const meta: ToolPanelMeta = {
-  serverKey: "imap-",
-  matchStrategy: "prefix",
-  label: "IMAP",
-  description: "Monitor IMAP crawl indexing progress",
-};
+export { meta } from "./meta.js";
 
 function ImapPanel(props: ToolPanelProps) {
   return (

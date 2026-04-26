@@ -9,10 +9,14 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./meta": {
+      "import": "./dist/meta.js",
+      "types": "./dist/meta.d.ts"
     }
   },
   "scripts": {
-    "build": "tsup src/index.tsx --format esm --dts --out-dir dist",
+    "build": "tsup src/index.tsx src/meta.ts --format esm --dts --out-dir dist",
     "typecheck": "tsc --noEmit",
     "clean": "rm -rf dist"
   },

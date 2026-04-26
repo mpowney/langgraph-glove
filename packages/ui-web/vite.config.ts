@@ -45,6 +45,9 @@ export default defineConfig({
   resolve: {
     alias: {
       "@langgraph-glove/ui-shared": path.resolve(__dirname, "../ui-shared/src/index.ts"),
+      "@langgraph-glove/tool-imap-ui/meta": path.resolve(__dirname, "../tool-imap-ui/src/meta.ts"),
+      "@langgraph-glove/tool-memory-ui/meta": path.resolve(__dirname, "../tool-memory-ui/src/meta.ts"),
+      "@langgraph-glove/tool-config-ui/meta": path.resolve(__dirname, "../tool-config-ui/src/meta.ts"),
       "@langgraph-glove/tool-imap-ui": path.resolve(__dirname, "../tool-imap-ui/src/index.tsx"),
       "@langgraph-glove/tool-memory-ui": path.resolve(__dirname, "../tool-memory-ui/src/index.tsx"),
       "@langgraph-glove/tool-config-ui": path.resolve(__dirname, "../tool-config-ui/src/index.tsx"),

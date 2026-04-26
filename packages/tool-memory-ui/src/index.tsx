@@ -1,12 +1,6 @@
-import type { ToolPanelMeta, ToolPanelProps } from "./types.js";
+import type { ToolPanelProps } from "./types.js";
 import { MemoryAdmin } from "./MemoryAdmin.js";
-
-export const meta: ToolPanelMeta = {
-  serverKey: "memory",
-  matchStrategy: "exact",
-  label: "Memory",
-  description: "Manage stored memories",
-};
+export { meta } from "./meta.js";
 
 function MemoryPanel(props: ToolPanelProps) {
   const memoryToolUrl = props.adminApiBaseUrl

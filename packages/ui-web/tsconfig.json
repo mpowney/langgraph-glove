@@ -9,6 +9,9 @@
     "baseUrl": ".",
     "paths": {
       "@langgraph-glove/ui-shared": ["../ui-shared/src/index.ts"],
+      "@langgraph-glove/tool-imap-ui/meta": ["../tool-imap-ui/src/meta.ts"],
+      "@langgraph-glove/tool-memory-ui/meta": ["../tool-memory-ui/src/meta.ts"],
+      "@langgraph-glove/tool-config-ui/meta": ["../tool-config-ui/src/meta.ts"],
       "@langgraph-glove/tool-imap-ui": ["../tool-imap-ui/src/index.tsx"],
       "@langgraph-glove/tool-memory-ui": ["../tool-memory-ui/src/index.tsx"],
       "@langgraph-glove/tool-config-ui": ["../tool-config-ui/src/index.tsx"]
