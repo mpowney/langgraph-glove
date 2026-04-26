@@ -74,6 +74,8 @@ export async function handleDockerHealth(
 
   if (daemon?.ok) {
     lines.push(`- **Daemon:** ✅ Running (${daemon.detail})`);
+  } else if (cli?.ok === false || daemon === undefined) {
+    lines.push("- **Daemon:** ⏭️ Skipped (Docker CLI not found)");
   } else {
     lines.push("- **Daemon:** ❌ Not reachable — the docker daemon does not appear to be running.");
   }
