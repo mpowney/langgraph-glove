@@ -1,10 +1,11 @@
 import { launchToolServer } from "@langgraph-glove/tool-server";
 import { screenshotToolMetadata, handleScreenshot } from "./tools/ScreenshotTool";
 import { getContentToolMetadata, handleGetContent } from "./tools/GetContentTool";
-import { closeBrowser } from "./browser";
+import { checkBrowserHealth, closeBrowser } from "./browser";
 
 const server = await launchToolServer({
   toolKey: "browse",
+  healthCheck: () => checkBrowserHealth(),
   register(server) {
     server.register(screenshotToolMetadata, handleScreenshot);
     server.register(getContentToolMetadata, handleGetContent);

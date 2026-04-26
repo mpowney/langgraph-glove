@@ -18,6 +18,30 @@ export interface RpcResponse {
   error?: string;
 }
 
+/** Structured dependency status reported by a tool health check. */
+export interface ToolHealthDependency {
+  /** Dependency name shown to operators. */
+  name: string;
+  /** Whether the dependency is currently available. */
+  ok: boolean;
+  /** Optional human-readable detail such as a version or path. */
+  detail?: string;
+  /** Optional severity for degraded-but-nonfatal checks. */
+  severity?: "error" | "warning";
+}
+
+/** Structured tool server health result returned by the reserved health RPC. */
+export interface ToolHealthResult {
+  /** Overall tool health. */
+  ok: boolean;
+  /** Short status summary for logs and dashboards. */
+  summary: string;
+  /** Individual dependency checks when relevant. */
+  dependencies: ToolHealthDependency[];
+  /** Time spent running the health check. */
+  latencyMs: number;
+}
+
 /** Metadata that a tool server exposes for introspection. */
 export interface ToolMetadata {
   /** Unique tool name — must match the name used when registering the handler. */
@@ -49,6 +73,9 @@ export type ContentUploadRpcMethod =
   | "__content_upload_chunk__"
   | "__content_upload_finalize__"
   | "__content_upload_abort__";
+
+/** Reserved RPC method name for tool health checks. */
+export type ToolHealthRpcMethod = "__healthcheck__";
 
 /** Runtime-injected tool auth payload used for content upload. */
 export interface ContentUploadAuthPayload {

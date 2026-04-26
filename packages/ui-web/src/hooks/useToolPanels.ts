@@ -18,8 +18,9 @@ function toFallbackLabel(serverKey: string): string {
  *
  * Rules:
  *  - configured+undiscovered: always included as status='error' (no load fn)
- *  - configured+discovered + has companion: included as status='ok' with load fn
- *  - configured+discovered + no companion: excluded (silent)
+ *  - configured+unhealthy: included as status='error' (no load fn)
+ *  - configured+discovered+healthy + has companion: included as status='ok' with load fn
+ *  - configured+discovered+healthy + no companion: excluded (silent)
  */
 export function useToolPanels(statuses: Map<string, ToolServerStatus>): AvailablePanel[] {
   const [dynamicMetaByServerKey, setDynamicMetaByServerKey] = useState<Map<string, ToolPanelMeta>>(new Map());
@@ -73,6 +74,8 @@ export function useToolPanels(statuses: Map<string, ToolServerStatus>): Availabl
     for (const [key, status] of statuses) {
       if (!status.discovered) {
         failedKeys.set(key, status.error ?? "Not discovered");
+      } else if (status.healthy === false) {
+        failedKeys.set(key, status.healthError ?? status.health?.summary ?? "Health check failed");
       }
     }
 
@@ -102,6 +105,8 @@ export function useToolPanels(statuses: Map<string, ToolServerStatus>): Availabl
         const s = statuses.get(k);
         if (s && !s.discovered) {
           errors[k] = s.error ?? "Not discovered";
+        } else if (s?.healthy === false) {
+          errors[k] = s.healthError ?? s.health?.summary ?? "Health check failed";
         }
       }
 

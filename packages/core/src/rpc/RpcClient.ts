@@ -1,4 +1,4 @@
-import type { ToolMetadata } from "./RpcProtocol";
+import type { ToolHealthResult, ToolMetadata } from "./RpcProtocol";
 
 /**
  * Abstract base class for RPC clients that connect to a remote tool server.
@@ -39,5 +39,11 @@ export abstract class RpcClient {
   async listTools(): Promise<ToolMetadata[]> {
     const result = await this.call("__introspect__", {});
     return result as ToolMetadata[];
+  }
+
+  /** Retrieve the server health report exposed by the reserved health RPC. */
+  async checkHealth(): Promise<ToolHealthResult> {
+    const result = await this.call("__healthcheck__", {});
+    return result as ToolHealthResult;
   }
 }

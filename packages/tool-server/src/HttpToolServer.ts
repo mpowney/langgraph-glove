@@ -68,6 +68,14 @@ export class HttpToolServer extends ToolServer {
     });
 
     // Health check
-    this.app.get("/health", (_req, res) => res.json({ status: "ok" }));
+    this.app.get("/health", async (_req, res): Promise<void> => {
+      console.log(`[HttpToolServer] Received health request`);
+      const result = await this.dispatch({ id: "healthcheck", method: "__healthcheck__", params: {} });
+      if (result.error) {
+        res.status(500).json({ ok: false, error: result.error });
+        return;
+      }
+      res.json(result.result);
+    });
   }
 }

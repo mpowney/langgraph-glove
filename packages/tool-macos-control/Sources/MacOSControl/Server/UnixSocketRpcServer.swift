@@ -251,6 +251,14 @@ final class UnixSocketRpcServer {
             }
             return RpcResponse(id: req.id, result: allMetadata, error: nil)
         }
+
+        if req.method == "__healthcheck__" {
+            let health = await runToolHealthCheck(
+                peekabooMcpBridge: peekabooMcpBridge,
+                peekabooBaseCommand: peekabooBaseCommand
+            )
+            return RpcResponse(id: req.id, result: health.toJSON(), error: nil)
+        }
         
         // Forward Peekaboo tool calls to the MCP bridge
         if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {

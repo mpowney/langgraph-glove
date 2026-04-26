@@ -1,4 +1,5 @@
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
+import type { ToolHealthResult } from "@langgraph-glove/tool-server";
 import { v4 as uuidv4 } from "uuid";
 
 const SESSION_TIMEOUT_MS = 5 * 60 * 1_000; // 5 minutes
@@ -119,3 +120,38 @@ export class SessionManager {
 
 /** Singleton session manager shared across all tools. */
 export const sessionManager = new SessionManager();
+
+export async function checkSessionBrowserHealth(): Promise<Omit<ToolHealthResult, "latencyMs">> {
+  let probeBrowser: Browser | null = null;
+  try {
+    probeBrowser = await chromium.launch({ headless: true });
+    return {
+      ok: true,
+      summary: `Chromium is available (${probeBrowser.version()})`,
+      dependencies: [
+        {
+          name: "chromium",
+          ok: true,
+          detail: probeBrowser.version(),
+        },
+      ],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      ok: false,
+      summary: "Chromium is not available",
+      dependencies: [
+        {
+          name: "chromium",
+          ok: false,
+          detail: message,
+        },
+      ],
+    };
+  } finally {
+    if (probeBrowser) {
+      await probeBrowser.close().catch(() => undefined);
+    }
+  }
+}

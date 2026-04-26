@@ -19,6 +19,7 @@ import {
   AttachmentProcessorRegistry,
   createDefaultAttachmentProcessors,
 } from "./attachments/AttachmentProcessors";
+import type { ToolHealthResult } from "@langgraph-glove/tool-server";
 
 const execFile = promisify(execFileCallback);
 
@@ -345,6 +346,46 @@ export class ImapIndexService {
         });
       }, this.settings.pollIntervalMs);
     }
+  }
+
+  async checkHealth(): Promise<Omit<ToolHealthResult, "latencyMs">> {
+    if (!this.settings.attachment.enabled) {
+      return {
+        ok: true,
+        summary: "Attachment indexing is disabled; no external PDF dependencies required",
+        dependencies: [],
+      };
+    }
+
+    const dependencies: ToolHealthResult["dependencies"] = [];
+    for (const binary of ["pdftotext", "pdftoppm"]) {
+      try {
+        const { stdout } = await execFile("which", [binary], { maxBuffer: 64 * 1024 }) as {
+          stdout: string;
+          stderr: string;
+        };
+        dependencies.push({
+          name: binary,
+          ok: true,
+          detail: stdout.trim(),
+        });
+      } catch {
+        dependencies.push({
+          name: binary,
+          ok: false,
+          detail: `${binary} is not installed or not available on PATH.`,
+        });
+      }
+    }
+
+    const ok = dependencies.every((dependency) => dependency.ok || dependency.severity === "warning");
+    return {
+      ok,
+      summary: ok
+        ? "PDF extraction dependencies are available"
+        : "Missing PDF extraction dependencies for attachment indexing",
+      dependencies,
+    };
   }
 
   async stop(): Promise<void> {

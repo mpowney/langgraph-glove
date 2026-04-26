@@ -104,6 +104,20 @@ async function main(): Promise<void> {
     toolKey,
     configDir,
     secretsDir,
+    healthCheck: async () => {
+      const tools = await client.listTools();
+      return {
+        ok: true,
+        summary: `MCP endpoint reachable (${tools.length} tool(s) listed)`,
+        dependencies: [
+          {
+            name: "mcp-endpoint",
+            ok: true,
+            detail: mcp.endpoint,
+          },
+        ],
+      };
+    },
     register(server) {
       for (const tool of registered) {
         server.register(tool.metadata, async (params) => {

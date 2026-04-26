@@ -1,7 +1,14 @@
-import type { ToolMetadata, RpcRequest, RpcResponse } from "./RpcProtocol";
+import type {
+  ToolHealthResult,
+  ToolMetadata,
+  RpcRequest,
+  RpcResponse,
+} from "./RpcProtocol";
 
 /** Async function that handles a single tool invocation. */
 export type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
+/** Async function that reports health for a tool server. */
+export type ToolHealthCheck = () => Promise<Omit<ToolHealthResult, "latencyMs"> | ToolHealthResult>;
 
 /**
  * Abstract base class for remote tool servers.
@@ -30,6 +37,7 @@ export type ToolHandler = (params: Record<string, unknown>) => Promise<unknown>;
 export abstract class ToolServer {
   private readonly handlers = new Map<string, ToolHandler>();
   private readonly toolMetadata = new Map<string, ToolMetadata>();
+  private healthCheck?: ToolHealthCheck;
 
   /**
    * Register a tool handler with its metadata.
@@ -44,11 +52,38 @@ export abstract class ToolServer {
     return this;
   }
 
+  /** Register an optional server-level health check. */
+  setHealthCheck(healthCheck: ToolHealthCheck): this {
+    this.healthCheck = healthCheck;
+    return this;
+  }
+
   /** Start the server and begin accepting connections. */
   abstract start(): Promise<void>;
 
   /** Stop the server and release resources. */
   abstract stop(): Promise<void>;
+
+  /** Run the server health check or return a default healthy result. */
+  async runHealthCheck(): Promise<ToolHealthResult> {
+    const startedAt = Date.now();
+
+    if (!this.healthCheck) {
+      return {
+        ok: true,
+        summary: "ok",
+        dependencies: [],
+        latencyMs: Date.now() - startedAt,
+      };
+    }
+
+    const result = await this.healthCheck();
+    const latencyMs = "latencyMs" in result ? result.latencyMs : Date.now() - startedAt;
+    return {
+      ...result,
+      latencyMs,
+    };
+  }
 
   /**
    * Dispatch an incoming RPC request to the appropriate handler.
@@ -60,6 +95,10 @@ export abstract class ToolServer {
     try {
       if (request.method === "__introspect__") {
         return { id: request.id, result: Array.from(this.toolMetadata.values()) };
+      }
+
+      if (request.method === "__healthcheck__") {
+        return { id: request.id, result: await this.runHealthCheck() };
       }
 
       const handler = this.handlers.get(request.method);

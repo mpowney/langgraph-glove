@@ -8,7 +8,7 @@
  */
 
 import { launchToolServer } from "@langgraph-glove/tool-server";
-import { dockerHealthToolMetadata, handleDockerHealth } from "./tools/DockerHealthTool.js";
+import { checkDockerHealth, dockerHealthToolMetadata, handleDockerHealth } from "./tools/DockerHealthTool.js";
 import { createContainerToolMetadata, handleCreateContainer } from "./tools/CreateContainerTool.js";
 import { execContainerToolMetadata, handleExecContainer } from "./tools/ExecContainerTool.js";
 import { containerTtlToolMetadata, handleContainerTtl } from "./tools/ContainerTtlTool.js";
@@ -21,6 +21,7 @@ const adminApiUrl = process.env["GLOVE_ADMIN_API_URL"] ?? "http://127.0.0.1:8081
 
 const server = await launchToolServer({
   toolKey: "docker",
+  healthCheck: () => checkDockerHealth(),
   register(server) {
     server.register(dockerHealthToolMetadata, handleDockerHealth);
     server.register(createContainerToolMetadata, (params) => handleCreateContainer(params, adminApiUrl));

@@ -45,7 +45,13 @@ export type { BlueBubblesChannelConfig } from "./channels/BlueBubblesChannel";
 export { RpcClient } from "./rpc/RpcClient";
 export { UnixSocketRpcClient } from "./rpc/UnixSocketRpcClient";
 export { HttpRpcClient } from "./rpc/HttpRpcClient";
-export type { RpcRequest, RpcResponse, ToolMetadata } from "./rpc/RpcProtocol";
+export type {
+  RpcRequest,
+  RpcResponse,
+  ToolHealthDependency,
+  ToolHealthResult,
+  ToolMetadata,
+} from "./rpc/RpcProtocol";
 
 // Content upload + storage
 export { ContentStore } from "./content/ContentStore";

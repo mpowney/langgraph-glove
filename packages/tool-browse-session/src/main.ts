@@ -3,10 +3,11 @@ import { openToolMetadata, handleOpen } from "./tools/OpenTool";
 import { getFieldsToolMetadata, handleGetFields } from "./tools/GetFieldsTool";
 import { submitFormToolMetadata, handleSubmitForm } from "./tools/SubmitFormTool";
 import { closeToolMetadata, handleClose } from "./tools/CloseTool";
-import { sessionManager } from "./SessionManager";
+import { checkSessionBrowserHealth, sessionManager } from "./SessionManager";
 
 const server = await launchToolServer({
   toolKey: "browse-session",
+  healthCheck: () => checkSessionBrowserHealth(),
   register(server) {
     server.register(openToolMetadata, handleOpen);
     server.register(getFieldsToolMetadata, handleGetFields);
