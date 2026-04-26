@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback, useEffect } from "react";
+import React, { useMemo, useState, useCallback, useEffect, lazy, Suspense } from "react";
 import {
   FluentProvider,
   makeStyles,
@@ -18,18 +18,17 @@ import { AppHeader } from "./components/AppHeader";
 import { ChatArea } from "./components/chat/ChatArea";
 import { InputBar } from "./components/chat/InputBar";
 import { ConversationBrowser } from "./components/ConversationBrowser";
-import { MemoryAdmin } from "./components/MemoryAdmin";
 import { ToolsPanel } from "./components/ToolsPanel";
-import { ConfigAdmin } from "./components/ConfigAdmin";
 import { ContentBrowser } from "./components/ContentBrowser";
 import { AuthGate } from "./components/AuthGate";
 import { ControlPanel } from "./components/ControlPanel";
-import { ImapStatusDrawer } from "./components/imap";
-import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
 import { createUuid } from "./uuid";
 import { AllowedLinkProtocolsProvider } from "./contexts/AllowedLinkProtocolsContext";
 import { useAllowedLinkProtocols } from "./hooks/useAllowedLinkProtocols";
+import { useToolServerStatus } from "./hooks/useToolServerStatus";
+import { useToolPanels } from "./hooks/useToolPanels";
+import type { AvailablePanel } from "./types";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
@@ -152,14 +151,12 @@ function App() {
     () => localStorage.getItem(SHOW_SYSTEM_MESSAGES_KEY) !== "false",
   );
   const [browserOpen, setBrowserOpen] = useState(false);
-  const [memoryAdminOpen, setMemoryAdminOpen] = useState(false);
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
-  const [configAdminOpen, setConfigAdminOpen] = useState(false);
   const [contentBrowserOpen, setContentBrowserOpen] = useState(false);
-  const [imapStatusDrawerOpen, setImapStatusDrawerOpen] = useState(false);
+  const [activeToolPanelKey, setActiveToolPanelKey] = useState<string | null>(null);
+  const [activeToolPanelSnapshot, setActiveToolPanelSnapshot] = useState<AvailablePanel | null>(null);
   const [contentRouteRef, setContentRouteRef] = useState<string | null>(null);
   const [controlPanelOpen, setControlPanelOpen] = useState(false);
-  const [memoryAvailable, setMemoryAvailable] = useState(false);
   const [pendingConversationSwitchId, setPendingConversationSwitchId] = useState<string | null>(null);
 
   const setShowAllPersisted = useCallback((value: boolean) => {
@@ -242,35 +239,19 @@ function App() {
     [messages, myConversationId],
   );
   const inputDisabled = status !== "connected" || isStreaming;
-  const configuredToolsBaseUrl = (import.meta.env.VITE_TOOLS_URL as string | undefined)?.trim() ?? "";
-  const legacyMemoryToolUrl = (import.meta.env.VITE_MEMORY_TOOL_URL as string | undefined)?.trim() ?? "";
-  // Use the generic tools route in dev; in production prefer a generic tools base
-  // and keep VITE_MEMORY_TOOL_URL as a backward-compatible fallback.
-  const memoryToolUrl = import.meta.env.DEV
-    ? "/api/tools/_memory"
-    : configuredToolsBaseUrl
-      ? `${configuredToolsBaseUrl.replace(/\/$/, "")}/_memory`
-      : legacyMemoryToolUrl;
-  const configToolUrl = import.meta.env.DEV
-    ? "/api/tools/_config"
-    : configuredToolsBaseUrl
-      ? `${configuredToolsBaseUrl.replace(/\/$/, "")}/_config`
-      : "";
+  const toolStatus = useToolServerStatus();
+  const toolPanels = useToolPanels(toolStatus.statuses);
 
   useEffect(() => {
-    let active = true;
-
-    const checkMemoryAvailability = async () => {
-      const health = await checkMemoryToolAvailability(memoryToolUrl, auth.token ?? undefined);
-      if (!active) return;
-      setMemoryAvailable(health.available);
-    };
-
-    void checkMemoryAvailability();
+    const loadStatus = toolStatus.load;
+    void loadStatus(adminApiBaseUrl, auth.token ?? undefined);
+    const timer = window.setInterval(() => {
+      void loadStatus(adminApiBaseUrl, auth.token ?? undefined);
+    }, 15_000);
     return () => {
-      active = false;
+      window.clearInterval(timer);
     };
-  }, [memoryToolUrl, auth.token]);
+  }, [toolStatus.load, adminApiBaseUrl, auth.token]);
 
   useEffect(() => {
     let active = true;
@@ -348,6 +329,24 @@ function App() {
   const handleCancelSwitchConversation = useCallback(() => {
     setPendingConversationSwitchId(null);
   }, []);
+
+  const handleOpenToolPanel = useCallback((panelKey: string) => {
+    const panel = toolPanels.find((entry) => entry.panelKey === panelKey);
+    if (!panel?.load) return;
+    setActiveToolPanelSnapshot(panel);
+    setActiveToolPanelKey(panelKey);
+  }, [toolPanels]);
+
+  const handleCloseToolPanel = useCallback(() => {
+    setActiveToolPanelKey(null);
+    setActiveToolPanelSnapshot(null);
+  }, []);
+
+  const ActiveToolPanelComponent = useMemo(() => {
+    const loader = activeToolPanelSnapshot?.load ?? null;
+    if (!loader) return null;
+    return lazy(loader);
+  }, [activeToolPanelSnapshot?.load]);
 
   if (authApiBaseUrl !== null && (auth.loading || !auth.authenticated || auth.promptPasskeySetup || auth.promptPrivilegeTokenSetup)
   ) {
@@ -438,48 +437,28 @@ function App() {
               replaceWithContentHashRoute(contentRef);
             }}
           />
-          <MemoryAdmin
-            open={memoryAdminOpen}
-            onClose={() => setMemoryAdminOpen(false)}
-            memoryToolUrl={memoryToolUrl}
-            authToken={auth.token ?? undefined}
-            personalToken={personalToken}
-          />
-          <ConfigAdmin
-            open={configAdminOpen}
-            onClose={() => setConfigAdminOpen(false)}
-            configToolUrl={configToolUrl}
-            adminApiUrl={adminApiBaseUrl}
-            privilegeGrantId={privilegedGrantId}
-            conversationId={conversationId}
-            authToken={auth.token ?? undefined}
-            privilegedAccessActive={Boolean(privilegedGrantId)}
-            privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
-            onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
-            onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
-            onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
-            privilegeTokenRegistered={auth.privilegeTokenRegistered}
-            onRegisterPrivilegeToken={registerPrivilegeToken}
-            authError={auth.error}
-            passkeyEnabled={auth.passkeyRegistered}
-          />
-          <ImapStatusDrawer
-            open={imapStatusDrawerOpen}
-            onClose={() => setImapStatusDrawerOpen(false)}
-            apiBaseUrl={adminApiBaseUrl}
-            authToken={auth.token ?? undefined}
-            privilegedGrantId={privilegedGrantId}
-            conversationId={conversationId}
-            privilegedAccessActive={Boolean(privilegedGrantId)}
-            privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
-            onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
-            onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
-            onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
-            privilegeTokenRegistered={auth.privilegeTokenRegistered}
-            onRegisterPrivilegeToken={registerPrivilegeToken}
-            authError={auth.error}
-            passkeyEnabled={auth.passkeyRegistered}
-          />
+          {ActiveToolPanelComponent && (
+            <Suspense fallback={null}>
+              <ActiveToolPanelComponent
+                open={Boolean(activeToolPanelSnapshot)}
+                onClose={handleCloseToolPanel}
+                adminApiBaseUrl={adminApiBaseUrl}
+                authToken={auth.token ?? undefined}
+                personalToken={personalToken}
+                privilegedGrantId={privilegedGrantId}
+                conversationId={conversationId}
+                privilegedAccessActive={Boolean(privilegedGrantId)}
+                privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+                onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+                onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+                onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+                privilegeTokenRegistered={auth.privilegeTokenRegistered}
+                onRegisterPrivilegeToken={registerPrivilegeToken}
+                authError={auth.error}
+                passkeyEnabled={auth.passkeyRegistered}
+              />
+            </Suspense>
+          )}
           <ControlPanel
             open={controlPanelOpen}
             onClose={() => setControlPanelOpen(false)}
@@ -499,10 +478,8 @@ function App() {
               replaceWithContentHashRoute(null);
             }}
             onOpenToolsPanel={() => setToolsPanelOpen(true)}
-            onOpenImapStatusPanel={() => setImapStatusDrawerOpen(true)}
-            onOpenConfigAdmin={() => setConfigAdminOpen(true)}
-            onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
-            memoryAdminEnabled={memoryAvailable}
+            toolPanels={toolPanels}
+            onOpenToolPanel={handleOpenToolPanel}
           />
         </div>
         <Dialog

@@ -16,6 +16,7 @@ import type { AuthService, AuthenticatedUser } from "../auth/AuthService";
 import { UnixSocketRpcClient } from "../rpc/UnixSocketRpcClient";
 import type {
   ToolDefinition,
+  ToolServerStatus,
   AgentCapabilityEntry,
   AgentCapabilityRegistry,
   RpcRequest,
@@ -337,6 +338,8 @@ export interface AdminApiConfig {
   toolsConfig?: Record<string, ToolServerEntry>;
   /** Discovered tool definitions served by `GET /api/tools/registry`. */
   toolRegistry?: ToolDefinition[];
+  /** Per-server bootstrap status served by `GET /api/tools/server-status`. */
+  toolServerStatuses?: Map<string, ToolServerStatus>;
   /** Agent capability entries served by `GET /api/agents/capabilities`. */
   agentCapabilities?: AgentCapabilityEntry[];
   /** Loaded runtime config used to build topology payloads. */
@@ -430,6 +433,7 @@ export class AdminApi {
   private readonly authService?: AuthService;
   private readonly toolsConfig: Record<string, ToolServerEntry>;
   private readonly toolRegistry: ToolDefinition[];
+  private readonly toolServerStatuses: Map<string, ToolServerStatus>;
   private readonly agentCapabilities: AgentCapabilityEntry[];
   private readonly config?: GloveConfig;
   private readonly invokeAgent?: AdminApiConfig["invokeAgent"];
@@ -455,6 +459,7 @@ export class AdminApi {
     this.authService = config.authService;
     this.toolsConfig = config.toolsConfig ?? {};
     this.toolRegistry = config.toolRegistry ?? [];
+    this.toolServerStatuses = config.toolServerStatuses ?? new Map();
     this.agentCapabilities = config.agentCapabilities ?? [];
     this.config = config.config;
     this.invokeAgent = config.invokeAgent;
@@ -1103,6 +1108,18 @@ export class AdminApi {
     this.app.get("/api/tools/registry", (req, res) => {
       if (!requireAuth(req, res)) return;
       res.json(this.toolRegistry);
+    });
+
+    // -----------------------------------------------------------------------
+    // Tool server status — per-server bootstrap discovery results
+    // -----------------------------------------------------------------------
+    this.app.get("/api/tools/server-status", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      const payload: Record<string, ToolServerStatus> = {};
+      for (const [key, status] of this.toolServerStatuses) {
+        payload[key] = status;
+      }
+      res.json(payload);
     });
 
     // -----------------------------------------------------------------------

@@ -1,5 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 function resolveApiTarget(): string {
   const wsUrl = process.env["VITE_WS_URL"];
@@ -37,6 +42,14 @@ const toolsTarget = resolveToolsTarget();
 
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      "@langgraph-glove/ui-shared": path.resolve(__dirname, "../ui-shared/src/index.ts"),
+      "@langgraph-glove/tool-imap-ui": path.resolve(__dirname, "../tool-imap-ui/src/index.tsx"),
+      "@langgraph-glove/tool-memory-ui": path.resolve(__dirname, "../tool-memory-ui/src/index.tsx"),
+      "@langgraph-glove/tool-config-ui": path.resolve(__dirname, "../tool-config-ui/src/index.tsx"),
+    },
+  },
   build: {
     outDir: "dist/app",
     emptyOutDir: true,

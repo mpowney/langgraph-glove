@@ -19,6 +19,10 @@
     "clean": "rm -rf dist"
   },
   "dependencies": {
+    "@langgraph-glove/tool-config-ui": "workspace:*",
+    "@langgraph-glove/tool-imap-ui": "workspace:*",
+    "@langgraph-glove/tool-memory-ui": "workspace:*",
+    "@langgraph-glove/ui-shared": "workspace:*",
     "@fluentui/react-components": "^9.62.0",
     "@fluentui/react-icons": "^2.0.286",
     "@monaco-editor/react": "4.7.0",

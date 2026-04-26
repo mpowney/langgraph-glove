@@ -6,6 +6,13 @@
     "moduleResolution": "bundler",
     "module": "ESNext",
     "target": "ES2022",
+    "baseUrl": ".",
+    "paths": {
+      "@langgraph-glove/ui-shared": ["../ui-shared/src/index.ts"],
+      "@langgraph-glove/tool-imap-ui": ["../tool-imap-ui/src/index.tsx"],
+      "@langgraph-glove/tool-memory-ui": ["../tool-memory-ui/src/index.tsx"],
+      "@langgraph-glove/tool-config-ui": ["../tool-config-ui/src/index.tsx"]
+    },
     "strict": true,
     "skipLibCheck": true,
     "noEmit": true,

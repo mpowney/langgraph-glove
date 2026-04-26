@@ -46,6 +46,7 @@ import { WebChannel } from "../channels/WebChannel";
 import type { OutgoingContentItem } from "../channels/Channel";
 import type {
   ToolDefinition,
+  ToolServerStatus,
   AgentCapabilityEntry,
   ContentUploadAuthPayload,
   RpcRequest,
@@ -112,6 +113,8 @@ export class Gateway extends EventEmitter {
   private toolRegistry: ToolDefinition[] = [];
   /** Mapping of tools.json server key -> discovered tool names. */
   private discoveredToolNamesByServer: Record<string, string[]> = {};
+  /** Per-server bootstrap status, populated after `discoverTools()`. */
+  private toolServerStatuses = new Map<string, ToolServerStatus>();
   /** Agent capability entries, populated after `buildAgentGraph()`. */
   private agentCapabilities: AgentCapabilityEntry[] = [];
   /** Tool set discovered during startup, reused to build non-default graphs on demand. */
@@ -123,6 +126,10 @@ export class Gateway extends EventEmitter {
 
   get state(): GatewayState {
     return this._state;
+  }
+
+  get toolServerStatusMap(): Map<string, ToolServerStatus> {
+    return this.toolServerStatuses;
   }
 
   private setState(state: GatewayState): void {
@@ -288,6 +295,7 @@ export class Gateway extends EventEmitter {
         config: this.config,
         toolsConfig: this.config.tools as Record<string, ToolServerEntry>,
         toolRegistry: this.toolRegistry,
+        toolServerStatuses: this.toolServerStatuses,
         agentCapabilities: this.agentCapabilities,
         invokeAgent: async ({ conversationId, prompt, graphKey, personalToken, observability }) => {
           return this.invokeConfiguredGraph({
@@ -1131,6 +1139,7 @@ export class Gateway extends EventEmitter {
     const allTools: StructuredToolInterface[] = [getToolPayloadRefTool];
     const imapInstances: ImapRouterInstanceConfig[] = [];
     this.discoveredToolNamesByServer = {};
+    this.toolServerStatuses = new Map();
 
     // Seed registry with the built-in tool payload ref tool so it appears in the catalog.
     this.toolRegistry = [
@@ -1144,6 +1153,11 @@ export class Gateway extends EventEmitter {
     const entries = Object.entries(toolsConfig).filter(
       ([, entry]) => entry.enabled !== false,
     );
+
+    // Seed every enabled server as configured-but-not-yet-discovered.
+    for (const [name] of entries) {
+      this.toolServerStatuses.set(name, { key: name, configured: true, discovered: false, toolNames: [] });
+    }
 
     await Promise.all(
       entries.map(async ([name, entry]): Promise<void> => {
@@ -1173,11 +1187,20 @@ export class Gateway extends EventEmitter {
 
           const tools = await RemoteTool.fromServer(client);
           allTools.push(...tools);
-          this.discoveredToolNamesByServer[name] = [...new Set(tools.map((tool) => tool.name))];
+          const toolNames = [...new Set(tools.map((tool) => tool.name))];
+          this.discoveredToolNamesByServer[name] = toolNames;
           this.toolRegistry.push(...metadata);
+          this.toolServerStatuses.set(name, { key: name, configured: true, discovered: true, toolNames });
           logger.info(`Tool server "${name}": ${tools.length} tool(s) discovered`);
         } catch (err) {
           this.discoveredToolNamesByServer[name] = [];
+          this.toolServerStatuses.set(name, {
+            key: name,
+            configured: true,
+            discovered: false,
+            error: err instanceof Error ? err.message : String(err),
+            toolNames: [],
+          });
           logger.error(`Failed to connect to tool server "${name}"`, err);
         }
         return;
@@ -1188,8 +1211,15 @@ export class Gateway extends EventEmitter {
       const imapRouter = createImapRouterTools(imapInstances);
       allTools.push(...imapRouter.tools);
       this.toolRegistry.push(...imapRouter.toolDefinitions);
+      const imapToolNames = [...imapRouter.toolNames];
       for (const instance of imapInstances) {
-        this.discoveredToolNamesByServer[instance.key] = [...imapRouter.toolNames];
+        this.discoveredToolNamesByServer[instance.key] = imapToolNames;
+        this.toolServerStatuses.set(instance.key, {
+          key: instance.key,
+          configured: true,
+          discovered: true,
+          toolNames: imapToolNames,
+        });
       }
       logger.info(
         `IMAP router: ${imapRouter.tools.length} canonical tool(s) synthesized across ${imapInstances.length} instance(s)`,

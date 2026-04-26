@@ -84,6 +84,23 @@ export interface ContentUploadAuthPayload {
  */
 export type ToolDefinition = ToolMetadata;
 
+/**
+ * Per-server discovery status reported by `GET /api/tools/server-status`.
+ * Covers every entry enabled in `tools.json`; populated during gateway bootstrap.
+ */
+export interface ToolServerStatus {
+  /** The `tools.json` server key. */
+  key: string;
+  /** Always `true` — only configured servers are included in this payload. */
+  configured: boolean;
+  /** Successfully connected and introspected during gateway bootstrap. */
+  discovered: boolean;
+  /** Error message from a failed bootstrap attempt (only set when `discovered = false`). */
+  error?: string;
+  /** Tool names discovered from this server. Empty when discovery failed. */
+  toolNames: string[];
+}
+
 /** Describes a single agent/sub-agent entry returned to UI clients. */
 export interface AgentCapabilityEntry {
   /** Agent key (e.g. `"default"`, `"memory"`, `"researcher"`). */

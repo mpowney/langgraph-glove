@@ -1,0 +1,42 @@
+{
+  "name": "@langgraph-glove/tool-memory-ui",
+  "version": "0.1.0",
+  "description": "UI panel companion for the memory tool server — lazy-loaded by ui-web ControlPanel",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.tsx --format esm --dts --out-dir dist",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@langgraph-glove/ui-shared": "workspace:*"
+  },
+  "peerDependencies": {
+    "@fluentui/react-components": ">=9",
+    "@fluentui/react-icons": ">=2",
+    "react": ">=18",
+    "react-markdown": ">=9",
+    "rehype-sanitize": ">=6",
+    "remark-gfm": ">=4"
+  },
+  "devDependencies": {
+    "@fluentui/react-components": "^9.62.0",
+    "@fluentui/react-icons": "^2.0.286",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.23",
+    "react": "^18.3.1",
+    "react-markdown": "^9.0.3",
+    "rehype-sanitize": "^6.0.0",
+    "remark-gfm": "^4.0.1",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}
