@@ -48,6 +48,14 @@ export interface ContentItem {
   previewPath?: string;
 }
 
+export interface ToolReference {
+  url: string;
+  title: string;
+  kind?: string;
+  sourceTool?: string;
+  metadata?: Record<string, unknown>;
+}
+
 export type ServerMessage =
   | {
       type: "chunk";
@@ -58,6 +66,7 @@ export type ServerMessage =
       streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
       contentItems?: ContentItem[];
+      references?: ToolReference[];
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
@@ -71,12 +80,15 @@ export type ServerMessage =
       toolName?: string;
       /** Optional uploaded content references associated with the tool event. */
       contentItems?: ContentItem[];
+      /** Optional normalized URL/title references associated with this tool event. */
+      references?: ToolReference[];
     }
   | {
       type: "done";
       conversationId: string;
       checkpoint?: CheckpointMetadata;
       contentItems?: ContentItem[];
+      references?: ToolReference[];
     }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
@@ -144,6 +156,8 @@ export interface ChatEntry {
   toolName?: string;
   /** Optional uploaded content references associated with this entry. */
   contentItems?: ContentItem[];
+  /** Optional normalized URL/title references associated with this entry. */
+  references?: ToolReference[];
 }
 
 export type ConnectionStatus = "connecting" | "connected" | "disconnected" | "error";

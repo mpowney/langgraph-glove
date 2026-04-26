@@ -1,10 +1,24 @@
 import type { ToolMetadata } from "@langgraph-glove/tool-server";
 import { getBrowser } from "../browser";
 
+interface ToolReference {
+  url: string;
+  title: string;
+  kind: "web";
+  sourceTool: "web_get_content";
+}
+
+interface WebGetContentResult {
+  url: string;
+  selector?: string;
+  content: string;
+  references: ToolReference[];
+}
+
 export const getContentToolMetadata: ToolMetadata = {
   name: "web_get_content",
   description:
-    "Use {name} to fetch a web page and return its text content. By default returns the text of the " +
+    "Use {name} to fetch a web page and return its text content plus normalized references. By default returns the text of the " +
     "entire page body. If a CSS selector is provided, returns the text of the first " +
     "matching element only.",
   parameters: {
@@ -25,7 +39,7 @@ export const getContentToolMetadata: ToolMetadata = {
   },
 };
 
-export async function handleGetContent(params: Record<string, unknown>): Promise<string> {
+export async function handleGetContent(params: Record<string, unknown>): Promise<WebGetContentResult> {
   const url = params["url"] as string;
   const selector = params["selector"] as string | undefined;
 
@@ -39,15 +53,33 @@ export async function handleGetContent(params: Record<string, unknown>): Promise
     const page = await context.newPage();
     await page.goto(url, { waitUntil: "networkidle", timeout: 30_000 });
 
+    const title = await page.title();
+
+    let content: string;
+
     if (selector) {
       const element = await page.$(selector);
       if (!element) {
         throw new Error(`web_get_content: no element found matching selector "${selector}"`);
       }
-      return (await element.innerText()).trim();
+      content = (await element.innerText()).trim();
+    } else {
+      content = (await page.innerText("body")).trim();
     }
 
-    return (await page.innerText("body")).trim();
+    return {
+      url,
+      ...(selector ? { selector } : {}),
+      content,
+      references: [
+        {
+          url,
+          title: title?.trim().length ? title : url,
+          kind: "web",
+          sourceTool: "web_get_content",
+        },
+      ],
+    };
   } finally {
     await context.close();
   }

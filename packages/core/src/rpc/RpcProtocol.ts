@@ -122,3 +122,20 @@ export interface ToolEventMetadata {
   /** Agent key that invoked or received this tool (when known). */
   agentKey?: string;
 }
+
+/**
+ * Normalized URL/title reference extracted from a tool response payload.
+ * This enables channels and UIs to render links consistently across tools.
+ */
+export interface ToolReference {
+  /** Fully qualified resource URL. */
+  url: string;
+  /** Human-readable title for display. */
+  title: string;
+  /** Optional resource category hint (e.g. web, email, memory). */
+  kind?: string;
+  /** Tool name that produced the reference. */
+  sourceTool?: string;
+  /** Optional, tool-specific metadata useful for debug/inspection UIs. */
+  metadata?: Record<string, unknown>;
+}

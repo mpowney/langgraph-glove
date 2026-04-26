@@ -6,10 +6,12 @@ import {
   AccordionHeader,
   AccordionItem,
   AccordionPanel,
+  Text,
 } from "@fluentui/react-components";
 import type { ChatEntry } from "../../../types";
 import { resolveDisplayTimestamp } from "../utils/dataFormatters";
 import { InlineContent } from "../content/InlineContent";
+import { LinkPill } from "../content/LinkPill";
 
 const useStyles = makeStyles({
   agentWrapper: {
@@ -62,6 +64,17 @@ const useStyles = makeStyles({
     backgroundColor: tokens.colorNeutralBackground1,
     boxShadow: tokens.shadow2,
     wordBreak: "break-word",
+  },
+  refsWrapper: {
+    marginTop: tokens.spacingVerticalS,
+    paddingTop: tokens.spacingVerticalXS,
+    borderTop: `1px solid ${tokens.colorNeutralStroke2}`,
+  },
+  refsRow: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: tokens.spacingHorizontalXS,
+    rowGap: tokens.spacingVerticalXXS,
   },
 });
 
@@ -119,6 +132,18 @@ export function SubAgentMessageRenderer({
                 <div className={styles.subAgentBubble}>
                   <InlineContent content={entry.content} />
                   {showCursor ? <span className={cursorClassName} aria-hidden /> : null}
+                  {entry.references && entry.references.length > 0 ? (
+                    <div className={styles.refsWrapper}>
+                      <Text block size={200}>References</Text>
+                      <div className={styles.refsRow}>
+                        {entry.references.map((ref) => (
+                          <LinkPill key={ref.url} href={ref.url}>
+                            {ref.title}
+                          </LinkPill>
+                        ))}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               </div>
             </AccordionPanel>

@@ -198,6 +198,179 @@ export type MemoriesConfig = z.infer<typeof MemoriesConfigSchema>;
 export const ToolTransportSchema = z.enum(["http", "unix-socket"]);
 export type ToolTransport = z.infer<typeof ToolTransportSchema>;
 
+export const McpAuthModeSchema = z.enum([
+  "bearer-static",
+  "api-key",
+  "basic",
+  "oauth-client-credentials",
+  "oauth-device-code",
+]);
+export type McpAuthMode = z.infer<typeof McpAuthModeSchema>;
+
+const McpBearerStaticAuthSchema = z.object({
+  mode: z.literal("bearer-static"),
+  token: z.string().min(1),
+});
+
+const McpApiKeyAuthSchema = z.object({
+  mode: z.literal("api-key"),
+  apiKey: z.string().min(1),
+  location: z.enum(["header", "query"]).optional(),
+  name: z.string().min(1).optional(),
+});
+
+const McpBasicAuthSchema = z.object({
+  mode: z.literal("basic"),
+  username: z.string().min(1),
+  password: z.string(),
+});
+
+const McpOAuthClientCredentialsAuthSchema = z.object({
+  mode: z.literal("oauth-client-credentials"),
+  tokenUrl: z.string().url(),
+  clientId: z.string().min(1),
+  clientSecret: z.string().min(1),
+  scope: z.string().optional(),
+  audience: z.string().optional(),
+  extraTokenParams: z.record(z.string(), z.string()).optional(),
+});
+
+const McpOAuthDeviceCodeAuthSchema = z.object({
+  mode: z.literal("oauth-device-code"),
+  deviceCodeUrl: z.string().url(),
+  tokenUrl: z.string().url(),
+  clientId: z.string().min(1),
+  clientSecret: z.string().optional(),
+  scope: z.string().optional(),
+  audience: z.string().optional(),
+  pollTimeoutMs: z.number().int().positive().optional(),
+  extraDeviceCodeParams: z.record(z.string(), z.string()).optional(),
+  extraTokenParams: z.record(z.string(), z.string()).optional(),
+});
+
+export const McpAuthConfigSchema = z.discriminatedUnion("mode", [
+  McpBearerStaticAuthSchema,
+  McpApiKeyAuthSchema,
+  McpBasicAuthSchema,
+  McpOAuthClientCredentialsAuthSchema,
+  McpOAuthDeviceCodeAuthSchema,
+]);
+export type McpAuthConfig = z.infer<typeof McpAuthConfigSchema>;
+
+export const McpServerConfigSchema = z.object({
+  endpoint: z.string().url(),
+  toolNamePrefix: z.string().min(1).optional(),
+  requestTimeoutMs: z.number().int().positive().optional(),
+  customHeaders: z.record(z.string(), z.string()).optional(),
+  auth: McpAuthConfigSchema.optional(),
+});
+export type McpServerConfig = z.infer<typeof McpServerConfigSchema>;
+
+export const ToolLauncherConfigSchema = z.object({
+  packageName: z.string().min(1).optional(),
+  packageDir: z.string().min(1).optional(),
+  commandTemplate: z.string().min(1).optional(),
+  args: z.array(z.string()).optional(),
+  env: z.record(z.string(), z.string()).optional(),
+});
+export type ToolLauncherConfig = z.infer<typeof ToolLauncherConfigSchema>;
+
+export const ImapAuthConfigSchema = z
+  .object({
+    user: z.string().min(1),
+    password: z.string().optional(),
+    accessToken: z.string().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.password && !value.accessToken) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["password"],
+        message: 'Either "password" or "accessToken" must be provided for IMAP auth',
+      });
+    }
+  });
+export type ImapAuthConfig = z.infer<typeof ImapAuthConfigSchema>;
+
+export const ImapServerConfigSchema = z.object({
+  host: z.string().min(1),
+  port: z.number().int().positive().optional(),
+  secure: z.boolean().optional(),
+  tlsRejectUnauthorized: z.boolean().optional(),
+  auth: ImapAuthConfigSchema,
+});
+export type ImapServerConfig = z.infer<typeof ImapServerConfigSchema>;
+
+export const ImapChunkingConfigSchema = z
+  .object({
+    chunkSize: z.number().int().positive().optional(),
+    chunkOverlap: z.number().int().min(0).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.chunkSize !== undefined
+      && value.chunkOverlap !== undefined
+      && value.chunkOverlap >= value.chunkSize
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["chunkOverlap"],
+        message: '"chunkOverlap" must be smaller than "chunkSize"',
+      });
+    }
+  });
+export type ImapChunkingConfig = z.infer<typeof ImapChunkingConfigSchema>;
+
+export const ImapVectorConfigSchema = z.object({
+  embeddingModelKey: z.string().optional(),
+  indexingStrategy: z.enum(["immediate", "deferred"]).optional(),
+  embeddingBatchSize: z.number().int().positive().optional(),
+  chunking: ImapChunkingConfigSchema.optional(),
+});
+export type ImapVectorConfig = z.infer<typeof ImapVectorConfigSchema>;
+
+export const ImapCrawlConfigSchema = z
+  .object({
+    mode: z.enum(["manual", "startup", "continuous-sync"]).optional(),
+    folders: z.array(z.string().min(1)).optional(),
+    allFoldersExcept: z.array(z.string().min(1)).optional(),
+    batchSize: z.number().int().positive().optional(),
+    pollIntervalMs: z.number().int().positive().optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.folders?.length && value.allFoldersExcept?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["allFoldersExcept"],
+        message: 'Use either "folders" or "allFoldersExcept", not both',
+      });
+    }
+  });
+export type ImapCrawlConfig = z.infer<typeof ImapCrawlConfigSchema>;
+
+export const ImapAttachmentConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  mimeAllowList: z.array(z.string().min(1)).optional(),
+  maxFileSizeBytes: z.number().int().positive().optional(),
+  parallelism: z.number().int().positive().optional(),
+  ocrModelKey: z.string().min(1).optional(),
+  photoCaptionModelKey: z.string().min(1).optional(),
+  pdfMaxOcrPages: z.number().int().positive().optional(),
+});
+export type ImapAttachmentConfig = z.infer<typeof ImapAttachmentConfigSchema>;
+
+export const ImapToolConfigSchema = z.object({
+  displayName: z.string().min(1).optional(),
+  server: ImapServerConfigSchema,
+  mailbox: z.string().min(1).optional(),
+  crawl: ImapCrawlConfigSchema.optional(),
+  vector: ImapVectorConfigSchema.optional(),
+  attachment: ImapAttachmentConfigSchema.optional(),
+  indexDbPath: z.string().optional(),
+  urlTemplate: z.string().optional(),
+});
+export type ImapToolConfig = z.infer<typeof ImapToolConfigSchema>;
+
 /** A single tool server entry in tools.json. */
 export const ToolServerEntrySchema = z.object({
   /** Transport type. */
@@ -208,6 +381,12 @@ export const ToolServerEntrySchema = z.object({
   socketName: z.string().optional(),
   /** Whether this tool server is enabled. Defaults to `true` if omitted. */
   enabled: z.boolean().optional(),
+  /** Optional launch overrides used by tool-manager for this tool instance. */
+  launcher: ToolLauncherConfigSchema.optional(),
+  /** Optional MCP client runtime configuration for MCP-backed tool servers. */
+  mcp: McpServerConfigSchema.optional(),
+  /** Optional IMAP crawler/index configuration for IMAP-backed tool servers. */
+  imap: ImapToolConfigSchema.optional(),
 });
 export type ToolServerEntry = z.infer<typeof ToolServerEntrySchema>;
 
@@ -338,11 +517,15 @@ export const ToolManagerConfigSchema = z.object({
   /** In-memory per-tool log buffer size shown in TUI. */
   maxLogLines: z.number().int().positive().optional(),
 }).superRefine((value, ctx) => {
-  if (value.commandTemplate && !value.commandTemplate.includes("{tool}")) {
+  if (
+    value.commandTemplate
+    && !value.commandTemplate.includes("{tool}")
+    && !value.commandTemplate.includes("{packageName}")
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["commandTemplate"],
-      message: 'toolManager.commandTemplate must include the "{tool}" token',
+      message: 'toolManager.commandTemplate must include "{tool}" or "{packageName}" token',
     });
   }
 });

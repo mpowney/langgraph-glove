@@ -20,10 +20,10 @@
     "start:cli": "node dist/main.js --cli",
     "start:web": "node dist/main.js",
     "start:web-only": "node dist/main.js --no-cli",
-    "debug": "tsx --inspect src/main.ts",
-    "debug:cli": "tsx --inspect src/main.ts --cli",
-    "debug:web": "tsx --inspect src/main.ts",
-    "debug:web-only": "tsx --inspect src/main.ts --no-cli"
+    "debug": "node ../../scripts/debug-gateway.mjs",
+    "debug:cli": "node ../../scripts/debug-gateway.mjs --cli",
+    "debug:web": "node ../../scripts/debug-gateway.mjs",
+    "debug:web-only": "node ../../scripts/debug-gateway.mjs --no-cli"
   },
   "dependencies": {
     "@langchain/core": "^1.1.36",

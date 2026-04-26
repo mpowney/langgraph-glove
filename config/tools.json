@@ -71,5 +71,134 @@
     "url": "http://localhost:3018",
     "socketName": "docker",
     "enabled": true
+  },
+  "mcp-github": {
+    "transport": "unix-socket",
+    "socketName": "mcp-github",
+    "enabled": false,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-mcp-client"
+    },
+    "mcp": {
+      "endpoint": "http://localhost:3301/mcp",
+      "toolNamePrefix": "mcp_github__",
+      "auth": {
+        "mode": "bearer-static",
+        "token": "{SECRET:mcp-github-token}"
+      }
+    }
+  },
+  "mcp-atlassian": {
+    "transport": "unix-socket",
+    "socketName": "mcp-atlassian",
+    "enabled": false,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-mcp-client"
+    },
+    "mcp": {
+      "endpoint": "http://localhost:3302/mcp",
+      "toolNamePrefix": "mcp_atlassian__",
+      "auth": {
+        "mode": "oauth-client-credentials",
+        "tokenUrl": "https://example.com/oauth/token",
+        "clientId": "{SECRET:mcp-atlassian-client-id}",
+        "clientSecret": "{SECRET:mcp-atlassian-client-secret}",
+        "scope": "read:all"
+      }
+    }
+  },
+  "imap-gmail": {
+    "transport": "unix-socket",
+    "socketName": "imap-gmail",
+    "enabled": true,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-imap"
+    },
+    "imap": {
+      "displayName": "Gmail",
+      "server": {
+        "host": "{SECRET:imap-gmail-host}",
+        "port": 993,
+        "secure": true,
+        "tlsRejectUnauthorized": true,
+        "auth": {
+          "user": "{SECRET:imap-gmail-user}",
+          "password": "{SECRET:imap-gmail-password}"
+        }
+      },
+      "mailbox": "INBOX",
+      "crawl": {
+        "mode": "continuous-sync",
+        "allFoldersExcept": ["Trash", "Spam", "Junk", "[Google Mail].All Mail"],
+        "batchSize": 2000,
+        "pollIntervalMs": 300000
+      },
+      "vector": {
+        "embeddingModelKey": "imap-embed",
+        "indexingStrategy": "immediate",
+        "embeddingBatchSize": 4,
+        "chunking": {
+          "chunkSize": 900,
+          "chunkOverlap": 140
+        }
+      },
+      "attachment": {
+        "enabled": true,
+        "maxFileSizeBytes": 104857600,
+        "parallelism": 2,
+        "ocrModelKey": "imap-ocr-vision",
+        "photoCaptionModelKey": "imap-photo-caption",
+        "pdfMaxOcrPages": 8
+      },
+      "indexDbPath": "data/imap-gmail.sqlite",
+      "urlTemplate": "https://mail.google.com/mail/u/0/#search/rfc822msgid%3A%3C{messageId}%3E"
+    }
+  },
+  "imap-icloud": {
+    "transport": "unix-socket",
+    "socketName": "imap-icloud",
+    "enabled": true,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-imap"
+    },
+    "imap": {
+      "displayName": "iCloud",
+      "server": {
+        "host": "{SECRET:imap-icloud-host}",
+        "port": 993,
+        "secure": true,
+        "tlsRejectUnauthorized": true,
+        "auth": {
+          "user": "{SECRET:imap-icloud-user}",
+          "password": "{SECRET:imap-icloud-password}"
+        }
+      },
+      "mailbox": "INBOX",
+      "crawl": {
+        "mode": "continuous-sync",
+        "allFoldersExcept": ["Trash", "Spam", "Junk"],
+        "batchSize": 2000,
+        "pollIntervalMs": 300000
+      },
+      "vector": {
+        "embeddingModelKey": "imap-embed",
+        "indexingStrategy": "immediate",
+        "embeddingBatchSize": 4,
+        "chunking": {
+          "chunkSize": 900,
+          "chunkOverlap": 140
+        }
+      },
+      "attachment": {
+        "enabled": true,
+        "maxFileSizeBytes": 104857600,
+        "parallelism": 2,
+        "ocrModelKey": "imap-ocr-vision",
+        "photoCaptionModelKey": "imap-photo-caption",
+        "pdfMaxOcrPages": 8
+      },
+      "indexDbPath": "data/imap-icloud.sqlite",
+      "urlTemplate": "message://%3C{messageId}%3E"
+    }
   }
 }

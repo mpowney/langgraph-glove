@@ -18,6 +18,7 @@ import {
   Chat24Regular,
   Dismiss24Regular,
   DocumentEdit24Regular,
+  Mail24Regular,
   Wrench24Regular,
 } from "@fluentui/react-icons";
 
@@ -74,6 +75,7 @@ interface ControlPanelProps {
   onOpenBrowser: () => void;
   onOpenContentBrowser: () => void;
   onOpenToolsPanel: () => void;
+  onOpenImapStatusPanel: () => void;
   onOpenConfigAdmin: () => void;
   onOpenMemoryAdmin: () => void;
   memoryAdminEnabled: boolean;
@@ -94,6 +96,7 @@ export function ControlPanel({
   onOpenBrowser,
   onOpenContentBrowser,
   onOpenToolsPanel,
+  onOpenImapStatusPanel,
   onOpenConfigAdmin,
   onOpenMemoryAdmin,
   memoryAdminEnabled,
@@ -219,6 +222,18 @@ export function ControlPanel({
                 className={styles.panelButton}
               >
                 Tools &amp; agents
+              </CompoundButton>
+              <CompoundButton
+                appearance="subtle"
+                icon={<Mail24Regular />}
+                secondaryContent="Monitor IMAP crawl indexing progress"
+                onClick={() => {
+                  onClose();
+                  onOpenImapStatusPanel();
+                }}
+                className={styles.panelButton}
+              >
+                IMAP crawl status
               </CompoundButton>
               <CompoundButton
                 appearance="subtle"

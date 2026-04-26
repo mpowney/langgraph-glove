@@ -1,7 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
-import { ConfigLoader, type ToolManagerConfig } from "@langgraph-glove/config";
+import {
+  ConfigLoader,
+  type ToolManagerConfig,
+  type ToolServerEntry,
+} from "@langgraph-glove/config";
 import type {
   RuntimeFileEntry,
   ToolDescriptor,
@@ -10,7 +14,7 @@ import type {
   ToolStatusListener,
 } from "./types.js";
 
-const DEFAULT_COMMAND_TEMPLATE = "pnpm --filter @langgraph-glove/tool-{tool} dev";
+const DEFAULT_COMMAND_TEMPLATE = "pnpm --filter {packageName} dev";
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 3000;
 const DEFAULT_FORCE_KILL_TIMEOUT_MS = 1500;
 const DEFAULT_MAX_LOG_LINES = 1200;
@@ -69,7 +73,7 @@ export class ToolProcessSupervisor {
 
     const tools = Object.entries(config.tools)
       .filter(([, entry]) => entry.enabled !== false)
-      .map(([toolKey]) => this.buildDescriptor(toolKey));
+      .map(([toolKey, entry]) => this.buildDescriptor(toolKey, entry));
 
     tools.sort((a, b) => a.key.localeCompare(b.key));
 
@@ -153,6 +157,7 @@ export class ToolProcessSupervisor {
         TOOL_PACKAGE_DIR: state.tool.packageDir,
         GLOVE_CONFIG_DIR: this.configDir,
         GLOVE_SECRETS_DIR: this.secretsDir,
+        ...state.tool.env,
       },
       detached: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -283,19 +288,36 @@ export class ToolProcessSupervisor {
     };
   }
 
-  private buildDescriptor(toolKey: string): ToolDescriptor {
-    const packageDir = path.join(this.rootDir, "packages", `tool-${toolKey}`);
-    const packageName = `@langgraph-glove/tool-${toolKey}`;
-    const command = this.renderCommand(this.settings.commandTemplate, toolKey, packageDir, packageName);
+  private buildDescriptor(toolKey: string, entry: ToolServerEntry): ToolDescriptor {
+    const packageName = entry.launcher?.packageName ?? `@langgraph-glove/tool-${toolKey}`;
+    const packageDir = this.resolvePackageDir(packageName, entry.launcher?.packageDir);
+    const commandTemplate = entry.launcher?.commandTemplate ?? this.settings.commandTemplate;
+    const command = this.renderCommand(commandTemplate, toolKey, packageDir, packageName);
+    const commandWithArgs = this.appendArgs(command, entry.launcher?.args ?? []);
     const logPath = path.join(this.logsDir, `tool-${toolKey}.log`);
 
     return {
       key: toolKey,
       packageDir,
       packageName,
-      command,
+      command: commandWithArgs,
       logPath,
+      env: entry.launcher?.env ?? {},
     };
+  }
+
+  private resolvePackageDir(packageName: string, override?: string): string {
+    if (override) {
+      if (path.isAbsolute(override)) return override;
+      return path.resolve(this.rootDir, override);
+    }
+
+    if (packageName.startsWith("@langgraph-glove/")) {
+      const relativeName = packageName.slice("@langgraph-glove/".length);
+      return path.join(this.rootDir, "packages", relativeName);
+    }
+
+    return path.join(this.rootDir, "packages", packageName);
   }
 
   private renderCommand(template: string, toolKey: string, packageDir: string, packageName: string): string {
@@ -303,6 +325,17 @@ export class ToolProcessSupervisor {
       .replaceAll("{tool}", toolKey)
       .replaceAll("{packageDir}", packageDir)
       .replaceAll("{packageName}", packageName);
+  }
+
+  private appendArgs(command: string, args: string[]): string {
+    if (args.length === 0) return command;
+    const rendered = args.map((arg) => this.shellQuote(arg)).join(" ");
+    return `${command} ${rendered}`;
+  }
+
+  private shellQuote(value: string): string {
+    if (value.length === 0) return "''";
+    return `'${value.replaceAll("'", `'\\''`)}'`;
   }
 
   private updateState(state: ToolRuntimeState, patch: Partial<ToolRuntimeState>): void {

@@ -19,6 +19,28 @@
     "baseUrl": "{SECRET:ollama-host}",
     "think": false
   },
+  "imap-embed": {
+    "provider": "ollama",
+    "model": "nomic-embed-text:latest",
+    "baseUrl": "{SECRET:ollama-host}",
+    "think": false
+  },
+  "imap-ocr-vision": {
+    "provider": "ollama",
+    "model": "glm-ocr:latest",
+    "baseUrl": "{SECRET:ollama-host}",
+    "temperature": 0,
+    "think": false,
+    "keepAlive": "20m"
+  },
+  "imap-photo-caption": {
+    "provider": "ollama",
+    "model": "llava:13b",
+    "baseUrl": "{SECRET:ollama-host}",
+    "temperature": 0,
+    "think": false,
+    "keepAlive": "20m"
+  },
   "powerful": {
     "provider": "anthropic",
     "model": "claude-sonnet-4-20250514",

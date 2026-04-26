@@ -24,9 +24,12 @@ import { ConfigAdmin } from "./components/ConfigAdmin";
 import { ContentBrowser } from "./components/ContentBrowser";
 import { AuthGate } from "./components/AuthGate";
 import { ControlPanel } from "./components/ControlPanel";
+import { ImapStatusDrawer } from "./components/imap";
 import { checkMemoryToolAvailability } from "./hooks/memoryRpcClient";
 import { useAuth } from "./hooks/useAuth";
 import { createUuid } from "./uuid";
+import { AllowedLinkProtocolsProvider } from "./contexts/AllowedLinkProtocolsContext";
+import { useAllowedLinkProtocols } from "./hooks/useAllowedLinkProtocols";
 
 const PERSONAL_TOKEN_KEY = "glove_personal_token";
 const CONVERSATION_ID_KEY = "glove_conversation_id";
@@ -118,6 +121,7 @@ function App() {
   const adminApiBaseUrl = import.meta.env.DEV ? "" : resolvedAdminApiBaseUrl;
   const authApiBaseUrl = adminApiBaseUrl;
   const auth = useAuth(authApiBaseUrl);
+  const allowedLinkProtocols = useAllowedLinkProtocols(auth.token ?? undefined);
   const [personalToken, setPersonalTokenState] = useState<string>(
     () => sessionStorage.getItem(PERSONAL_TOKEN_KEY) ?? "",
   );
@@ -152,6 +156,7 @@ function App() {
   const [toolsPanelOpen, setToolsPanelOpen] = useState(false);
   const [configAdminOpen, setConfigAdminOpen] = useState(false);
   const [contentBrowserOpen, setContentBrowserOpen] = useState(false);
+  const [imapStatusDrawerOpen, setImapStatusDrawerOpen] = useState(false);
   const [contentRouteRef, setContentRouteRef] = useState<string | null>(null);
   const [controlPanelOpen, setControlPanelOpen] = useState(false);
   const [memoryAvailable, setMemoryAvailable] = useState(false);
@@ -348,169 +353,191 @@ function App() {
   ) {
     return (
       <FluentProvider theme={theme}>
-        <AuthGate
-          loading={auth.loading}
-          setupRequired={auth.setupRequired}
-          forcePasskeySetup={auth.promptPasskeySetup}
-          passkeySetupRequired={auth.passkeySetupRequired}
-          forcePrivilegeTokenSetup={auth.promptPrivilegeTokenSetup}
-          minPasswordLength={auth.minPasswordLength}
-          passkeyRegistered={auth.passkeyRegistered}
-          privilegeTokenRegistered={auth.privilegeTokenRegistered}
-          error={auth.error}
-          onLogin={auth.login}
-          onSetup={auth.setup}
-          onLoginWithPasskey={auth.loginWithPasskey}
-          onRegisterPasskey={auth.registerPasskey}
-          onSkipPasskeySetup={auth.dismissPasskeySetupPrompt}
-          onRegisterPrivilegeToken={registerPrivilegeToken}
-          onSkipPrivilegeTokenSetup={auth.dismissPrivilegeTokenSetupPrompt}
-        />
+        <AllowedLinkProtocolsProvider protocols={allowedLinkProtocols}>
+          <AuthGate
+            loading={auth.loading}
+            setupRequired={auth.setupRequired}
+            forcePasskeySetup={auth.promptPasskeySetup}
+            passkeySetupRequired={auth.passkeySetupRequired}
+            forcePrivilegeTokenSetup={auth.promptPrivilegeTokenSetup}
+            minPasswordLength={auth.minPasswordLength}
+            passkeyRegistered={auth.passkeyRegistered}
+            privilegeTokenRegistered={auth.privilegeTokenRegistered}
+            error={auth.error}
+            onLogin={auth.login}
+            onSetup={auth.setup}
+            onLoginWithPasskey={auth.loginWithPasskey}
+            onRegisterPasskey={auth.registerPasskey}
+            onSkipPasskeySetup={auth.dismissPasskeySetupPrompt}
+            onRegisterPrivilegeToken={registerPrivilegeToken}
+            onSkipPrivilegeTokenSetup={auth.dismissPrivilegeTokenSetupPrompt}
+          />
+        </AllowedLinkProtocolsProvider>
       </FluentProvider>
     );
   }
 
   return (
     <FluentProvider theme={theme}>
-      <div className={styles.shell}>
-        <AppHeader
-          appInfo={appInfo}
-          conversationTitle={conversationTitles.get(myConversationId)}
-          status={status}
-          onOpenControlPanel={() => setControlPanelOpen(true)}
-          personalToken={personalToken}
-          onSetPersonalToken={setPersonalToken}
-          passkeyEnabled={auth.passkeyRegistered}
-          onGeneratePersonalTokenWithPasskey={auth.generatePersonalTokenWithPasskey}
-          privilegedAccessActive={Boolean(privilegedGrantId)}
-          privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
-          onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
-          onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
-          onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
-          privilegeTokenRegistered={auth.privilegeTokenRegistered}
-          onRegisterPrivilegeToken={registerPrivilegeToken}
-          authError={auth.error}
-        />
-        <ChatArea
-          messages={visibleMessages}
-          myConversationId={myConversationId}
-          showAll={showAll}
-          conversationTitles={conversationTitles}
-          showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
-          showInlineProcessingMessages={showInlineProcessingMessages}
-          showSystemMessages={showSystemMessages}
-          onRequestSwitchConversation={handleSwitchConversation}
-          modelContextWindowTokens={appInfo?.modelContextWindowTokens}
-        />
-        <InputBar onSend={sendMessage} disabled={inputDisabled} />
-        <ConversationBrowser
-          open={browserOpen}
-          onClose={() => setBrowserOpen(false)}
-          apiBaseUrl={adminApiBaseUrl}
-          authToken={auth.token ?? undefined}
-        />
-        <ToolsPanel
-          open={toolsPanelOpen}
-          onClose={() => setToolsPanelOpen(false)}
-          apiBaseUrl={adminApiBaseUrl}
-          authToken={auth.token ?? undefined}
-        />
-        <ContentBrowser
-          open={contentBrowserOpen}
-          onClose={() => {
-            setContentBrowserOpen(false);
-            setContentRouteRef(null);
-            clearContentHashRouteIfActive();
+      <AllowedLinkProtocolsProvider protocols={allowedLinkProtocols}>
+        <div className={styles.shell}>
+          <AppHeader
+            appInfo={appInfo}
+            conversationTitle={conversationTitles.get(myConversationId)}
+            status={status}
+            onOpenControlPanel={() => setControlPanelOpen(true)}
+            personalToken={personalToken}
+            onSetPersonalToken={setPersonalToken}
+            passkeyEnabled={auth.passkeyRegistered}
+            onGeneratePersonalTokenWithPasskey={auth.generatePersonalTokenWithPasskey}
+            privilegedAccessActive={Boolean(privilegedGrantId)}
+            privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+            onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+            onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+            onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+            privilegeTokenRegistered={auth.privilegeTokenRegistered}
+            onRegisterPrivilegeToken={registerPrivilegeToken}
+            authError={auth.error}
+          />
+          <ChatArea
+            messages={visibleMessages}
+            myConversationId={myConversationId}
+            showAll={showAll}
+            conversationTitles={conversationTitles}
+            showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
+            showInlineProcessingMessages={showInlineProcessingMessages}
+            showSystemMessages={showSystemMessages}
+            onRequestSwitchConversation={handleSwitchConversation}
+            modelContextWindowTokens={appInfo?.modelContextWindowTokens}
+          />
+          <InputBar onSend={sendMessage} disabled={inputDisabled} />
+          <ConversationBrowser
+            open={browserOpen}
+            onClose={() => setBrowserOpen(false)}
+            apiBaseUrl={adminApiBaseUrl}
+            authToken={auth.token ?? undefined}
+          />
+          <ToolsPanel
+            open={toolsPanelOpen}
+            onClose={() => setToolsPanelOpen(false)}
+            apiBaseUrl={adminApiBaseUrl}
+            authToken={auth.token ?? undefined}
+          />
+          <ContentBrowser
+            open={contentBrowserOpen}
+            onClose={() => {
+              setContentBrowserOpen(false);
+              setContentRouteRef(null);
+              clearContentHashRouteIfActive();
+            }}
+            apiBaseUrl={adminApiBaseUrl}
+            authToken={auth.token ?? undefined}
+            initialContentRef={contentRouteRef}
+            onSelectContentRef={(contentRef) => {
+              setContentRouteRef(contentRef);
+              replaceWithContentHashRoute(contentRef);
+            }}
+          />
+          <MemoryAdmin
+            open={memoryAdminOpen}
+            onClose={() => setMemoryAdminOpen(false)}
+            memoryToolUrl={memoryToolUrl}
+            authToken={auth.token ?? undefined}
+            personalToken={personalToken}
+          />
+          <ConfigAdmin
+            open={configAdminOpen}
+            onClose={() => setConfigAdminOpen(false)}
+            configToolUrl={configToolUrl}
+            adminApiUrl={adminApiBaseUrl}
+            privilegeGrantId={privilegedGrantId}
+            conversationId={conversationId}
+            authToken={auth.token ?? undefined}
+            privilegedAccessActive={Boolean(privilegedGrantId)}
+            privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+            onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+            onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+            onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+            privilegeTokenRegistered={auth.privilegeTokenRegistered}
+            onRegisterPrivilegeToken={registerPrivilegeToken}
+            authError={auth.error}
+            passkeyEnabled={auth.passkeyRegistered}
+          />
+          <ImapStatusDrawer
+            open={imapStatusDrawerOpen}
+            onClose={() => setImapStatusDrawerOpen(false)}
+            apiBaseUrl={adminApiBaseUrl}
+            authToken={auth.token ?? undefined}
+            privilegedGrantId={privilegedGrantId}
+            conversationId={conversationId}
+            privilegedAccessActive={Boolean(privilegedGrantId)}
+            privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
+            onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
+            onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
+            onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
+            privilegeTokenRegistered={auth.privilegeTokenRegistered}
+            onRegisterPrivilegeToken={registerPrivilegeToken}
+            authError={auth.error}
+            passkeyEnabled={auth.passkeyRegistered}
+          />
+          <ControlPanel
+            open={controlPanelOpen}
+            onClose={() => setControlPanelOpen(false)}
+            showAll={showAll}
+            onToggleShowAll={setShowAllPersisted}
+            showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
+            onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
+            showInlineProcessingMessages={showInlineProcessingMessages}
+            onToggleShowInlineProcessingMessages={setShowInlineProcessingMessagesPersisted}
+            showSystemMessages={showSystemMessages}
+            onToggleShowSystemMessages={setShowSystemMessagesPersisted}
+            onStartNewConversation={handleStartNewConversation}
+            onOpenBrowser={() => setBrowserOpen(true)}
+            onOpenContentBrowser={() => {
+              setContentBrowserOpen(true);
+              setContentRouteRef(null);
+              replaceWithContentHashRoute(null);
+            }}
+            onOpenToolsPanel={() => setToolsPanelOpen(true)}
+            onOpenImapStatusPanel={() => setImapStatusDrawerOpen(true)}
+            onOpenConfigAdmin={() => setConfigAdminOpen(true)}
+            onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
+            memoryAdminEnabled={memoryAvailable}
+          />
+        </div>
+        <Dialog
+          open={Boolean(pendingConversationSwitchId)}
+          onOpenChange={(_, data) => {
+            if (!data.open) {
+              handleCancelSwitchConversation();
+            }
           }}
-          apiBaseUrl={adminApiBaseUrl}
-          authToken={auth.token ?? undefined}
-          initialContentRef={contentRouteRef}
-          onSelectContentRef={(contentRef) => {
-            setContentRouteRef(contentRef);
-            replaceWithContentHashRoute(contentRef);
-          }}
-        />
-        <MemoryAdmin
-          open={memoryAdminOpen}
-          onClose={() => setMemoryAdminOpen(false)}
-          memoryToolUrl={memoryToolUrl}
-          authToken={auth.token ?? undefined}
-          personalToken={personalToken}
-        />
-        <ConfigAdmin
-          open={configAdminOpen}
-          onClose={() => setConfigAdminOpen(false)}
-          configToolUrl={configToolUrl}
-          adminApiUrl={adminApiBaseUrl}
-          privilegeGrantId={privilegedGrantId}
-          conversationId={conversationId}
-          authToken={auth.token ?? undefined}
-          privilegedAccessActive={Boolean(privilegedGrantId)}
-          privilegedAccessExpiresAt={privilegedExpiresAt ?? undefined}
-          onEnablePrivilegedAccessWithToken={activatePrivilegedAccessWithToken}
-          onEnablePrivilegedAccessWithPasskey={activatePrivilegedAccessWithPasskey}
-          onDisablePrivilegedAccess={() => { void disablePrivilegedAccess(); }}
-          privilegeTokenRegistered={auth.privilegeTokenRegistered}
-          onRegisterPrivilegeToken={registerPrivilegeToken}
-          authError={auth.error}
-          passkeyEnabled={auth.passkeyRegistered}
-        />
-        <ControlPanel
-          open={controlPanelOpen}
-          onClose={() => setControlPanelOpen(false)}
-          showAll={showAll}
-          onToggleShowAll={setShowAllPersisted}
-          showAccordionAndSubAgentMessages={showAccordionAndSubAgentMessages}
-          onToggleShowAccordionAndSubAgentMessages={setShowAccordionAndSubAgentMessagesPersisted}
-          showInlineProcessingMessages={showInlineProcessingMessages}
-          onToggleShowInlineProcessingMessages={setShowInlineProcessingMessagesPersisted}
-          showSystemMessages={showSystemMessages}
-          onToggleShowSystemMessages={setShowSystemMessagesPersisted}
-          onStartNewConversation={handleStartNewConversation}
-          onOpenBrowser={() => setBrowserOpen(true)}
-          onOpenContentBrowser={() => {
-            setContentBrowserOpen(true);
-            setContentRouteRef(null);
-            replaceWithContentHashRoute(null);
-          }}
-          onOpenToolsPanel={() => setToolsPanelOpen(true)}
-          onOpenConfigAdmin={() => setConfigAdminOpen(true)}
-          onOpenMemoryAdmin={() => setMemoryAdminOpen(true)}
-          memoryAdminEnabled={memoryAvailable}
-        />
-      </div>
-      <Dialog
-        open={Boolean(pendingConversationSwitchId)}
-        onOpenChange={(_, data) => {
-          if (!data.open) {
-            handleCancelSwitchConversation();
-          }
-        }}
-      >
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>Switch conversation?</DialogTitle>
-            <DialogContent>
-              <Text block>
-                {pendingConversationSwitchId
-                  ? `Switch to session ${formatSessionLabel(pendingConversationSwitchId)}?`
-                  : "Switch to this conversation?"}
-              </Text>
-              <Text block>
-                Future messages and actions will use that conversation context.
-              </Text>
-            </DialogContent>
-            <DialogActions>
-              <Button appearance="secondary" onClick={handleCancelSwitchConversation}>
-                Cancel
-              </Button>
-              <Button appearance="primary" onClick={handleConfirmSwitchConversation}>
-                Switch conversation
-              </Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+        >
+          <DialogSurface>
+            <DialogBody>
+              <DialogTitle>Switch conversation?</DialogTitle>
+              <DialogContent>
+                <Text block>
+                  {pendingConversationSwitchId
+                    ? `Switch to session ${formatSessionLabel(pendingConversationSwitchId)}?`
+                    : "Switch to this conversation?"}
+                </Text>
+                <Text block>
+                  Future messages and actions will use that conversation context.
+                </Text>
+              </DialogContent>
+              <DialogActions>
+                <Button appearance="secondary" onClick={handleCancelSwitchConversation}>
+                  Cancel
+                </Button>
+                <Button appearance="primary" onClick={handleConfirmSwitchConversation}>
+                  Switch conversation
+                </Button>
+              </DialogActions>
+            </DialogBody>
+          </DialogSurface>
+        </Dialog>
+      </AllowedLinkProtocolsProvider>
     </FluentProvider>
   );
 }

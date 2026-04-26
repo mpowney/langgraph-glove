@@ -20,7 +20,83 @@ import {
 import { estimatePromptContextUsage } from "./utils/promptAnalytics";
 import { splitContentWithImages } from "./utils/imageUtils";
 import { formatMessageTimestamp } from "./utils/dataFormatters";
-import type { ChatEntry } from "../../types";
+import type { ChatEntry, ToolReference } from "../../types";
+
+function normalizeToolReferences(value: unknown): ToolReference[] {
+  if (!Array.isArray(value)) return [];
+  const references: ToolReference[] = [];
+  for (const item of value) {
+    if (!isObject(item)) continue;
+    const url = typeof item.url === "string" ? item.url.trim() : "";
+    if (!url) continue;
+    const title = typeof item.title === "string" && item.title.trim().length > 0
+      ? item.title.trim()
+      : url;
+    references.push({
+      url,
+      title,
+      ...(typeof item.kind === "string" ? { kind: item.kind } : {}),
+      ...(typeof item.sourceTool === "string" ? { sourceTool: item.sourceTool } : {}),
+      ...(isObject(item.metadata) ? { metadata: item.metadata } : {}),
+    });
+  }
+  return references;
+}
+
+function mergeToolReferences(
+  first: ToolReference[] | undefined,
+  second: ToolReference[] | undefined,
+): ToolReference[] | undefined {
+  const merged = [...(first ?? []), ...(second ?? [])];
+  if (merged.length === 0) return undefined;
+  const unique = new Map<string, ToolReference>();
+  for (const ref of merged) {
+    const key = ref.url.trim();
+    if (!key) continue;
+    if (!unique.has(key)) {
+      unique.set(key, ref);
+    }
+  }
+  const values = [...unique.values()];
+  return values.length > 0 ? values : undefined;
+}
+
+function tryParseToolMessageEnvelope(value: unknown): {
+  toolName?: string;
+  toolContent?: string;
+  references?: ToolReference[];
+} {
+  if (!isObject(value) || !isObject(value.kwargs)) {
+    return {};
+  }
+  const kwargs = value.kwargs;
+  const envelopeToolName = typeof kwargs.name === "string" ? kwargs.name : undefined;
+  if (typeof kwargs.content !== "string") {
+    return {
+      ...(envelopeToolName ? { toolName: envelopeToolName } : {}),
+    };
+  }
+
+  let toolContent = kwargs.content;
+  let references: ToolReference[] | undefined;
+  try {
+    const parsedContent = JSON.parse(kwargs.content) as unknown;
+    if (isObject(parsedContent)) {
+      if (typeof parsedContent.content === "string") {
+        toolContent = parsedContent.content;
+      }
+      references = normalizeToolReferences((parsedContent as { references?: unknown }).references);
+    }
+  } catch {
+    // Keep raw kwargs.content when it is not JSON.
+  }
+
+  return {
+    ...(envelopeToolName ? { toolName: envelopeToolName } : {}),
+    toolContent,
+    ...(references ? { references } : {}),
+  };
+}
 
 const useStyles = makeStyles({
   // ── Wrapper / alignment ───────────────────────────────────────────────────
@@ -603,10 +679,20 @@ export function ChatMessage({
   if (entry.role === "tool-result") {
     let parsedToolName: string | undefined;
     let toolContent = entry.content;
+    let payloadReferences: ToolReference[] | undefined;
     try {
-      const parsed = JSON.parse(entry.content) as { name?: string; content?: string };
-      parsedToolName = parsed.name;
-      toolContent = parsed.content ?? toolContent;
+      const parsed = JSON.parse(entry.content) as unknown;
+      if (isObject(parsed)) {
+        const parsedPayload = parsed as { name?: string; content?: string; references?: unknown };
+        parsedToolName = parsedPayload.name;
+        toolContent = parsedPayload.content ?? toolContent;
+        payloadReferences = normalizeToolReferences(parsedPayload.references);
+
+        const envelope = tryParseToolMessageEnvelope(parsed);
+        parsedToolName = parsedToolName ?? envelope.toolName;
+        toolContent = envelope.toolContent ?? toolContent;
+        payloadReferences = mergeToolReferences(payloadReferences, envelope.references);
+      }
     } catch {
       // leave raw content as-is
     }
@@ -623,6 +709,7 @@ export function ChatMessage({
           ? "payload.name"
           : "none"));
     const toolNameDebugLine = `[debug tool-result] source=${toolNameDebugSource} entry=${entry.toolName ?? "<empty>"} meta=${entry.toolEventMetadata?.tool?.name ?? "<empty>"} payload=${parsedToolName ?? "<empty>"}`;
+    const references = mergeToolReferences(entry.references, payloadReferences);
     const renderContentRefs = () => {
       if (!entry.contentItems || entry.contentItems.length === 0) return null;
       return (
@@ -644,6 +731,21 @@ export function ChatMessage({
               </div>
             );
           })}
+        </div>
+      );
+    };
+    const renderReferences = () => {
+      if (!references || references.length === 0) return null;
+      return (
+        <div className={styles.contentRefsWrapper}>
+          <Text block className={styles.toolMetaDesc}>References</Text>
+          <div className={styles.agentAttachmentPillRow}>
+            {references.map((ref) => (
+              <LinkPill key={ref.url} href={ref.url}>
+                {ref.title}
+              </LinkPill>
+            ))}
+          </div>
         </div>
       );
     };
@@ -676,6 +778,7 @@ export function ChatMessage({
             {entry.toolEventMetadata && (
               <ToolMetaSection meta={entry.toolEventMetadata} />
             )}
+            {renderReferences()}
             {renderContentRefs()}
           </MessageAccordion>
         </div>
@@ -771,6 +874,18 @@ export function ChatMessage({
                     </LinkPill>
                   );
                 })}
+              </div>
+            </div>
+          )}
+          {entry.references && entry.references.length > 0 && (
+            <div className={styles.contentRefsWrapper}>
+              <Text block className={styles.toolMetaDesc}>References</Text>
+              <div className={styles.agentAttachmentPillRow}>
+                {entry.references.map((ref) => (
+                  <LinkPill key={ref.url} href={ref.url}>
+                    {ref.title}
+                  </LinkPill>
+                ))}
               </div>
             </div>
           )}

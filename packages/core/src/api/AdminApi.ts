@@ -133,6 +133,28 @@ export interface ContentItemView {
   deletedAt?: string;
 }
 
+interface ImapToolStatusEntry {
+  toolKey: string;
+  status?: Record<string, unknown>;
+  error?: string;
+}
+
+interface ImapRemainingEstimateEntry {
+  toolKey: string;
+  estimate?: Record<string, unknown>;
+  error?: string;
+}
+
+interface ImapInstanceSummary {
+  toolKey: string;
+  displayName?: string;
+  transport: "http" | "unix-socket";
+  enabled: boolean;
+  crawlMode: string;
+  indexingStrategy: string;
+  indexDbPath?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -473,6 +495,29 @@ export class AdminApi {
       const user = this.authService.authenticateSession(token);
       if (!user) {
         res.status(401).json({ error: "Invalid or expired session" });
+        return false;
+      }
+
+      return true;
+    };
+
+    const requirePrivilegeGrant = (req: express.Request, res: express.Response): boolean => {
+      if (!this.authService) {
+        res.status(503).json({ error: "Privilege grant validation is not available" });
+        return false;
+      }
+
+      const grantId = String(req.headers["x-privilege-grant-id"] ?? "").trim();
+      const conversationId = String(req.headers["x-conversation-id"] ?? "").trim();
+      if (!grantId || !conversationId) {
+        res.status(401).json({
+          error: "Privilege grant is required (provide X-Privilege-Grant-Id and X-Conversation-Id headers)",
+        });
+        return false;
+      }
+
+      if (!this.authService.validatePrivilegeGrant(grantId, conversationId)) {
+        res.status(401).json({ error: "Invalid or expired privilege grant" });
         return false;
       }
 
@@ -1090,6 +1135,381 @@ export class AdminApi {
       res.json(payload);
     });
 
+    this.app.get("/api/imap/instances", (req, res) => {
+      if (!requireAuth(req, res)) return;
+      if (!requirePrivilegeGrant(req, res)) return;
+
+      const instances = this.buildImapInstanceSummaries();
+      res.json({
+        generatedAt: new Date().toISOString(),
+        count: instances.length,
+        instances,
+      });
+    });
+
+    this.app.post("/api/imap/rpc", (req, res) => {
+      void (async () => {
+        if (!requireAuth(req, res)) return;
+        if (!requirePrivilegeGrant(req, res)) return;
+
+        const body = req.body as Partial<RpcRequest> | undefined;
+        if (!body || typeof body.id !== "string" || typeof body.method !== "string") {
+          res.status(400).json({ error: "Invalid RPC request: missing id or method" });
+          return;
+        }
+
+        const params =
+          body.params && typeof body.params === "object" && !Array.isArray(body.params)
+            ? (body.params as Record<string, unknown>)
+            : {};
+
+        const rpcRequest: RpcRequest = {
+          id: body.id,
+          method: body.method,
+          params,
+        };
+
+        try {
+          switch (rpcRequest.method) {
+            case "imap_list_tools": {
+              const tools = this.buildImapInstanceSummaries();
+              const response: RpcResponse = {
+                id: rpcRequest.id,
+                result: {
+                  generatedAt: new Date().toISOString(),
+                  count: tools.length,
+                  tools,
+                },
+              };
+              res.json(response);
+              return;
+            }
+
+            case "imap_get_crawl_status": {
+              const configured = this.listConfiguredImapTools();
+              const requestedToolKeys = Array.isArray(rpcRequest.params["toolKeys"])
+                ? (rpcRequest.params["toolKeys"] as unknown[])
+                    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                    .map((value) => value.trim())
+                : [];
+              const requestedSet = new Set(requestedToolKeys);
+
+              const targets = configured.filter(({ key }) => requestedSet.size === 0 || requestedSet.has(key));
+              const statuses = await Promise.all(
+                targets.map(async ({ key, entry }) => {
+                  try {
+                    const status = await this.callToolRpc(entry, "imap_status", {});
+                    if (!status || typeof status !== "object" || Array.isArray(status)) {
+                      return {
+                        toolKey: key,
+                        error: "imap_status returned a non-object payload",
+                      } satisfies ImapToolStatusEntry;
+                    }
+
+                    return {
+                      toolKey: key,
+                      status: status as Record<string, unknown>,
+                    } satisfies ImapToolStatusEntry;
+                  } catch (err) {
+                    return {
+                      toolKey: key,
+                      error: err instanceof Error ? err.message : String(err),
+                    } satisfies ImapToolStatusEntry;
+                  }
+                }),
+              );
+
+              const summary = statuses.reduce(
+                (acc, entry) => {
+                  if (!entry.status) {
+                    acc.failedTools += 1;
+                    return acc;
+                  }
+
+                  const crawlRuntime = entry.status["crawlRuntime"];
+                  if (crawlRuntime && typeof crawlRuntime === "object" && !Array.isArray(crawlRuntime)) {
+                    if ((crawlRuntime as Record<string, unknown>)["active"] === true) {
+                      acc.activeCrawls += 1;
+                    }
+                  }
+
+                  return acc;
+                },
+                {
+                  totalTools: statuses.length,
+                  failedTools: 0,
+                  activeCrawls: 0,
+                },
+              );
+
+              const response: RpcResponse = {
+                id: rpcRequest.id,
+                result: {
+                  generatedAt: new Date().toISOString(),
+                  tools: statuses,
+                  summary,
+                },
+              };
+              res.json(response);
+              return;
+            }
+
+            case "imap_get_remaining_estimate": {
+              const configured = this.listConfiguredImapTools();
+              const forceRefreshEstimate = rpcRequest.params["forceRefreshEstimate"] === true;
+              const requestedToolKeys = Array.isArray(rpcRequest.params["toolKeys"])
+                ? (rpcRequest.params["toolKeys"] as unknown[])
+                    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+                    .map((value) => value.trim())
+                : [];
+              const requestedSet = new Set(requestedToolKeys);
+
+              const targets = configured.filter(({ key }) => requestedSet.size === 0 || requestedSet.has(key));
+              const estimates = await Promise.all(
+                targets.map(async ({ key, entry }) => {
+                  try {
+                    const estimate = await this.callToolRpc(entry, "imap_estimate_remaining", {
+                      forceRefreshEstimate,
+                    });
+                    if (!estimate || typeof estimate !== "object" || Array.isArray(estimate)) {
+                      return {
+                        toolKey: key,
+                        error: "imap_estimate_remaining returned a non-object payload",
+                      } satisfies ImapRemainingEstimateEntry;
+                    }
+
+                    return {
+                      toolKey: key,
+                      estimate: estimate as Record<string, unknown>,
+                    } satisfies ImapRemainingEstimateEntry;
+                  } catch (err) {
+                    return {
+                      toolKey: key,
+                      error: err instanceof Error ? err.message : String(err),
+                    } satisfies ImapRemainingEstimateEntry;
+                  }
+                }),
+              );
+
+              const summary = estimates.reduce(
+                (acc, entry) => {
+                  if (!entry.estimate) {
+                    acc.failedTools += 1;
+                    return acc;
+                  }
+
+                  const remaining = entry.estimate["remainingEmails"];
+                  if (typeof remaining === "number" && Number.isFinite(remaining)) {
+                    acc.estimatedRemainingEmails += remaining;
+                    acc.toolsWithEstimate += 1;
+                  }
+
+                  return acc;
+                },
+                {
+                  totalTools: estimates.length,
+                  failedTools: 0,
+                  toolsWithEstimate: 0,
+                  estimatedRemainingEmails: 0,
+                },
+              );
+
+              const response: RpcResponse = {
+                id: rpcRequest.id,
+                result: {
+                  generatedAt: new Date().toISOString(),
+                  tools: estimates,
+                  summary,
+                },
+              };
+              res.json(response);
+              return;
+            }
+
+            case "imap_status": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const statusResult = await this.callToolRpc(target.entry, "imap_status", {});
+              res.json({ id: rpcRequest.id, result: statusResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_estimate_remaining": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const forceRefreshEstimate = rpcRequest.params["forceRefreshEstimate"] === true;
+              const estimateResult = await this.callToolRpc(target.entry, "imap_estimate_remaining", {
+                forceRefreshEstimate,
+              });
+              res.json({ id: rpcRequest.id, result: estimateResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_crawl": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const crawlParams: Record<string, unknown> = {};
+              if (typeof rpcRequest.params["folder"] === "string" && rpcRequest.params["folder"].trim().length > 0) {
+                crawlParams.folder = rpcRequest.params["folder"].trim();
+              }
+              if (typeof rpcRequest.params["since"] === "string" && rpcRequest.params["since"].trim().length > 0) {
+                crawlParams.since = rpcRequest.params["since"].trim();
+              }
+              if (rpcRequest.params["full"] === true) {
+                crawlParams.full = true;
+              }
+
+              const crawlResult = await this.callToolRpc(target.entry, "imap_crawl", crawlParams);
+              res.json({ id: rpcRequest.id, result: crawlResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_reindex": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const reindexParams: Record<string, unknown> = {};
+              if (typeof rpcRequest.params["emailId"] === "string" && rpcRequest.params["emailId"].trim().length > 0) {
+                reindexParams.emailId = rpcRequest.params["emailId"].trim();
+              }
+              if (typeof rpcRequest.params["folder"] === "string" && rpcRequest.params["folder"].trim().length > 0) {
+                reindexParams.folder = rpcRequest.params["folder"].trim();
+              }
+              if (typeof rpcRequest.params["uid"] === "number" && Number.isFinite(rpcRequest.params["uid"])) {
+                reindexParams.uid = rpcRequest.params["uid"];
+              }
+
+              const reindexResult = await this.callToolRpc(target.entry, "imap_reindex", reindexParams);
+              res.json({ id: rpcRequest.id, result: reindexResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_stop_crawl": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+              const stopResult = await this.callToolRpc(target.entry, "imap_stop_crawl", {});
+              res.json({ id: rpcRequest.id, result: stopResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_start_crawl": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+              const startResult = await this.callToolRpc(target.entry, "imap_start_crawl", {});
+              res.json({ id: rpcRequest.id, result: startResult } satisfies RpcResponse);
+              return;
+            }
+
+            case "imap_clear_index": {
+              const toolKey = typeof rpcRequest.params["toolKey"] === "string"
+                ? rpcRequest.params["toolKey"].trim()
+                : "";
+              if (!toolKey) {
+                res.json({ id: rpcRequest.id, error: "toolKey is required" } satisfies RpcResponse);
+                return;
+              }
+
+              const target = this.listConfiguredImapTools().find((entry) => entry.key === toolKey);
+              if (!target) {
+                res.json({ id: rpcRequest.id, error: `Unknown or disabled IMAP tool: ${toolKey}` } satisfies RpcResponse);
+                return;
+              }
+
+              const result = await this.callToolRpc(target.entry, "imap_clear_index", {});
+              const response: RpcResponse = {
+                id: rpcRequest.id,
+                result,
+              };
+              res.json(response);
+              return;
+            }
+
+            default: {
+              const response: RpcResponse = {
+                id: rpcRequest.id,
+                error: `Unknown IMAP RPC method: ${rpcRequest.method}`,
+              };
+              res.json(response);
+              return;
+            }
+          }
+        } catch (err) {
+          const response: RpcResponse = {
+            id: rpcRequest.id,
+            error: err instanceof Error ? err.message : String(err),
+          };
+          res.json(response);
+        }
+      })();
+    });
+
     this.app.get("/api/topology", (req, res) => {
       if (!requireAuth(req, res)) return;
       if (!this.config) {
@@ -1456,6 +1876,64 @@ export class AdminApi {
     const client = new UnixSocketRpcClient(socketName);
     this.unixSocketRpcClients.set(socketName, client);
     return client;
+  }
+
+  private listConfiguredImapTools(): Array<{ key: string; entry: ToolServerEntry }> {
+    return Object.entries(this.toolsConfig)
+      .filter(([, entry]) => entry.enabled !== false && Boolean(entry.imap))
+      .map(([key, entry]) => ({ key, entry }));
+  }
+
+  private buildImapInstanceSummaries(): ImapInstanceSummary[] {
+    return this.listConfiguredImapTools().map(({ key, entry }) => ({
+      toolKey: key,
+      displayName: entry.imap?.displayName,
+      transport: entry.transport,
+      enabled: entry.enabled !== false,
+      crawlMode: entry.imap?.crawl?.mode ?? "continuous-sync",
+      indexingStrategy: entry.imap?.vector?.indexingStrategy ?? "immediate",
+      indexDbPath: entry.imap?.indexDbPath,
+    }));
+  }
+
+  private async callToolRpc(
+    entry: ToolServerEntry,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (entry.transport === "unix-socket") {
+      if (!entry.socketName) {
+        throw new Error("Unix-socket IMAP tool entry is missing socketName");
+      }
+      const client = this.getOrCreateUnixSocketRpcClient(entry.socketName);
+      return client.call(method, params);
+    }
+
+    if (entry.transport !== "http" || !entry.url) {
+      throw new Error("IMAP tool entry has unsupported transport configuration");
+    }
+
+    const request: RpcRequest = {
+      id: uuidv4(),
+      method,
+      params,
+    };
+
+    const response = await fetch(`${entry.url.replace(/\/$/, "")}/rpc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(request),
+    });
+
+    if (!response.ok) {
+      throw new Error(`IMAP HTTP RPC failed: HTTP ${response.status}`);
+    }
+
+    const payload = (await response.json()) as RpcResponse;
+    if (payload.error !== undefined) {
+      throw new Error(payload.error);
+    }
+    return payload.result;
   }
 
   /** Start the HTTP server. */

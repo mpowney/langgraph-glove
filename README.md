@@ -18,6 +18,7 @@ Requires **Node.js 22+** (pinned via `.nvmrc`).
 | `@langgraph-glove/tool-weather-au` | Mock Australian weather tools (HTTP or Unix socket) |
 | `@langgraph-glove/tool-weather-eu` | Mock European weather tools (HTTP or Unix socket) |
 | `@langgraph-glove/tool-weather-us` | Mock US weather tools (HTTP or Unix socket) |
+| `@langgraph-glove/tool-mcp-client` | MCP bridge runtime for multiple configured MCP server instances |
 | `tool-macos-control` *(Swift, macOS only)* | macOS UI-control tool server — accessibility, click, type, screenshot |
 
 ---
@@ -234,6 +235,38 @@ Declares remote tool servers to connect to at startup.
 Transports: `http` (JSON-RPC over HTTP POST) or `unix-socket` (NDJSON over Unix domain socket at `/tmp/langgraph-glove-<socketName>.sock`).
 
 Set `"enabled": false` on any entry to skip it.
+
+`tools.json` also supports per-entry launcher overrides and MCP runtime config so a single tool package can be instantiated multiple times with different auth requirements.
+
+```json
+{
+  "mcp-github": {
+    "transport": "unix-socket",
+    "socketName": "mcp-github",
+    "enabled": true,
+    "launcher": {
+      "packageName": "@langgraph-glove/tool-mcp-client"
+    },
+    "mcp": {
+      "endpoint": "https://example.com/mcp",
+      "toolNamePrefix": "mcp_github__",
+      "auth": {
+        "mode": "bearer-static",
+        "token": "YOUR_TOKEN"
+      }
+    }
+  }
+}
+```
+
+Supported `mcp.auth.mode` values:
+- `bearer-static`
+- `api-key` (header or query)
+- `basic`
+- `oauth-client-credentials`
+- `oauth-device-code`
+
+MCP tools are exposed with deterministic per-instance prefixes (for example `mcp_github__search_repositories`) to avoid name collisions across instances.
 
 ### `config/gateway.json` (optional)
 

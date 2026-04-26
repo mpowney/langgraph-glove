@@ -17,6 +17,7 @@ import type {
   OutgoingStreamChunk,
   StreamSource,
   OutgoingContentItem,
+  OutgoingToolReference,
 } from "./Channel";
 import type { AuthService } from "../auth/AuthService";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
@@ -26,7 +27,39 @@ export const WebChannelSettingsSchema = z.object({
   host: z.string().min(1).optional(),
   receiveAgentProcessing: z.boolean().optional(),
   receiveSystem: z.boolean().optional(),
+  allowedUrlProtocols: z.array(z.string().min(1)).optional(),
 });
+
+const DEFAULT_ALLOWED_URL_PROTOCOLS = ["http", "https", "sandbox"] as const;
+
+function normalizeUrlProtocol(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase();
+  if (!trimmed) return null;
+
+  let normalized = trimmed;
+  if (normalized.endsWith(":")) {
+    normalized = normalized.slice(0, -1);
+  }
+  if (normalized.endsWith("://")) {
+    normalized = normalized.slice(0, -3);
+  }
+
+  if (!/^[a-z][a-z0-9+.-]*$/u.test(normalized)) {
+    return null;
+  }
+  return normalized;
+}
+
+function normalizeAllowedUrlProtocols(configured?: string[]): string[] {
+  const unique = new Set<string>(DEFAULT_ALLOWED_URL_PROTOCOLS);
+  for (const value of configured ?? []) {
+    const normalized = normalizeUrlProtocol(value);
+    if (normalized) {
+      unique.add(normalized);
+    }
+  }
+  return [...unique];
+}
 
 export interface WebChannelFactoryContext {
   checkpointDbPath?: string;
@@ -51,6 +84,7 @@ export function createWebChannelFromConfig(
     host: result.data.host,
     receiveAgentProcessing: result.data.receiveAgentProcessing ?? true,
     receiveSystem: result.data.receiveSystem ?? false,
+    allowedUrlProtocols: normalizeAllowedUrlProtocols(result.data.allowedUrlProtocols),
     appInfo: context.appInfo,
     checkpointDbPath: context.checkpointDbPath,
   });
@@ -98,6 +132,7 @@ type ServerMessage =
       streamAgentKey?: string;
       checkpoint?: CheckpointMetadata;
       contentItems?: OutgoingContentItem[];
+      references?: OutgoingToolReference[];
     }
   | { type: "prompt"; text: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | {
@@ -112,12 +147,15 @@ type ServerMessage =
       toolName?: string;
       /** Optional uploaded content references associated with this tool event. */
       contentItems?: OutgoingContentItem[];
+      /** Optional normalized URL/title references associated with this tool event. */
+      references?: OutgoingToolReference[];
     }
   | {
       type: "done";
       conversationId: string;
       checkpoint?: CheckpointMetadata;
       contentItems?: OutgoingContentItem[];
+      references?: OutgoingToolReference[];
     }
   | { type: "error"; message: string; conversationId: string; checkpoint?: CheckpointMetadata }
   | { type: "conversation_metadata"; conversationId: string; metadata: { title?: string } };
@@ -157,6 +195,8 @@ export interface WebChannelConfig extends ChannelConfig {
   };
   /** Optional path to the SQLite checkpointer database for checkpoint metadata. */
   checkpointDbPath?: string;
+  /** Allowed URL protocols that the authenticated UI can render as links. */
+  allowedUrlProtocols?: string[];
   /**
    * Optional auth service.  When provided every WebSocket upgrade request
    * must carry a valid session token in the `?token=` query parameter;
@@ -191,7 +231,10 @@ export class WebChannel extends Channel {
   private readonly checkpointDbPath?: string;
   private checkpointDb?: Database.Database;
   private authService?: AuthService;
+  private readonly allowedUrlProtocols: string[];
   private readonly pendingDefaultAgentContentItems = new Map<string, OutgoingContentItem[]>();
+  private readonly pendingMainToolReferences = new Map<string, OutgoingToolReference[]>();
+  private readonly pendingSubAgentToolReferences = new Map<string, Map<string, OutgoingToolReference[]>>();
 
   constructor(config: WebChannelConfig = {}) {
     super(config);
@@ -207,6 +250,7 @@ export class WebChannel extends Channel {
     };
     this.checkpointDbPath = config.checkpointDbPath;
     this.authService = config.authService;
+    this.allowedUrlProtocols = normalizeAllowedUrlProtocols(config.allowedUrlProtocols);
 
     if (this.checkpointDbPath) {
       try {
@@ -244,6 +288,26 @@ export class WebChannel extends Channel {
         ...(this.appInfo.modelContextWindowSource && {
           modelContextWindowSource: this.appInfo.modelContextWindowSource,
         }),
+      });
+    });
+
+    // Expose URL protocol allowlist to authenticated UI clients.
+    this.app.get("/api/link-protocols", (req, res) => {
+      if (this.authService) {
+        const authHeader = req.header("authorization") ?? "";
+        const [scheme, token] = authHeader.split(/\s+/, 2);
+        const isBearer = scheme?.toLowerCase() === "bearer";
+        const authenticated = isBearer && token
+          ? this.authService.authenticateSession(token)
+          : null;
+        if (!authenticated) {
+          res.status(401).json({ error: "Unauthorized" });
+          return;
+        }
+      }
+
+      res.json({
+        protocols: this.allowedUrlProtocols,
       });
     });
 
@@ -381,15 +445,28 @@ export class WebChannel extends Channel {
         ...(message.contentItems && message.contentItems.length > 0
           ? { contentItems: message.contentItems }
           : {}),
+        ...(message.references && message.references.length > 0
+          ? { references: message.references }
+          : {}),
       };
       this.broadcast(message.conversationId, payload);
       if (
         message.role === "tool-result"
-        && message.contentItems
-        && message.contentItems.length > 0
-        && this.isDefaultAgentToolEvent(message.toolEventMetadata)
       ) {
-        this.addPendingDefaultAgentContentItems(message.conversationId, message.contentItems);
+        if (
+          message.contentItems
+          && message.contentItems.length > 0
+          && this.isDefaultAgentToolEvent(message.toolEventMetadata)
+        ) {
+          this.addPendingDefaultAgentContentItems(message.conversationId, message.contentItems);
+        }
+        if (message.references && message.references.length > 0) {
+          this.addPendingToolReferences(
+            message.conversationId,
+            message.references,
+            message.toolEventMetadata?.agentKey,
+          );
+        }
       }
       return;
     }
@@ -397,6 +474,10 @@ export class WebChannel extends Channel {
     const doneContentItems = this.mergeContentItems(
       message.contentItems,
       this.drainPendingDefaultAgentContentItems(message.conversationId),
+    );
+    const doneReferences = this.mergeToolReferences(
+      message.references,
+      this.drainPendingMainToolReferences(message.conversationId),
     );
     const payload: ServerMessage = {
       type: "chunk",
@@ -407,6 +488,9 @@ export class WebChannel extends Channel {
       ...(message.contentItems && message.contentItems.length > 0
         ? { contentItems: message.contentItems }
         : {}),
+      ...(message.references && message.references.length > 0
+        ? { references: message.references }
+        : {}),
     };
     this.broadcast(message.conversationId, payload);
     this.broadcast(message.conversationId, {
@@ -415,6 +499,9 @@ export class WebChannel extends Channel {
       checkpoint: this.lookupCheckpointMetadata(message.conversationId),
       ...(doneContentItems && doneContentItems.length > 0
         ? { contentItems: doneContentItems }
+        : {}),
+      ...(doneReferences && doneReferences.length > 0
+        ? { references: doneReferences }
         : {}),
     });
   }
@@ -429,6 +516,9 @@ export class WebChannel extends Channel {
     stream: AsyncIterable<OutgoingStreamChunk>,
   ): Promise<void> {
     for await (const chunk of stream) {
+      const chunkReferences = chunk.source === "sub-agent"
+        ? this.drainPendingSubAgentToolReferences(conversationId, chunk.agentKey)
+        : this.drainPendingMainToolReferences(conversationId);
       this.broadcast(conversationId, {
         type: "chunk",
         text: chunk.text,
@@ -436,15 +526,22 @@ export class WebChannel extends Channel {
         streamSource: chunk.source,
         ...(chunk.agentKey ? { streamAgentKey: chunk.agentKey } : {}),
         checkpoint: this.lookupCheckpointMetadata(conversationId),
+        ...(chunkReferences && chunkReferences.length > 0
+          ? { references: chunkReferences }
+          : {}),
       });
     }
     const doneContentItems = this.drainPendingDefaultAgentContentItems(conversationId);
+    const doneReferences = this.drainPendingMainToolReferences(conversationId);
     this.broadcast(conversationId, {
       type: "done",
       conversationId,
       checkpoint: this.lookupCheckpointMetadata(conversationId),
       ...(doneContentItems && doneContentItems.length > 0
         ? { contentItems: doneContentItems }
+        : {}),
+      ...(doneReferences && doneReferences.length > 0
+        ? { references: doneReferences }
         : {}),
     });
   }
@@ -486,6 +583,74 @@ export class WebChannel extends Channel {
       merged.push(item);
     }
     return merged.length > 0 ? merged : undefined;
+  }
+
+  private mergeToolReferences(
+    first?: OutgoingToolReference[],
+    second?: OutgoingToolReference[],
+  ): OutgoingToolReference[] | undefined {
+    const merged: OutgoingToolReference[] = [];
+    const seenUrls = new Set<string>();
+    for (const item of [...(first ?? []), ...(second ?? [])]) {
+      const key = item.url.trim();
+      if (!key || seenUrls.has(key)) continue;
+      seenUrls.add(key);
+      merged.push(item);
+    }
+    return merged.length > 0 ? merged : undefined;
+  }
+
+  private addPendingToolReferences(
+    conversationId: string,
+    references: OutgoingToolReference[],
+    agentKey?: string,
+  ): void {
+    const mergedMain = this.mergeToolReferences(
+      this.pendingMainToolReferences.get(conversationId),
+      references,
+    );
+    if (mergedMain && mergedMain.length > 0) {
+      this.pendingMainToolReferences.set(conversationId, mergedMain);
+    }
+
+    const trimmedAgentKey = agentKey?.trim();
+    if (!trimmedAgentKey || trimmedAgentKey === "default") {
+      return;
+    }
+    const byAgent = this.pendingSubAgentToolReferences.get(conversationId) ?? new Map<string, OutgoingToolReference[]>();
+    const mergedSubAgent = this.mergeToolReferences(byAgent.get(trimmedAgentKey), references);
+    if (mergedSubAgent && mergedSubAgent.length > 0) {
+      byAgent.set(trimmedAgentKey, mergedSubAgent);
+      this.pendingSubAgentToolReferences.set(conversationId, byAgent);
+    }
+  }
+
+  private drainPendingMainToolReferences(
+    conversationId: string,
+  ): OutgoingToolReference[] | undefined {
+    const existing = this.pendingMainToolReferences.get(conversationId);
+    if (!existing || existing.length === 0) return undefined;
+    this.pendingMainToolReferences.delete(conversationId);
+    return existing;
+  }
+
+  private drainPendingSubAgentToolReferences(
+    conversationId: string,
+    agentKey?: string,
+  ): OutgoingToolReference[] | undefined {
+    const trimmedAgentKey = agentKey?.trim();
+    if (!trimmedAgentKey) return undefined;
+    const byAgent = this.pendingSubAgentToolReferences.get(conversationId);
+    if (!byAgent) return undefined;
+    const existing = byAgent.get(trimmedAgentKey);
+    if (!existing || existing.length === 0) return undefined;
+    byAgent.delete(trimmedAgentKey);
+    if (byAgent.size === 0) {
+      this.pendingSubAgentToolReferences.delete(conversationId);
+    } else {
+      this.pendingSubAgentToolReferences.set(conversationId, byAgent);
+    }
+    return existing;
   }
 
   private handleConnection(ws: WebSocket): void {

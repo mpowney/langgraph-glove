@@ -37,6 +37,21 @@ function mergeContentItems(
   return [...unique.values()];
 }
 
+function mergeReferences(
+  first: ChatEntry["references"],
+  second: ChatEntry["references"],
+): ChatEntry["references"] {
+  const merged = [...(first ?? []), ...(second ?? [])];
+  if (merged.length === 0) return undefined;
+  const unique = new Map<string, NonNullable<ChatEntry["references"]>[number]>();
+  for (const item of merged) {
+    const key = item.url.trim();
+    if (!key) continue;
+    unique.set(key, item);
+  }
+  return [...unique.values()];
+}
+
 function buildWsUrl(authToken?: string): string {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
   const base = envUrl ?? (() => {
@@ -188,6 +203,7 @@ export function useWebSocket(
                 ...(msg.streamAgentKey ? { streamAgentKey: msg.streamAgentKey } : {}),
                 receivedAt,
                 checkpoint: msg.checkpoint,
+                ...(msg.references ? { references: msg.references } : {}),
               },
             ];
           });
@@ -204,6 +220,7 @@ export function useWebSocket(
                 ...message,
                 content: message.content + msg.text,
                 checkpoint: msg.checkpoint ?? message.checkpoint,
+                references: mergeReferences(message.references, msg.references),
               }),
             );
           }
@@ -220,6 +237,7 @@ export function useWebSocket(
               ...(msg.streamAgentKey ? { streamAgentKey: msg.streamAgentKey } : {}),
               receivedAt,
               checkpoint: msg.checkpoint,
+              ...(msg.references ? { references: msg.references } : {}),
             },
           ];
         });
@@ -250,6 +268,7 @@ export function useWebSocket(
                 isStreaming: false,
                 checkpoint: msg.checkpoint ?? message.checkpoint,
                 contentItems: mergeContentItems(message.contentItems, msg.contentItems),
+                references: mergeReferences(message.references, msg.references),
               }),
             ),
           );
@@ -268,6 +287,7 @@ export function useWebSocket(
             ...(msg.toolEventMetadata ? { toolEventMetadata: msg.toolEventMetadata } : {}),
             ...(msg.toolName ? { toolName: msg.toolName } : {}),
             ...(msg.contentItems ? { contentItems: msg.contentItems } : {}),
+            ...(msg.references ? { references: msg.references } : {}),
           },
         ]);
       } else if (msg.type === "error") {

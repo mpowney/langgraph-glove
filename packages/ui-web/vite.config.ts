@@ -77,6 +77,10 @@ export default defineConfig({
               target: toolsTarget,
               changeOrigin: true,
             },
+            "/api/imap": {
+              target: toolsTarget,
+              changeOrigin: true,
+            },
             "/api/internal": {
               target: toolsTarget,
               changeOrigin: true,
