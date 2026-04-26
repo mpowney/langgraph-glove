@@ -2337,32 +2337,112 @@ export class ImapIndexService {
 
     try {
       await client.connect();
-      await client.mailboxOpen(row.folder);
+      const byUid = await this.fetchIndexedEmailSourceByUid(client, row, row.folder, row.uid);
+      if (byUid) {
+        return byUid;
+      }
 
-      for await (const message of client.fetch(String(row.uid), {
-        uid: true,
-        envelope: true,
-        source: true,
-        threadId: true,
-      })) {
-        if (message.uid !== row.uid || !message.source) continue;
+      const normalizedMessageId = row.message_id ? normalizeMessageId(row.message_id) : null;
+      if (normalizedMessageId) {
+        const foldersToTry = [...new Set([
+          row.folder,
+          this.settings.mailbox,
+          ...this.settings.folders,
+        ])];
 
-        return this.normalizeMessage({
-          folder: row.folder,
-          uid: row.uid,
-          source: message.source,
-          threadId: message.threadId ? String(message.threadId) : row.thread_id,
-          fallbackSubject: message.envelope?.subject ?? row.subject,
-          fallbackInReplyTo: message.envelope?.inReplyTo?.[0]
-            ? String(message.envelope.inReplyTo[0])
-            : row.in_reply_to,
-        });
+        for (const folder of foldersToTry) {
+          const byMessageId = await this.fetchIndexedEmailSourceByMessageId(client, row, folder, normalizedMessageId);
+          if (byMessageId) {
+            return byMessageId;
+          }
+        }
       }
     } finally {
       await client.logout().catch(() => undefined);
     }
 
+    if (row.message_id) {
+      throw new Error(
+        `Email source not found on IMAP server for folder "${row.folder}" uid ${row.uid} or message-id ${row.message_id}`,
+      );
+    }
+
     throw new Error(`Email source not found on IMAP server for folder "${row.folder}" uid ${row.uid}`);
+  }
+
+  private async fetchIndexedEmailSourceByUid(
+    client: ImapFlow,
+    row: EmailRow,
+    folder: string,
+    uid: number,
+  ): Promise<ParsedEmailRecord | undefined> {
+    try {
+      await client.mailboxOpen(folder);
+    } catch {
+      return undefined;
+    }
+
+    for await (const message of client.fetch(String(uid), {
+      uid: true,
+      envelope: true,
+      source: true,
+      threadId: true,
+    })) {
+      if (message.uid !== uid || !message.source) continue;
+
+      return this.normalizeMessage({
+        folder,
+        uid,
+        source: message.source,
+        threadId: message.threadId ? String(message.threadId) : row.thread_id,
+        fallbackSubject: message.envelope?.subject ?? row.subject,
+        fallbackInReplyTo: message.envelope?.inReplyTo?.[0]
+          ? String(message.envelope.inReplyTo[0])
+          : row.in_reply_to,
+      });
+    }
+
+    return undefined;
+  }
+
+  private async fetchIndexedEmailSourceByMessageId(
+    client: ImapFlow,
+    row: EmailRow,
+    folder: string,
+    messageId: string,
+  ): Promise<ParsedEmailRecord | undefined> {
+    try {
+      await client.mailboxOpen(folder);
+    } catch {
+      return undefined;
+    }
+
+    const unwrappedMessageId = messageId.replace(/^<|>$/g, "");
+    const messageIdCandidates = [...new Set([messageId, unwrappedMessageId])]
+      .filter((candidate) => candidate.trim().length > 0);
+
+    for (const candidate of messageIdCandidates) {
+      const matchedUids = await client.search({
+        header: {
+          "message-id": candidate,
+        },
+      }, {
+        uid: true,
+      });
+
+      if (!matchedUids || matchedUids.length === 0) {
+        continue;
+      }
+
+      for (const matchedUid of matchedUids) {
+        const byUid = await this.fetchIndexedEmailSourceByUid(client, row, folder, matchedUid);
+        if (byUid) {
+          return byUid;
+        }
+      }
+    }
+
+    return undefined;
   }
 
   private toEmailResult(row: EmailRow): Record<string, unknown> {
