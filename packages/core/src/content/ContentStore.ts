@@ -96,9 +96,6 @@ export class ContentStore {
       CREATE INDEX IF NOT EXISTS idx_content_items_tool_name
         ON content_items(tool_name, created_at DESC);
 
-      CREATE INDEX IF NOT EXISTS idx_content_items_expires_at
-        ON content_items(expires_at);
-
       CREATE TABLE IF NOT EXISTS content_upload_sessions (
         upload_id TEXT PRIMARY KEY,
         content_ref TEXT NOT NULL,
@@ -126,8 +123,8 @@ export class ContentStore {
       .map((column) => column.name);
     if (!contentItemColumns.includes("expires_at")) {
       this.db.exec("ALTER TABLE content_items ADD COLUMN expires_at TEXT");
-      this.db.exec("CREATE INDEX IF NOT EXISTS idx_content_items_expires_at ON content_items(expires_at)");
     }
+    this.db.exec("CREATE INDEX IF NOT EXISTS idx_content_items_expires_at ON content_items(expires_at)");
   }
 
   createUploadSession(input: CreateUploadSessionInput): void {
