@@ -1527,6 +1527,24 @@ export class ImapIndexService {
     };
   }
 
+  async getEmailAttachmentFiles(input: GetEmailInput): Promise<RetrievedEmailAttachmentFiles> {
+    const row = this.resolveEmail(input);
+    const email = await this.fetchIndexedEmailSource(row);
+    const attachments = email.attachments.map((attachment) => ({
+      attachmentId: buildAttachmentId(row.id, attachment.attachmentIndex),
+      attachmentIndex: attachment.attachmentIndex,
+      fileName: attachment.filename,
+      mimeType: attachment.contentType,
+      fileSizeBytes: attachment.fileSizeBytes,
+      content: attachment.content,
+    } satisfies RetrievedAttachmentFile));
+
+    return {
+      email: this.decorateEmailSummary(row),
+      attachments,
+    };
+  }
+
   async clearIndex(): Promise<Record<string, unknown>> {
     if (this.crawlRuntime?.active) {
       this.crawlAbortRequested = true;

@@ -13,6 +13,7 @@ export interface ImapToolDefinition {
 }
 
 const DEFAULT_UPLOAD_CHUNK_BYTES = 256 * 1024;
+const DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS = 300;
 
 function describeForInstance(description: string, displayName?: string): string {
   const label = displayName?.trim();
@@ -20,21 +21,21 @@ function describeForInstance(description: string, displayName?: string): string 
   return `${description} IMAP instance: ${label}.`;
 }
 
-function readUploadAuth(params: Record<string, unknown>): ContentUploadAuthPayload {
+function readUploadAuth(params: Record<string, unknown>, toolName = "imap_get_attachment_file"): ContentUploadAuthPayload {
   const raw = params["contentUploadAuth"];
   if (!raw || typeof raw !== "object") {
-    throw new Error("imap_get_attachment_file: missing runtime contentUploadAuth payload");
+    throw new Error(`${toolName}: missing runtime contentUploadAuth payload`);
   }
 
   const payload = raw as Record<string, unknown>;
   if (typeof payload.token !== "string") {
-    throw new Error("imap_get_attachment_file: invalid contentUploadAuth.token");
+    throw new Error(`${toolName}: invalid contentUploadAuth.token`);
   }
   if (typeof payload.expiresAt !== "string") {
-    throw new Error("imap_get_attachment_file: invalid contentUploadAuth.expiresAt");
+    throw new Error(`${toolName}: invalid contentUploadAuth.expiresAt`);
   }
   if (payload.transport !== "http" && payload.transport !== "unix-socket") {
-    throw new Error("imap_get_attachment_file: invalid contentUploadAuth.transport");
+    throw new Error(`${toolName}: invalid contentUploadAuth.transport`);
   }
 
   return {
@@ -134,6 +135,7 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
       metadata: {
         name: "imap_get_email",
         description: describeForInstance("Get one indexed email by internal id, message-id, or folder+uid.", displayName),
+        supportsContentUpload: true,
         parameters: {
           type: "object",
           properties: {
@@ -141,15 +143,91 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
             messageId: { type: "string", description: "RFC822 message-id." },
             folder: { type: "string", description: "Folder used with uid." },
             uid: { type: "number", description: "IMAP uid within the folder." },
+            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. Defaults to 300 seconds." },
           },
         },
       },
-      handler: async (params: Record<string, unknown>) => service.getEmail({
-        emailId: params["emailId"] as string | undefined,
-        messageId: params["messageId"] as string | undefined,
-        folder: params["folder"] as string | undefined,
-        uid: params["uid"] as number | undefined,
-      }),
+      handler: async (params: Record<string, unknown>) => {
+        const emailRef = {
+          emailId: params["emailId"] as string | undefined,
+          messageId: params["messageId"] as string | undefined,
+          folder: params["folder"] as string | undefined,
+          uid: params["uid"] as number | undefined,
+        };
+
+        const ttlSeconds = typeof params["ttlSeconds"] === "number"
+          ? Math.floor(params["ttlSeconds"])
+          : DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS;
+        if (ttlSeconds <= 0) {
+          throw new Error("imap_get_email: 'ttlSeconds' must be a positive integer when provided");
+        }
+
+        const emailResult = service.getEmail(emailRef);
+        const attachmentResult = await service.getEmailAttachmentFiles(emailRef);
+        if (attachmentResult.attachments.length === 0) {
+          return {
+            ...emailResult,
+            attachmentCount: 0,
+            attachments: [],
+            contentItems: [],
+          };
+        }
+
+        const uploadAuth = readUploadAuth(params, "imap_get_email");
+        const uploadClient = new GatewayContentUploadClient(uploadAuth);
+        const uploadedAttachments = [] as Array<Record<string, unknown>>;
+        const contentItems = [] as Array<Record<string, unknown>>;
+
+        for (const attachment of attachmentResult.attachments) {
+          const sha256 = createHash("sha256").update(attachment.content).digest("hex");
+          const init = await uploadClient.initUpload({
+            fileName: attachment.fileName,
+            mimeType: attachment.mimeType,
+            expectedBytes: attachment.content.byteLength,
+            ttlSeconds,
+          });
+
+          try {
+            let chunkIndex = 0;
+            for (let offset = 0; offset < attachment.content.byteLength; offset += DEFAULT_UPLOAD_CHUNK_BYTES) {
+              const chunk = attachment.content.subarray(
+                offset,
+                Math.min(offset + DEFAULT_UPLOAD_CHUNK_BYTES, attachment.content.byteLength),
+              );
+              await uploadClient.appendChunk(init.uploadId, chunkIndex, chunk);
+              chunkIndex += 1;
+            }
+
+            const finalized = await uploadClient.finalizeUpload(init.uploadId, sha256);
+            const contentItem = {
+              contentRef: finalized.contentRef,
+              fileName: finalized.fileName ?? attachment.fileName,
+              mimeType: finalized.mimeType ?? attachment.mimeType,
+              byteLength: finalized.byteLength,
+            };
+            contentItems.push(contentItem);
+            uploadedAttachments.push({
+              attachmentId: attachment.attachmentId,
+              attachmentIndex: attachment.attachmentIndex,
+              fileSizeBytes: attachment.fileSizeBytes,
+              sha256,
+              uploadId: finalized.uploadId,
+              expiresAt: init.expiresAt,
+              ...contentItem,
+            });
+          } catch (error) {
+            await uploadClient.abortUpload(init.uploadId).catch(() => undefined);
+            throw error;
+          }
+        }
+
+        return {
+          ...emailResult,
+          attachmentCount: uploadedAttachments.length,
+          attachments: uploadedAttachments,
+          contentItems,
+        };
+      },
     },
     {
       metadata: {
