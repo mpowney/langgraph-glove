@@ -349,16 +349,17 @@ export class ImapIndexService {
   }
 
   async checkHealth(): Promise<Omit<ToolHealthResult, "latencyMs">> {
+    const checkedBinaries = ["pdftotext", "pdftoppm"] as const;
     if (!this.settings.attachment.enabled) {
       return {
         ok: true,
-        summary: "Attachment indexing is disabled; no external PDF dependencies required",
+        summary: `Attachment indexing is disabled; ${checkedBinaries.join(", ")} checks are not required`,
         dependencies: [],
       };
     }
 
     const dependencies: ToolHealthResult["dependencies"] = [];
-    for (const binary of ["pdftotext", "pdftoppm"]) {
+    for (const binary of checkedBinaries) {
       try {
         const { stdout } = await execFile("which", [binary], { maxBuffer: 64 * 1024 }) as {
           stdout: string;
@@ -382,8 +383,8 @@ export class ImapIndexService {
     return {
       ok,
       summary: ok
-        ? "PDF extraction dependencies are available"
-        : "Missing PDF extraction dependencies for attachment indexing",
+        ? `${checkedBinaries.join(" and ")} are available`
+        : `Missing required binaries: ${dependencies.filter((dependency) => !dependency.ok).map((dependency) => dependency.name).join(", ")}`,
       dependencies,
     };
   }
@@ -1503,23 +1504,13 @@ export class ImapIndexService {
 
     this.estimateCache = null;
 
-    const willAutoCrawl = this.settings.crawlMode !== "manual";
-    if (willAutoCrawl) {
-      void this.crawl({ full: true }).catch((error) => {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(`[tool-imap] post-clear crawl failed: ${message}\n`);
-      });
-    }
-
     return {
       toolKey: this.settings.toolKey,
       displayName: this.settings.displayName,
       clearedAt: new Date().toISOString(),
       countsBefore,
       nextCrawlMode: this.settings.crawlMode,
-      note: willAutoCrawl
-        ? "Index cleared: a full crawl has been started to repopulate from scratch"
-        : "Crawl mode is manual: run imap_crawl to repopulate the index",
+      note: "Index cleared. Crawl is not started automatically; run imap_start_crawl (or use Start crawl in the UI) when ready.",
     };
   }
 
