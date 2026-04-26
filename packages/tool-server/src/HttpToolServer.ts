@@ -1,7 +1,18 @@
 import http from "node:http";
 import express, { type Express } from "express";
 import { ToolServer } from "./ToolServer";
-import type { RpcRequest } from "./RpcProtocol";
+import type { RpcRequest, ToolHealthResult } from "./RpcProtocol";
+
+function isToolHealthResult(value: unknown): value is ToolHealthResult {
+  if (!value || typeof value !== "object") return false;
+  const asRecord = value as Record<string, unknown>;
+  return (
+    typeof asRecord["ok"] === "boolean"
+    && typeof asRecord["summary"] === "string"
+    && Array.isArray(asRecord["dependencies"])
+    && typeof asRecord["latencyMs"] === "number"
+  );
+}
 
 /**
  * A tool server that accepts JSON-RPC calls over HTTP POST at `POST /rpc`.
@@ -68,6 +79,31 @@ export class HttpToolServer extends ToolServer {
     });
 
     // Health check
-    this.app.get("/health", (_req, res) => res.json({ status: "ok" }));
+    this.app.get("/health", async (_req, res): Promise<void> => {
+      console.log(`[HttpToolServer] Received health request`);
+      const startedAt = Date.now();
+      const result = await this.dispatch({ id: "healthcheck", method: "__healthcheck__", params: {} });
+      const latencyMs = Date.now() - startedAt;
+      if (result.error) {
+        res.status(500).json({
+          ok: false,
+          summary: typeof result.error === "string" ? result.error : JSON.stringify(result.error),
+          dependencies: [],
+          latencyMs,
+        });
+        return;
+      }
+      const healthResult = isToolHealthResult(result.result) ? result.result : undefined;
+      if (healthResult?.ok === false) {
+        res.status(503).json(healthResult);
+        return;
+      }
+      res.json(healthResult ?? {
+        ok: true,
+        summary: "ok",
+        dependencies: [],
+        latencyMs,
+      });
+    });
   }
 }

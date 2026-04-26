@@ -51,6 +51,7 @@ import type {
   ContentUploadAuthPayload,
   RpcRequest,
   RpcResponse,
+  ToolHealthResult,
 } from "../rpc/RpcProtocol";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
@@ -61,6 +62,7 @@ const CONVERSATION_TITLE_GRAPH_KEY = "conversation-title";
 const CONVERSATION_TITLE_MAX_CHARS = 80;
 const STARTUP_SLOW_STEP_MS = 2000;
 const IMAP_CRAWL_CONTROL_TIMEOUT_MS = 1500;
+const TOOL_HEALTH_CHECK_TIMEOUT_MS = 10_000;
 
 interface StartupPhaseTiming {
   phase: string;
@@ -253,6 +255,10 @@ export class Gateway extends EventEmitter {
         this.discoveredTools = tools;
         logger.info(`Discovered ${tools.length} tool(s) from ${Object.keys(this.config!.tools).length} server(s)`);
         this.reportUnavailableConfiguredTools(this.config!, tools);
+      });
+
+      await this.measureStartupPhase("tool-health-checks", startupPhases, async () => {
+        await this.checkToolHealth(this.config!.tools);
       });
 
       const graph = await this.measureStartupPhase("graph-build", startupPhases, async () => {
@@ -537,6 +543,63 @@ export class Gateway extends EventEmitter {
     }
 
     return results;
+  }
+
+  private async checkToolHealth(toolsConfig: Record<string, ToolServerEntry>): Promise<void> {
+    const entries = Object.entries(toolsConfig).filter(
+      ([, entry]) => entry.enabled !== false,
+    );
+    const discoveredEntries = entries.filter(([key]) => this.toolServerStatuses.get(key)?.discovered);
+
+    if (discoveredEntries.length === 0) return;
+
+    logger.info(`Tool health checks: probing [${discoveredEntries.map(([key]) => key).join(", ")}]…`);
+
+    await Promise.all(
+      discoveredEntries.map(async ([key, entry]) => {
+        logger.info(`  … ${key}: probe started`);
+        const client = this.createRpcClient(key, entry);
+
+        try {
+          await this.withTimeout(
+            client.connect(),
+            TOOL_HEALTH_CHECK_TIMEOUT_MS,
+            `Tool health connect timeout for "${key}"`,
+          );
+          const result = await this.withTimeout(
+            client.checkHealth(),
+            TOOL_HEALTH_CHECK_TIMEOUT_MS,
+            `Tool health RPC timeout for "${key}"`,
+          );
+          this.updateToolHealthStatus(key, result);
+
+          const slowMarker = result.latencyMs >= STARTUP_SLOW_STEP_MS ? " [slow]" : "";
+          if (result.ok) {
+            logger.info(`  ✓ ${key} — ${result.summary} (${result.latencyMs}ms)${slowMarker}`);
+          } else {
+            logger.warn(`  ✗ ${key} — ${result.summary} (${result.latencyMs}ms)${slowMarker}`);
+          }
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          this.updateToolHealthStatus(key, undefined, message);
+          logger.warn(`  ✗ ${key} — ${message}`);
+        } finally {
+          await client.disconnect().catch(() => undefined);
+        }
+      }),
+    );
+  }
+
+  private updateToolHealthStatus(key: string, health?: ToolHealthResult, healthError?: string): void {
+    const existing = this.toolServerStatuses.get(key);
+    if (!existing) return;
+
+    this.toolServerStatuses.set(key, {
+      ...existing,
+      healthy: health?.ok ?? false,
+      health,
+      healthError,
+    });
   }
 
   private async pauseImapCrawlsForHealthChecks(

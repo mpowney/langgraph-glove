@@ -2,7 +2,7 @@ import path from "node:path";
 import { ConfigLoader, type ToolServerEntry } from "@langgraph-glove/config";
 import { HttpToolServer } from "./HttpToolServer";
 import { UnixSocketToolServer } from "./UnixSocketToolServer";
-import type { ToolServer } from "./ToolServer";
+import type { ToolHealthCheck, ToolServer } from "./ToolServer";
 
 export interface LaunchOptions {
   /** Key in tools.json that this tool server corresponds to. */
@@ -12,6 +12,8 @@ export interface LaunchOptions {
    * Called with the created server instance — call `server.register(...)` inside.
    */
   register: (server: ToolServer) => void;
+  /** Optional server-level health check used by gateway startup probes. */
+  healthCheck?: ToolHealthCheck;
   /** Override path to config directory (default: GLOVE_CONFIG_DIR or ./config) */
   configDir?: string;
   /** Override path to secrets directory (default: GLOVE_SECRETS_DIR or ./secrets) */
@@ -80,6 +82,9 @@ export async function launchToolServer(options: LaunchOptions): Promise<ToolServ
   }
 
   options.register(server);
+  if (options.healthCheck) {
+    server.setHealthCheck(options.healthCheck);
+  }
 
   await server.start();
 

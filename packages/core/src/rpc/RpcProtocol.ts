@@ -23,6 +23,30 @@ export interface RpcResponse {
   error?: string;
 }
 
+/** Structured dependency status reported by a tool health check. */
+export interface ToolHealthDependency {
+  /** Dependency name shown to operators. */
+  name: string;
+  /** Whether the dependency is currently available. */
+  ok: boolean;
+  /** Optional human-readable detail such as a version or path. */
+  detail?: string;
+  /** Optional severity for degraded-but-nonfatal checks. */
+  severity?: "error" | "warning";
+}
+
+/** Structured tool server health result returned by the reserved health RPC. */
+export interface ToolHealthResult {
+  /** Overall tool health. */
+  ok: boolean;
+  /** Short status summary for logs and dashboards. */
+  summary: string;
+  /** Individual dependency checks when relevant. */
+  dependencies: ToolHealthDependency[];
+  /** Time spent running the health check. */
+  latencyMs: number;
+}
+
 /** Metadata that a tool server exposes for introspection. */
 export interface ToolMetadata {
   /** Unique tool name — must match the name used when registering the handler. */
@@ -95,8 +119,14 @@ export interface ToolServerStatus {
   configured: boolean;
   /** Successfully connected and introspected during gateway bootstrap. */
   discovered: boolean;
+  /** Whether the server passed its post-discovery health check. */
+  healthy?: boolean;
   /** Error message from a failed bootstrap attempt (only set when `discovered = false`). */
   error?: string;
+  /** Error message from a failed health-check attempt. */
+  healthError?: string;
+  /** Structured health report when available. */
+  health?: ToolHealthResult;
   /** Tool names discovered from this server. Empty when discovery failed. */
   toolNames: string[];
 }

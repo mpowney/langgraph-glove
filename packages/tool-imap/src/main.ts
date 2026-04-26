@@ -28,6 +28,7 @@ await launchToolServer({
   toolKey,
   configDir,
   secretsDir,
+  healthCheck: () => service.checkHealth(),
   register(server) {
     for (const toolDef of createImapTools(service)) {
       server.register(toolDef.metadata, toolDef.handler);

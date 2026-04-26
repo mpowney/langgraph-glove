@@ -166,9 +166,19 @@ final class RpcServer {
     private func buildResponse(method: String, path: String, body: Data) async -> String {
         switch (method, path) {
         case ("GET", "/health"):
+            let health = await runToolHealthCheck(
+                peekabooMcpBridge: peekabooMcpBridge,
+                peekabooBaseCommand: peekabooBaseCommand
+            )
+            guard
+                let json = try? JSONSerialization.data(withJSONObject: health.toJSON()),
+                let jsonStr = String(data: json, encoding: .utf8)
+            else {
+                return httpResponse(status: 500, body: "Serialization error")
+            }
             return httpResponse(
                 status: 200,
-                body: #"{"status":"ok"}"#,
+                body: jsonStr,
                 contentType: "application/json"
             )
 
@@ -235,6 +245,12 @@ final class RpcServer {
                 }
             }
             rpcResp = RpcResponse(id: req.id, result: allMetadata, error: nil)
+        } else if req.method == "__healthcheck__" {
+            let health = await runToolHealthCheck(
+                peekabooMcpBridge: peekabooMcpBridge,
+                peekabooBaseCommand: peekabooBaseCommand
+            )
+            rpcResp = RpcResponse(id: req.id, result: health.toJSON(), error: nil)
         } else if req.method.hasPrefix("peekaboo_"), let bridge = peekabooMcpBridge {
             let upstreamName = String(req.method.dropFirst(9))
             let splitArgs = splitPeekabooArguments(req.params)

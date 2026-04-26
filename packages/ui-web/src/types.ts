@@ -286,11 +286,28 @@ export interface ConfigValidationIssue {
 // ---------------------------------------------------------------------------
 
 /** Mirror of the backend ToolServerStatus — returned by GET /api/tools/server-status. */
+export interface ToolHealthDependency {
+  name: string;
+  ok: boolean;
+  detail?: string;
+  severity?: "error" | "warning";
+}
+
+export interface ToolHealthResult {
+  ok: boolean;
+  summary: string;
+  dependencies: ToolHealthDependency[];
+  latencyMs: number;
+}
+
 export interface ToolServerStatus {
   key: string;
   configured: boolean;
   discovered: boolean;
+  healthy?: boolean;
   error?: string;
+  healthError?: string;
+  health?: ToolHealthResult;
   toolNames: string[];
 }
 
