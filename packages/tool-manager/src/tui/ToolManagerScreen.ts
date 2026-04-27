@@ -1,4 +1,5 @@
 import blessed from "blessed";
+import { spawnSync } from "node:child_process";
 import type { ToolProcessSupervisor } from "../supervisor/ToolProcessSupervisor.js";
 import type { ToolRuntimeState } from "../supervisor/types.js";
 
@@ -21,7 +22,7 @@ const STATUS_COLOR: Record<ToolRuntimeState["status"], string> = {
 };
 
 const FOOTER_CONTENT = [
-  "Arrows: Navigate | Enter: Actions | R: Restart | S: Stop | L: Logs | Ctrl+C/Ctrl+D: Shutdown",
+  "Arrows: Navigate | Enter: Actions | R: Restart | S: Stop | L: Logs | Ctrl+D: Shutdown",
   "Dev-only manager. Production intent: run tools as Docker containers.",
 ].join("\n");
 
@@ -112,6 +113,7 @@ export class ToolManagerScreen {
       };
 
       this.screen.key(["C-c", "C-d"], () => {
+        if (!this.isListFocused()) return;
         void finish();
       });
 
@@ -292,7 +294,7 @@ export class ToolManagerScreen {
       border: "line",
       label: ` Logs: ${toolKey} `,
       keys: true,
-      mouse: true,
+      mouse: false,
       scrollable: true,
       alwaysScroll: true,
       tags: false,
@@ -307,8 +309,12 @@ export class ToolManagerScreen {
       left: 0,
       width: "100%-2",
       height: 1,
-      content: "Esc/Q close | Up/Down scroll | PgUp/PgDn | F toggle follow",
+      content: "Esc/Q close | Up/Down scroll | PgUp/PgDn | F follow | Y copy all logs",
     });
+
+    // Temporarily disable terminal mouse reporting so macOS terminal text
+    // selection and copy work naturally in the log viewer.
+    this.screen.program.disableMouse();
 
     const unsubscribe = this.supervisor.onLog((nextTool, line) => {
       if (nextTool !== toolKey) return;
@@ -328,12 +334,13 @@ export class ToolManagerScreen {
         unsubscribe();
         footer.detach();
         box.detach();
+        this.screen.program.enableMouse();
         this.list.focus();
         this.screen.render();
         resolve();
       };
 
-      box.key(["escape", "q", "C-c"], () => close());
+      box.key(["escape", "q"], () => close());
       box.key(["up"], () => {
         following = false;
         box.scroll(-1);
@@ -365,6 +372,35 @@ export class ToolManagerScreen {
         }
         this.screen.render();
       });
+      box.key(["y"], () => {
+        const latestLogs = this.supervisor.getState(toolKey)?.logs.join("\n") ?? box.getContent();
+        const copied = this.copyToClipboard(latestLogs);
+        footer.setContent(copied ? "Copied all logs to clipboard" : "Clipboard unavailable (macOS uses pbcopy)");
+        this.screen.render();
+      });
     });
+  }
+
+  private copyToClipboard(text: string): boolean {
+    if (!text) return false;
+
+    if (process.platform === "darwin") {
+      const result = spawnSync("pbcopy", { input: text, encoding: "utf8" });
+      return !result.error && result.status === 0;
+    }
+
+    const linuxClipboardCommands = ["wl-copy", "xclip", "xsel"];
+    for (const cmd of linuxClipboardCommands) {
+      const whichResult = spawnSync("which", [cmd], { stdio: "ignore" });
+      if (whichResult.status !== 0) continue;
+
+      const args = cmd === "xclip" ? ["-selection", "clipboard"] : cmd === "xsel" ? ["--clipboard", "--input"] : [];
+      const copyResult = spawnSync(cmd, args, { input: text, encoding: "utf8" });
+      if (!copyResult.error && copyResult.status === 0) {
+        return true;
+      }
+    }
+
+    return false;
   }
 }

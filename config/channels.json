@@ -13,6 +13,7 @@
       "port": 8080,
       "receiveAgentProcessing": true,
       "receiveSystem": true,
+      "receiveConversationMetadata": true,
       "allowedUrlProtocols": ["sandbox://", "message://"]
     }
   },
@@ -25,6 +26,7 @@
       "webhookPort": 5001,
       "receiveAgentProcessing": false,
       "receiveSystem": false,
+      "receiveConversationMetadata": false,
       "conversationTtlMs": 1800000
     }
   },
@@ -34,7 +36,8 @@
       "host": "0.0.0.0",
       "port": 8090,
       "receiveAgentProcessing": true,
-      "receiveSystem": true
+      "receiveSystem": true,
+      "receiveConversationMetadata": true
     }
   }
 }

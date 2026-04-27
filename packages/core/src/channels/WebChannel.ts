@@ -27,6 +27,7 @@ export const WebChannelSettingsSchema = z.object({
   host: z.string().min(1).optional(),
   receiveAgentProcessing: z.boolean().optional(),
   receiveSystem: z.boolean().optional(),
+  receiveConversationMetadata: z.boolean().optional(),
   allowedUrlProtocols: z.array(z.string().min(1)).optional(),
 });
 
@@ -84,6 +85,7 @@ export function createWebChannelFromConfig(
     host: result.data.host,
     receiveAgentProcessing: result.data.receiveAgentProcessing ?? true,
     receiveSystem: result.data.receiveSystem ?? false,
+    receiveConversationMetadata: result.data.receiveConversationMetadata,
     allowedUrlProtocols: normalizeAllowedUrlProtocols(result.data.allowedUrlProtocols),
     appInfo: context.appInfo,
     checkpointDbPath: context.checkpointDbPath,

@@ -7,6 +7,7 @@ export interface InitUploadParams {
   fileName?: string;
   mimeType?: string;
   expectedBytes?: number;
+  ttlSeconds?: number;
   systemPromptText?: string;
   systemPromptHash?: string;
 }

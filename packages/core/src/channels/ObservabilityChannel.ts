@@ -14,6 +14,7 @@ export const ObservabilityChannelSettingsSchema = z.object({
   host: z.string().min(1).optional(),
   receiveAgentProcessing: z.boolean().optional(),
   receiveSystem: z.boolean().optional(),
+  receiveConversationMetadata: z.boolean().optional(),
 });
 
 export interface ObservabilityChannelFactoryContext {
@@ -38,6 +39,7 @@ export function createObservabilityChannelFromConfig(
     host: result.data.host,
     receiveAgentProcessing: result.data.receiveAgentProcessing ?? true,
     receiveSystem: result.data.receiveSystem ?? true,
+    receiveConversationMetadata: result.data.receiveConversationMetadata,
     appInfo: context.appInfo,
   });
 }
