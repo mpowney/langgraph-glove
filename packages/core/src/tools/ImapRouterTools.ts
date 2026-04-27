@@ -192,7 +192,7 @@ export function createImapRouterTools(
       instance: instanceSchema,
     });
 
-    return tool(
+    const routedTool = tool(
       async (input) => {
         const rawInput = input as Record<string, unknown>;
         const instanceKey = typeof rawInput.instance === "string" ? rawInput.instance : "";
@@ -212,6 +212,16 @@ export function createImapRouterTools(
         schema,
       },
     );
+
+    // Preserve non-schema tool capability flags used by runtime arg injection.
+    const capabilityTarget = routedTool as StructuredToolInterface & {
+      supportsContentUpload?: boolean;
+      requiresPrivilegedAccess?: boolean;
+    };
+    capabilityTarget.supportsContentUpload = definition.supportsContentUpload === true;
+    capabilityTarget.requiresPrivilegedAccess = definition.requiresPrivilegedAccess === true;
+
+    return routedTool;
   });
 
   const listInstancesTool = tool(
