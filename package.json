@@ -26,7 +26,9 @@
     "ui:web:diag": "pnpm --filter @langgraph-glove/ui-web dev:diag",
     "ui:observability": "pnpm --filter @langgraph-glove/ui-observability dev",
     "macos:bundle": "bash scripts/macos-bundle-control-app.sh",
-    "macos:bundle:open": "bash scripts/macos-bundle-control-app.sh --open"
+    "macos:bundle:open": "bash scripts/macos-bundle-control-app.sh --open",
+    "e2e": "pnpm --filter @langgraph-glove/e2e test",
+    "e2e:imap": "pnpm --filter @langgraph-glove/e2e test:imap"
   },
   "pnpm": {
     "onlyBuiltDependencies": ["better-sqlite3"]
