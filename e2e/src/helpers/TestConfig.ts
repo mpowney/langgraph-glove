@@ -21,7 +21,7 @@
  */
 
 export interface E2EConfig {
-  /** Unix-socket name derived from the tool key, e.g. "imap-gmail" → "imap-gmail" */
+  /** Unix-socket name derived from the tool key, e.g. "imap-my-tool" → socket at `/tmp/langgraph-glove-imap-my-tool.sock` */
   imapToolKey: string;
   /** Transport to use when calling the tool server. */
   imapTransport: "http" | "unix-socket";

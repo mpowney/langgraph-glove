@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    // E2E tests can be slow — allow 30 s per individual assertion/call
+    // E2E tests can be slow — allow 60 s per individual assertion/call
     testTimeout: 60_000,
     hookTimeout: 30_000,
     // Run serially so each suite gets a stable connection to the tool server
