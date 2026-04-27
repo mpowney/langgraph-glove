@@ -442,9 +442,9 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
         }
 
         const ttlSeconds = typeof params["ttlSeconds"] === "number"
-          ? Math.floor(params["ttlSeconds"])
+          ? params["ttlSeconds"]
           : undefined;
-        if (ttlSeconds !== undefined && ttlSeconds <= 0) {
+        if (ttlSeconds !== undefined && (!Number.isInteger(ttlSeconds) || ttlSeconds <= 0)) {
           throw new Error("imap_get_attachment_file: 'ttlSeconds' must be a positive integer when provided");
         }
 
