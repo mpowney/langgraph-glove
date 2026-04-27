@@ -1597,7 +1597,7 @@ export class Gateway extends EventEmitter {
               throw new Error("ttlSeconds must be a positive integer when provided");
             }
 
-            const maxTtlSeconds = this.config?.gateway.contentUploadTokenTtlSeconds ?? 300;
+            const maxTtlSeconds = this.config?.gateway.contentUploadTokenTtlSeconds ?? 1800;
             const boundedTtlSeconds = Math.min(requestedTtlSeconds, maxTtlSeconds);
             const requestedExpiresAtMs = Date.now() + boundedTtlSeconds * 1000;
             const claimExpiresAtMs = Date.parse(claims.expiresAt);
@@ -1741,7 +1741,7 @@ export class Gateway extends EventEmitter {
 
   private buildContentUploadAuthByTool(conversationId: string): Record<string, ContentUploadAuthPayload> {
     const authByTool: Record<string, ContentUploadAuthPayload> = {};
-    const ttlSeconds = this.config?.gateway.contentUploadTokenTtlSeconds ?? 300;
+    const ttlSeconds = this.config?.gateway.contentUploadTokenTtlSeconds ?? 1800;
     const gatewayBaseUrl = this.resolveGatewayPublicBaseUrl();
 
     for (const tool of this.toolRegistry) {

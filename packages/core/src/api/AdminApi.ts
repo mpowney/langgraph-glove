@@ -427,7 +427,8 @@ export interface AdminApiConfig {
  */
 export class AdminApi {
   private static readonly DEFAULT_JSON_LIMIT = "64kb";
-  private static readonly CONTENT_RPC_JSON_LIMIT = "512kb";
+  // 10MB binary chunks expand to ~13.3MB in base64, plus JSON envelope overhead.
+  private static readonly CONTENT_RPC_JSON_LIMIT = "14mb";
 
   private readonly port: number;
   private readonly host: string;

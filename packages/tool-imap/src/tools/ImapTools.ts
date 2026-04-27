@@ -13,7 +13,7 @@ export interface ImapToolDefinition {
 }
 
 const DEFAULT_UPLOAD_CHUNK_BYTES = 256 * 1024;
-const DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS = 300;
+const DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS = 1800;
 
 function contentUploadAuthProperty(description: string): Record<string, unknown> {
   return {
@@ -136,7 +136,7 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
               enum: ["email", "attachment"],
               description: "Optional content source filter. When omitted, searches both email and attachment chunks.",
             },
-            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. Defaults to 300 seconds." },
+            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. Defaults to 1800 seconds (30 minutes)." },
             contentUploadAuth: contentUploadAuthProperty("Optional runtime or caller-provided gateway upload credentials used to upload attachment content items."),
           },
           required: ["query"],
@@ -297,7 +297,7 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
             messageId: { type: "string", description: "RFC822 message-id." },
             folder: { type: "string", description: "Folder used with uid." },
             uid: { type: "number", description: "IMAP uid within the folder." },
-            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. Defaults to 300 seconds." },
+            ttlSeconds: { type: "number", description: "Optional attachment content TTL in seconds. Defaults to 1800 seconds (30 minutes)." },
             contentUploadAuth: contentUploadAuthProperty("Optional runtime or caller-provided gateway upload credentials used to upload attachment content items."),
           },
         },
