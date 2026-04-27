@@ -284,10 +284,15 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
           uid: params["uid"] as number | undefined,
         };
 
-        const ttlSeconds = typeof params["ttlSeconds"] === "number"
-          ? Math.floor(params["ttlSeconds"])
-          : DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS;
-        if (ttlSeconds <= 0) {
+        const rawTtlSeconds = params["ttlSeconds"];
+        const ttlSeconds = rawTtlSeconds === undefined
+          ? DEFAULT_EMAIL_ATTACHMENT_TTL_SECONDS
+          : rawTtlSeconds;
+        if (
+          typeof ttlSeconds !== "number" ||
+          !Number.isInteger(ttlSeconds) ||
+          ttlSeconds <= 0
+        ) {
           throw new Error("imap_get_email: 'ttlSeconds' must be a positive integer when provided");
         }
 
