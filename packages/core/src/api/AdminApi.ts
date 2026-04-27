@@ -426,6 +426,9 @@ export interface AdminApiConfig {
  * administration and system tasks are cleanly separated from the chat UI.
  */
 export class AdminApi {
+  private static readonly DEFAULT_JSON_LIMIT = "64kb";
+  private static readonly CONTENT_RPC_JSON_LIMIT = "512kb";
+
   private readonly port: number;
   private readonly host: string;
   private readonly dbPath?: string;
@@ -487,7 +490,15 @@ export class AdminApi {
   }
 
   private registerRoutes(): void {
-    this.app.use(express.json({ limit: "64kb" }));
+    const defaultJsonParser = express.json({ limit: AdminApi.DEFAULT_JSON_LIMIT });
+    const contentRpcJsonParser = express.json({ limit: AdminApi.CONTENT_RPC_JSON_LIMIT });
+
+    this.app.use((req, res, next) => {
+      const parser = req.path === "/api/internal/content/rpc"
+        ? contentRpcJsonParser
+        : defaultJsonParser;
+      parser(req, res, next);
+    });
 
     const requireAuth = (req: express.Request, res: express.Response): boolean => {
       if (!this.authService) return true;
