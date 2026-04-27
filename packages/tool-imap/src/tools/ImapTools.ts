@@ -177,19 +177,20 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
           };
         }
 
-        const attachmentsToUpload = [] as Array<{ emailId?: string; messageId?: string; attachment: Awaited<ReturnType<ImapIndexService["getEmailAttachmentFiles"]>>["attachments"][number] }>;
-        for (const emailRef of emailRefs) {
-          const attachmentResult = emailRef.messageId
-            ? await service.getEmailAttachmentFiles({ messageId: emailRef.messageId })
-            : await service.getEmailAttachmentFiles({ emailId: emailRef.emailId });
-          for (const attachment of attachmentResult.attachments) {
-            attachmentsToUpload.push({
+        const attachmentResults = await Promise.all(
+          emailRefs.map(async (emailRef) => {
+            const attachmentResult = emailRef.messageId
+              ? await service.getEmailAttachmentFiles({ messageId: emailRef.messageId })
+              : await service.getEmailAttachmentFiles({ emailId: emailRef.emailId });
+
+            return attachmentResult.attachments.map((attachment) => ({
               emailId: emailRef.emailId,
               messageId: emailRef.messageId,
               attachment,
-            });
-          }
-        }
+            }));
+          }),
+        );
+        const attachmentsToUpload = attachmentResults.flat() as Array<{ emailId?: string; messageId?: string; attachment: Awaited<ReturnType<ImapIndexService["getEmailAttachmentFiles"]>>["attachments"][number] }>;
 
         if (attachmentsToUpload.length === 0) {
           return {
