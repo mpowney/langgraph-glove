@@ -447,10 +447,10 @@ export function createImapTools(service: ImapIndexService): ImapToolDefinition[]
       metadata: {
         name: "imap_get_attachment_file",
         description: describeForInstance(
-          "Retrieve attachment file bytes for a specific indexed email message-id and filename, then return the match or matches as content items for downstream channel delivery.",
+          "Retrieve attachment file contents of a specific indexed email message-id and filename, then return the match or matches as content items.",
           displayName,
         ),
-        requiresPrivilegedAccess: true,
+        requiresPrivilegedAccess: false,
         supportsContentUpload: true,
         parameters: {
           type: "object",
