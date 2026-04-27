@@ -1382,10 +1382,24 @@ export class GloveAgent {
               references,
             );
           },
-          handleToolError: (_error, runId): void => {
-            toolRunNameByRunId.delete(String(runId));
-            toolStartArgsByRunId.delete(String(runId));
-            toolAgentKeyByRunId.delete(String(runId));
+          handleToolError: (error, runId): void => {
+            const runKey = String(runId);
+            const toolName = toolRunNameByRunId.get(runKey);
+            toolRunNameByRunId.delete(runKey);
+            toolStartArgsByRunId.delete(runKey);
+            const agentKey = toolAgentKeyByRunId.get(runKey);
+            toolAgentKeyByRunId.delete(runKey);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const toolDef = toolName && toolLookup ? toolLookup(toolName) : undefined;
+            const meta: ToolEventMetadata | undefined = toolDef
+              ? { tool: toolDef, ...(agentKey ? { agentKey } : {}) }
+              : undefined;
+            onToolEvent(
+              "tool-result",
+              JSON.stringify({ name: toolName, error: errorMessage }),
+              toolName,
+              meta,
+            );
           },
         });
     const callbacks: BaseCallbackHandler[] = toolStartCallback

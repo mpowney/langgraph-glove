@@ -1018,8 +1018,19 @@ export class Gateway extends EventEmitter {
               contentItems,
             );
           },
-          handleToolError: (_error, runId): void => {
-            toolRunNameByRunId.delete(String(runId));
+          handleToolError: (error, runId): void => {
+            const runKey = String(runId);
+            const toolName = toolRunNameByRunId.get(runKey);
+            toolRunNameByRunId.delete(runKey);
+            const errorMessage = error instanceof Error ? error.message : String(error);
+            const toolDef = toolName ? this.toolRegistry.find((entry) => entry.name === toolName) : undefined;
+            const meta: ToolEventMetadata | undefined = toolDef ? { tool: toolDef } : undefined;
+            sendObservability(
+              "tool-result",
+              JSON.stringify({ name: toolName, error: errorMessage }),
+              meta,
+              toolName,
+            );
           },
         })
       : undefined;

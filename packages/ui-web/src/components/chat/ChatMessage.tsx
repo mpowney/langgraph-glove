@@ -683,9 +683,9 @@ export function ChatMessage({
     try {
       const parsed = JSON.parse(entry.content) as unknown;
       if (isObject(parsed)) {
-        const parsedPayload = parsed as { name?: string; content?: string; references?: unknown };
+        const parsedPayload = parsed as { name?: string; content?: string; error?: string; references?: unknown };
         parsedToolName = parsedPayload.name;
-        toolContent = parsedPayload.content ?? toolContent;
+        toolContent = parsedPayload.content ?? (parsedPayload.error ? `Error: ${parsedPayload.error}` : undefined) ?? toolContent;
         payloadReferences = normalizeToolReferences(parsedPayload.references);
 
         const envelope = tryParseToolMessageEnvelope(parsed);
