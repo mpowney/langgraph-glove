@@ -325,6 +325,7 @@ export const ImapVectorConfigSchema = z.object({
   embeddingModelKey: z.string().optional(),
   indexingStrategy: z.enum(["immediate", "deferred"]).optional(),
   embeddingBatchSize: z.number().int().positive().optional(),
+  searchEmbeddingTimeoutMs: z.number().int().positive().optional(),
   chunking: ImapChunkingConfigSchema.optional(),
 });
 export type ImapVectorConfig = z.infer<typeof ImapVectorConfigSchema>;

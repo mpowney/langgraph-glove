@@ -13,7 +13,7 @@ No mock services are required (beyond the optional in-process content-upload stu
 
 ```bash
 # Install e2e dependencies
-cd e2e && pnpm install
+cd tests/e2e && pnpm install
 
 # Run all e2e tests (unix-socket transport, imap-gmail key)
 E2E_IMAP_TOOL_KEY=imap-gmail pnpm test

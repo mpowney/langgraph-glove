@@ -96,6 +96,7 @@ interface ResolvedImapSettings {
   chunkSize: number;
   chunkOverlap: number;
   embeddingBatchSize: number;
+  searchEmbeddingTimeoutMs: number;
   embeddingModelKey: string;
   indexingStrategy: "immediate" | "deferred";
   indexDbPath: string;
@@ -285,7 +286,7 @@ export class ImapIndexService {
   private static readonly ECONNRESET_FAILURE_LIMIT = 5;
   private static readonly ECONNRESET_DEDUPE_MS = 5000;
 
-  private static readonly SEARCH_EMBED_TIMEOUT_MS = 10_000;
+  private static readonly DEFAULT_SEARCH_EMBED_TIMEOUT_MS = 30_000;
   private static readonly SEARCH_MAX_CANDIDATE_ROWS = 12_000;
   constructor(options: { toolKey: string; configDir?: string; secretsDir?: string }) {
     this.configDir = path.resolve(options.configDir ?? process.env["GLOVE_CONFIG_DIR"] ?? "config");
@@ -612,70 +613,101 @@ export class ImapIndexService {
           console.log(`[tool-imap] crawl aborted before folder=${folder} tool=${this.settings.toolKey}`);
           break;
         }
-        if (this.crawlRuntime) {
-          this.crawlRuntime.currentFolder = folder;
-        }
-        await client.mailboxOpen(folder);
-        const state = this.getFolderState(folder);
-        const lowerBoundUid = !input.full && state.lastUid ? state.lastUid + 1 : 1;
-        const maxUid = await this.getMaxUid(client, folder);
+        try {
+          if (this.crawlRuntime) {
+            this.crawlRuntime.currentFolder = folder;
+          }
+          await client.mailboxOpen(folder);
+          const state = this.getFolderState(folder);
+          const lowerBoundUid = !input.full && state.lastUid ? state.lastUid + 1 : 1;
+          let maxUid: number | null = null;
+          try {
+            maxUid = await this.getMaxUid(client, folder);
+          } catch (statusError) {
+            const message = statusError instanceof Error ? statusError.message : String(statusError);
+            process.stderr.write(
+              `[tool-imap] crawl status fallback tool=${this.settings.toolKey} folder=${folder}: ${message}\n`,
+            );
+          }
 
-        if (maxUid < lowerBoundUid) {
-          this.upsertFolderState(folder, maxUid, null);
-          folderSummaries.push({ folder, crawled: 0, indexed: 0, lastUid: maxUid });
-          continue;
-        }
-
-        const range = `${lowerBoundUid}:*`;
-        let folderCrawled = 0;
-        let folderIndexed = 0;
-        let newestUid = state.lastUid ?? 0;
-
-        for await (const message of client.fetch(range, {
-          uid: true,
-          envelope: true,
-          source: true,
-          threadId: true,
-        })) {
-          if (!message.uid || !message.source) continue;
-
-          const envelopeDate = message.envelope?.date ?? null;
-          if (since && envelopeDate && envelopeDate < since) {
-            newestUid = Math.max(newestUid, message.uid);
+          if (maxUid !== null && maxUid < lowerBoundUid) {
+            this.upsertFolderState(folder, maxUid, null);
+            folderSummaries.push({ folder, crawled: 0, indexed: 0, lastUid: maxUid });
             continue;
           }
 
-          const parsed = await this.normalizeMessage({
-            folder,
-            uid: message.uid,
-            source: message.source,
-            threadId: message.threadId ? String(message.threadId) : null,
-            fallbackSubject: message.envelope?.subject ?? "",
-            fallbackInReplyTo: message.envelope?.inReplyTo?.[0] ? String(message.envelope.inReplyTo[0]) : null,
-          });
+          const range = `${lowerBoundUid}:*`;
+          let folderCrawled = 0;
+          let folderIndexed = 0;
+          let newestUid = state.lastUid ?? 0;
 
-          const changed = this.upsertEmail(parsed);
-          folderCrawled += 1;
-          crawledCount += 1;
-          if (this.crawlRuntime) {
-            this.crawlRuntime.crawledEmails = crawledCount;
-          }
+          for await (const message of client.fetch(range, {
+            uid: true,
+            envelope: true,
+            source: true,
+            threadId: true,
+          })) {
+            if (!message.uid || !message.source) continue;
 
-          if (changed) {
-            progress.changedEmails += 1;
-            const chunks = await this.reindexEmail(parsed.id);
-            folderIndexed += chunks;
-            indexedCount += chunks;
+            const envelopeDate = message.envelope?.date ?? null;
+            if (since && envelopeDate && envelopeDate < since) {
+              newestUid = Math.max(newestUid, message.uid);
+              continue;
+            }
+
+            const parsed = await this.normalizeMessage({
+              folder,
+              uid: message.uid,
+              source: message.source,
+              threadId: message.threadId ? String(message.threadId) : null,
+              fallbackSubject: message.envelope?.subject ?? "",
+              fallbackInReplyTo: message.envelope?.inReplyTo?.[0] ? String(message.envelope.inReplyTo[0]) : null,
+            });
+
+            const changed = this.upsertEmail(parsed);
+            folderCrawled += 1;
+            crawledCount += 1;
             if (this.crawlRuntime) {
-              this.crawlRuntime.changedEmails = progress.changedEmails;
-              this.crawlRuntime.indexedChunks = indexedCount;
+              this.crawlRuntime.crawledEmails = crawledCount;
             }
 
-            if (this.canProcessAttachmentsForEmail(parsed.id) && parsed.attachments.length > 0) {
-              this.enqueueAttachmentTasks(parsed.id, parsed.attachments);
+            if (changed) {
+              progress.changedEmails += 1;
+              const chunks = await this.reindexEmail(parsed.id);
+              folderIndexed += chunks;
+              indexedCount += chunks;
+              if (this.crawlRuntime) {
+                this.crawlRuntime.changedEmails = progress.changedEmails;
+                this.crawlRuntime.indexedChunks = indexedCount;
+              }
+
+              if (this.canProcessAttachmentsForEmail(parsed.id) && parsed.attachments.length > 0) {
+                this.enqueueAttachmentTasks(parsed.id, parsed.attachments);
+              }
+            }
+
+            this.maybeLogCrawlProgress(progress, {
+              folder,
+              foldersCompleted: folderSummaries.length,
+              totalFolders: folders.length,
+              crawledCount,
+              changedEmails: progress.changedEmails,
+              indexedCount,
+              force: false,
+            });
+
+            newestUid = Math.max(newestUid, parsed.uid);
+
+            if (this.crawlAbortRequested || folderCrawled >= this.settings.batchSize) {
+              break;
             }
           }
 
+          this.upsertFolderState(folder, newestUid, null);
+          folderSummaries.push({ folder, crawled: folderCrawled, indexed: folderIndexed, lastUid: newestUid });
+          if (this.crawlRuntime) {
+            this.crawlRuntime.completedFolders = folderSummaries.length;
+          }
           this.maybeLogCrawlProgress(progress, {
             folder,
             foldersCompleted: folderSummaries.length,
@@ -683,30 +715,20 @@ export class ImapIndexService {
             crawledCount,
             changedEmails: progress.changedEmails,
             indexedCount,
-            force: false,
+            force: true,
           });
-
-          newestUid = Math.max(newestUid, parsed.uid);
-
-          if (this.crawlAbortRequested || folderCrawled >= this.settings.batchSize) {
-            break;
+        } catch (folderError) {
+          const message = folderError instanceof Error ? folderError.message : String(folderError);
+          const state = this.getFolderState(folder);
+          this.upsertFolderState(folder, state.lastUid ?? 0, message);
+          folderSummaries.push({ folder, crawled: 0, indexed: 0, lastUid: state.lastUid ?? 0, error: message });
+          if (this.crawlRuntime) {
+            this.crawlRuntime.completedFolders = folderSummaries.length;
           }
+          process.stderr.write(
+            `[tool-imap] crawl folder failed tool=${this.settings.toolKey} folder=${folder}: ${message}\n`,
+          );
         }
-
-        this.upsertFolderState(folder, newestUid, null);
-        folderSummaries.push({ folder, crawled: folderCrawled, indexed: folderIndexed, lastUid: newestUid });
-        if (this.crawlRuntime) {
-          this.crawlRuntime.completedFolders = folderSummaries.length;
-        }
-        this.maybeLogCrawlProgress(progress, {
-          folder,
-          foldersCompleted: folderSummaries.length,
-          totalFolders: folders.length,
-          crawledCount,
-          changedEmails: progress.changedEmails,
-          indexedCount,
-          force: true,
-        });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -2297,8 +2319,8 @@ export class ImapIndexService {
     const embeddings = this.embeddingRegistry.get(this.settings.embeddingModelKey);
     const vector = await withTimeout(
       embeddings.embedQuery(query),
-      ImapIndexService.SEARCH_EMBED_TIMEOUT_MS,
-      `embedding request timed out after ${ImapIndexService.SEARCH_EMBED_TIMEOUT_MS}ms`,
+      this.settings.searchEmbeddingTimeoutMs,
+      `embedding request timed out after ${this.settings.searchEmbeddingTimeoutMs}ms`,
     );
     return [...vector];
   }
@@ -2383,11 +2405,10 @@ export class ImapIndexService {
     }
 
     for await (const message of client.fetch(String(uid), {
-      uid: true,
       envelope: true,
       source: true,
       threadId: true,
-    })) {
+    }, { uid: true })) {
       if (message.uid !== uid || !message.source) continue;
 
       return this.normalizeMessage({
@@ -2727,6 +2748,8 @@ export class ImapIndexService {
       chunkSize: entry.vector?.chunking?.chunkSize ?? 800,
       chunkOverlap: entry.vector?.chunking?.chunkOverlap ?? 120,
       embeddingBatchSize: entry.vector?.embeddingBatchSize ?? 8,
+      searchEmbeddingTimeoutMs:
+        entry.vector?.searchEmbeddingTimeoutMs ?? ImapIndexService.DEFAULT_SEARCH_EMBED_TIMEOUT_MS,
       embeddingModelKey: entry.vector?.embeddingModelKey ?? "default",
       indexingStrategy: entry.vector?.indexingStrategy ?? "immediate",
       indexDbPath: entry.indexDbPath ?? `data/imap-${slugify(toolKey)}.sqlite`,

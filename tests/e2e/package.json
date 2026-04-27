@@ -1,5 +1,5 @@
 {
-  "name": "@langgraph-glove/e2e",
+  "name": "@langgraph-glove/tests-e2e",
   "version": "0.0.0",
   "private": true,
   "description": "End-to-end tests for langgraph-glove tool servers. Requires a running local instance.",

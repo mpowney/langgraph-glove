@@ -136,6 +136,7 @@
       "vector": {
         "embeddingModelKey": "imap-embed",
         "indexingStrategy": "immediate",
+        "searchEmbeddingTimeoutMs": 90000,
         "embeddingBatchSize": 4,
         "chunking": {
           "chunkSize": 900,
@@ -183,6 +184,7 @@
       "vector": {
         "embeddingModelKey": "imap-embed",
         "indexingStrategy": "immediate",
+        "searchEmbeddingTimeoutMs": 90000,
         "embeddingBatchSize": 4,
         "chunking": {
           "chunkSize": 900,

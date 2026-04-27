@@ -5,7 +5,7 @@
  * (see src/helpers/TestConfig.ts for the full list).
  *
  * Quick start:
- *   E2E_IMAP_TOOL_KEY=imap-gmail pnpm --filter @langgraph-glove/e2e test:imap
+ *   E2E_IMAP_TOOL_KEY=imap-gmail pnpm --filter @langgraph-glove/tests-e2e test:imap
  *
  * What is tested:
  *   1. `imap_get_email` can retrieve an email by emailId returned from a prior
