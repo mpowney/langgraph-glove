@@ -19,7 +19,10 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@langgraph-glove/observe-server": "workspace:*"
+    "@azure/msal-node": "^3.8.0",
+    "@langgraph-glove/observe-server": "workspace:*",
+    "@microsoft/agents-a365-observability": "^0.2.0-preview.1",
+    "@microsoft/agents-a365-runtime": "^0.2.0-preview.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

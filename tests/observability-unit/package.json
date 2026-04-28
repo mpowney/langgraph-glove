@@ -1,0 +1,22 @@
+{
+  "name": "@langgraph-glove/tests-observability-unit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Unit tests for observability middleware scope routing.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@langgraph-glove/config": "workspace:*",
+    "@langgraph-glove/core": "workspace:*",
+    "@langgraph-glove/observe-agent365": "workspace:*",
+    "@langgraph-glove/observe-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.2"
+  }
+}

@@ -10,6 +10,8 @@ export interface ObservabilityOutboundEvent {
   toolName?: string;
   agentKey?: string;
   payload?: unknown;
+  scopeType?: "InvokeAgent" | "ExecuteTool" | "Inference" | "Output";
+  scope?: unknown;
 }
 
 export interface ObserveSendPayload {

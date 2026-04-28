@@ -3,6 +3,7 @@ import http from "node:http";
 import net from "node:net";
 import type {
   Agent365RelayConfig,
+  Agent365RelayOptions,
   Agent365RelayStats,
   ObservabilityIngressPayload,
 } from "./types.js";
@@ -16,9 +17,14 @@ export class Agent365Relay {
     received: 0,
     forwarded: 0,
     forwardFailures: 0,
+    sdkIngested: 0,
+    sdkIngestFailures: 0,
   };
 
-  constructor(private readonly config: Agent365RelayConfig) {}
+  constructor(
+    private readonly config: Agent365RelayConfig,
+    private readonly options: Agent365RelayOptions = {},
+  ) {}
 
   async start(): Promise<void> {
     if (this.config.ingress.http.enabled) {
@@ -136,6 +142,17 @@ export class Agent365Relay {
 
   private async handleIngressPayload(payload: ObservabilityIngressPayload): Promise<void> {
     this.stats.received += 1;
+
+    if (this.options.onIngressPayload) {
+      try {
+        await this.options.onIngressPayload(payload);
+        this.stats.sdkIngested += 1;
+      } catch (error) {
+        this.stats.sdkIngestFailures += 1;
+        console.error("[observe-agent365] SDK ingest failed", error);
+      }
+    }
+
     try {
       await this.forwardToAgent365(payload);
       this.stats.forwarded += 1;

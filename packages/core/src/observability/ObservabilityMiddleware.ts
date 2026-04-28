@@ -17,7 +17,11 @@ import {
   getActiveObservabilityModules,
   shouldEmitObservabilityEvent,
 } from "./filtering.js";
-import type { ObservabilityEvent } from "./types.js";
+import type {
+  ObservabilityEvent,
+  ObservabilityScopeEvent,
+  ObservabilityScopeType,
+} from "./types.js";
 
 const logger = new Logger("ObservabilityMiddleware");
 
@@ -41,6 +45,15 @@ export interface ObservabilityMiddlewareOptions {
   config?: ObservabilityConfig;
 }
 
+export interface EmitObservabilityScopeParams {
+  conversationId: string;
+  source: EventSource;
+  scopeType: ObservabilityScopeType;
+  scope: unknown;
+  agentKey?: string;
+  toolName?: string;
+}
+
 /**
  * Routes observability events to configured in-process modules/channels.
  *
@@ -55,6 +68,16 @@ export class ObservabilityMiddleware {
   constructor(private readonly options: ObservabilityMiddlewareOptions) {
     this.channelsByName = new Map(options.channels.map((channel) => [channel.name, channel]));
     this.remoteDelivery = this.resolveSharedRemoteService(options.config);
+  }
+
+  areScopesEnabled(): boolean {
+    const config = this.options.config;
+    if (!config || config.enabled === false) return false;
+
+    const moduleKeys = getActiveObservabilityModules(config);
+    if (moduleKeys.length === 0) return false;
+
+    return moduleKeys.some((moduleKey) => config.modules?.[moduleKey]?.acceptsScopes === true);
   }
 
   emit(params: EmitObservabilityParams): void {
@@ -99,6 +122,51 @@ export class ObservabilityMiddleware {
     }
 
     this.dispatchRemoteModules(event, params.text);
+    void this.remoteDelivery?.flushDue().catch((err: unknown) => {
+      logger.error("Failed to flush durable observability queue", err);
+    });
+  }
+
+  emitScope(params: EmitObservabilityScopeParams): void {
+    const scopeEvent: ObservabilityScopeEvent = {
+      eventId: `scope_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`,
+      timestamp: new Date().toISOString(),
+      conversationId: params.conversationId,
+      source: params.source,
+      scopeType: params.scopeType,
+      scope: params.scope,
+      ...(params.agentKey ? { agentKey: params.agentKey } : {}),
+      ...(params.toolName ? { toolName: params.toolName } : {}),
+    };
+
+    const config = this.options.config;
+    if (!config || config.enabled === false) return;
+
+    const moduleKeys = getActiveObservabilityModules(config);
+    for (const moduleKey of moduleKeys) {
+      const moduleEntry = config.modules?.[moduleKey];
+      if (!moduleEntry || moduleEntry.enabled === false) continue;
+      if (moduleEntry.acceptsScopes !== true) continue;
+      if ((moduleEntry.transport ?? "in-process") === "in-process") continue;
+
+      const outboundEvent: ObservabilityOutboundEvent = {
+        eventId: scopeEvent.eventId,
+        timestamp: scopeEvent.timestamp,
+        conversationId: scopeEvent.conversationId,
+        role: "system-event",
+        source: scopeEvent.source,
+        text: serializePayload(scopeEvent.scope, "scope"),
+        ...(scopeEvent.toolName ? { toolName: scopeEvent.toolName } : {}),
+        ...(scopeEvent.agentKey ? { agentKey: scopeEvent.agentKey } : {}),
+        scopeType: scopeEvent.scopeType,
+        scope: scopeEvent.scope,
+      };
+
+      void this.remoteDelivery?.send(moduleKey, outboundEvent).catch((err: unknown) => {
+        logger.error(`Failed to send observability scope to module "${moduleKey}"`, err);
+      });
+    }
+
     void this.remoteDelivery?.flushDue().catch((err: unknown) => {
       logger.error("Failed to flush durable observability queue", err);
     });

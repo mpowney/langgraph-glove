@@ -908,8 +908,32 @@ export class Gateway extends EventEmitter {
       config: this.config?.observability,
     });
     const observabilityEnabled = params.observability?.enabled === true && targets.length > 0;
+    const scopeObservabilityEnabled = params.observability?.enabled === true
+      && observabilityMiddleware.areScopesEnabled();
     const observabilityConversationId =
       params.observability?.conversationId?.trim() || params.conversationId;
+    const invokeScopeId = `gateway_invoke_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    if (scopeObservabilityEnabled) {
+      observabilityMiddleware.emitScope({
+        conversationId: observabilityConversationId,
+        source: "gateway",
+        scopeType: "InvokeAgent",
+        scope: {
+          scopeId: invokeScopeId,
+          phase: "start",
+          graphKey,
+          prompt: params.prompt,
+          sourceChannel: params.observability?.sourceChannel ?? "scheduled",
+          schedule: {
+            taskId: params.observability?.taskId,
+            scheduleType: params.observability?.scheduleType,
+            trigger: params.observability?.trigger,
+          },
+          startedAt: new Date().toISOString(),
+        },
+      });
+    }
 
     const sendObservability = (
       role: "prompt" | "tool-call" | "tool-result" | "model-call" | "model-response" | "graph-definition" | "system-event" | "agent-transfer",
@@ -975,19 +999,56 @@ export class Gateway extends EventEmitter {
     }
 
     const llmHandler = new LlmCallbackHandler(
-      observabilityEnabled ? (formatted: string) => sendObservability("prompt", formatted) : undefined,
-      observabilityEnabled
-        ? (payload: Record<string, unknown>) =>
-            sendObservability("model-call", JSON.stringify(payload, null, 2))
+      observabilityEnabled || scopeObservabilityEnabled
+        ? (formatted: string) => {
+            if (observabilityEnabled) {
+              sendObservability("prompt", formatted);
+            }
+          }
         : undefined,
-      observabilityEnabled
-        ? (payload: Record<string, unknown>) =>
-            sendObservability("model-response", JSON.stringify(payload, null, 2))
+      observabilityEnabled || scopeObservabilityEnabled
+        ? (payload: Record<string, unknown>) => {
+            if (observabilityEnabled) {
+              sendObservability("model-call", JSON.stringify(payload, null, 2));
+            }
+            if (scopeObservabilityEnabled) {
+              observabilityMiddleware.emitScope({
+                conversationId: observabilityConversationId,
+                source: "gateway",
+                scopeType: "Inference",
+                scope: {
+                  phase: "request",
+                  request: payload,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
+          }
+        : undefined,
+      observabilityEnabled || scopeObservabilityEnabled
+        ? (payload: Record<string, unknown>) => {
+            if (observabilityEnabled) {
+              sendObservability("model-response", JSON.stringify(payload, null, 2));
+            }
+            if (scopeObservabilityEnabled) {
+              observabilityMiddleware.emitScope({
+                conversationId: observabilityConversationId,
+                source: "gateway",
+                scopeType: "Inference",
+                scope: {
+                  phase: "response",
+                  response: payload,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
+          }
         : undefined,
     );
 
     const toolRunNameByRunId = new Map<string, string>();
-    const toolCallbackHandler = observabilityEnabled
+    const toolStartedAtByRunId = new Map<string, number>();
+    const toolCallbackHandler = observabilityEnabled || scopeObservabilityEnabled
       ? BaseCallbackHandler.fromMethods({
           handleToolStart: (
             tool,
@@ -1006,6 +1067,7 @@ export class Gateway extends EventEmitter {
               metadata,
             );
             toolRunNameByRunId.set(String(runId), toolName);
+            toolStartedAtByRunId.set(String(runId), Date.now());
 
             const parsedInput = parseJsonMaybe(input);
             const toolDef = this.toolRegistry.find((entry) => entry.name === toolName);
@@ -1028,50 +1090,105 @@ export class Gateway extends EventEmitter {
                 JSON.stringify({ agent: targetAgent, request }),
               );
             } else {
-              sendObservability(
-                "tool-call",
-                JSON.stringify({
-                  name: toolName,
-                  args: parsedInput,
-                  ...(typeof toolCallId === "string" && toolCallId.length > 0 ? { id: toolCallId } : {}),
-                  type: "tool_call",
-                }),
-                meta,
-                toolName,
-              );
+              if (observabilityEnabled) {
+                sendObservability(
+                  "tool-call",
+                  JSON.stringify({
+                    name: toolName,
+                    args: parsedInput,
+                    ...(typeof toolCallId === "string" && toolCallId.length > 0 ? { id: toolCallId } : {}),
+                    type: "tool_call",
+                  }),
+                  meta,
+                  toolName,
+                );
+              }
+              if (scopeObservabilityEnabled) {
+                observabilityMiddleware.emitScope({
+                  conversationId: observabilityConversationId,
+                  source: "gateway",
+                  scopeType: "ExecuteTool",
+                  toolName,
+                  scope: {
+                    phase: "start",
+                    runId: String(runId),
+                    toolCallId,
+                    arguments: parsedInput,
+                    timestamp: new Date().toISOString(),
+                  },
+                });
+              }
             }
           },
           handleToolEnd: (output, runId): void => {
             const runKey = String(runId);
             const toolName = toolRunNameByRunId.get(runKey);
             toolRunNameByRunId.delete(runKey);
+            const startedAt = toolStartedAtByRunId.get(runKey);
+            toolStartedAtByRunId.delete(runKey);
             const toolDef = toolName ? this.toolRegistry.find((entry) => entry.name === toolName) : undefined;
             const meta: ToolEventMetadata | undefined = toolDef
               ? { tool: toolDef }
               : undefined;
             const content = typeof output === "string" ? output : safeStringify(output);
             const contentItems = this.resolveContentItemsFromToolOutput(content);
-            sendObservability(
-              "tool-result",
-              JSON.stringify({ name: toolName, content }),
-              meta,
-              toolName,
-              contentItems,
-            );
+            if (observabilityEnabled) {
+              sendObservability(
+                "tool-result",
+                JSON.stringify({ name: toolName, content }),
+                meta,
+                toolName,
+                contentItems,
+              );
+            }
+            if (scopeObservabilityEnabled) {
+              observabilityMiddleware.emitScope({
+                conversationId: observabilityConversationId,
+                source: "gateway",
+                scopeType: "ExecuteTool",
+                ...(toolName ? { toolName } : {}),
+                scope: {
+                  phase: "end",
+                  runId: runKey,
+                  durationMs: typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : undefined,
+                  result: parseJsonMaybe(content),
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
           },
           handleToolError: (error, runId): void => {
             const runKey = String(runId);
             const toolName = toolRunNameByRunId.get(runKey);
             toolRunNameByRunId.delete(runKey);
+            const startedAt = toolStartedAtByRunId.get(runKey);
+            toolStartedAtByRunId.delete(runKey);
             const errorMessage = error instanceof Error ? error.message : String(error);
             const toolDef = toolName ? this.toolRegistry.find((entry) => entry.name === toolName) : undefined;
             const meta: ToolEventMetadata | undefined = toolDef ? { tool: toolDef } : undefined;
-            sendObservability(
-              "tool-result",
-              JSON.stringify({ name: toolName, error: errorMessage }),
-              meta,
-              toolName,
-            );
+            if (observabilityEnabled) {
+              sendObservability(
+                "tool-result",
+                JSON.stringify({ name: toolName, error: errorMessage }),
+                meta,
+                toolName,
+              );
+            }
+            if (scopeObservabilityEnabled) {
+              observabilityMiddleware.emitScope({
+                conversationId: observabilityConversationId,
+                source: "gateway",
+                scopeType: "ExecuteTool",
+                ...(toolName ? { toolName } : {}),
+                scope: {
+                  phase: "error",
+                  runId: runKey,
+                  durationMs: typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : undefined,
+                  error: errorMessage,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
           },
         })
       : undefined;
@@ -1086,36 +1203,66 @@ export class Gateway extends EventEmitter {
         this.config!.agents as Record<string, AgentEntry>,
         defaultGraphEntry.orchestratorAgentKey,
       );
-      const responseText = await this.agent.invoke(
-        params.prompt,
-        params.conversationId,
-        callbacks,
-        params.personalToken,
-        undefined,
-        {
-          sourceChannel: params.observability?.sourceChannel ?? "scheduled",
-          sourceConversationId: params.conversationId,
-          sourceMetadata: {
-            trigger: params.observability?.trigger,
-            taskId: params.observability?.taskId,
-            scheduleType: params.observability?.scheduleType,
+      try {
+        const responseText = await this.agent.invoke(
+          params.prompt,
+          params.conversationId,
+          callbacks,
+          params.personalToken,
+          undefined,
+          {
+            sourceChannel: params.observability?.sourceChannel ?? "scheduled",
+            sourceConversationId: params.conversationId,
+            sourceMetadata: {
+              trigger: params.observability?.trigger,
+              taskId: params.observability?.taskId,
+              scheduleType: params.observability?.scheduleType,
+            },
+            ...(Object.keys(contentUploadAuthByTool).length > 0
+              ? { contentUploadAuthByTool }
+              : {}),
+            ...(defaultOrchestratorEntry.maxInlineToolResultBytes !== undefined
+              ? { maxInlineToolResultBytes: defaultOrchestratorEntry.maxInlineToolResultBytes }
+              : {}),
           },
-          ...(Object.keys(contentUploadAuthByTool).length > 0
-            ? { contentUploadAuthByTool }
-            : {}),
-          ...(defaultOrchestratorEntry.maxInlineToolResultBytes !== undefined
-            ? { maxInlineToolResultBytes: defaultOrchestratorEntry.maxInlineToolResultBytes }
-            : {}),
-        },
-      );
-      this.maybeScheduleConversationTitleGeneration({
-        graphKey,
-        conversationId: params.conversationId,
-        userPrompt: params.prompt,
-        assistantResponse: responseText,
-        disableConversationTitleGeneration: params.disableConversationTitleGeneration,
-      });
-      return responseText;
+        );
+        this.maybeScheduleConversationTitleGeneration({
+          graphKey,
+          conversationId: params.conversationId,
+          userPrompt: params.prompt,
+          assistantResponse: responseText,
+          disableConversationTitleGeneration: params.disableConversationTitleGeneration,
+        });
+        if (scopeObservabilityEnabled) {
+          observabilityMiddleware.emitScope({
+            conversationId: observabilityConversationId,
+            source: "gateway",
+            scopeType: "InvokeAgent",
+            scope: {
+              scopeId: invokeScopeId,
+              phase: "end",
+              output: responseText,
+              completedAt: new Date().toISOString(),
+            },
+          });
+        }
+        return responseText;
+      } catch (error) {
+        if (scopeObservabilityEnabled) {
+          observabilityMiddleware.emitScope({
+            conversationId: observabilityConversationId,
+            source: "gateway",
+            scopeType: "InvokeAgent",
+            scope: {
+              scopeId: invokeScopeId,
+              phase: "error",
+              error: error instanceof Error ? error.message : String(error),
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+        throw error;
+      }
     }
 
     if (!this.config || !this.models || !this.checkpointer) {
@@ -1129,36 +1276,66 @@ export class Gateway extends EventEmitter {
       graphEntry.orchestratorAgentKey,
     );
 
-    const result = await graph.invoke(
-      { messages: [new HumanMessage(params.prompt)] },
-      {
-        configurable: {
-          thread_id: params.conversationId,
-          conversationId: params.conversationId,
-          ...(params.personalToken ? { personalToken: params.personalToken } : {}),
-          ...(Object.keys(contentUploadAuthByTool).length > 0
-            ? { contentUploadAuthByTool }
-            : {}),
-          ...(orchestratorEntry.maxInlineToolResultBytes !== undefined
-            ? { maxInlineToolResultBytes: orchestratorEntry.maxInlineToolResultBytes }
-            : {}),
+    try {
+      const result = await graph.invoke(
+        { messages: [new HumanMessage(params.prompt)] },
+        {
+          configurable: {
+            thread_id: params.conversationId,
+            conversationId: params.conversationId,
+            ...(params.personalToken ? { personalToken: params.personalToken } : {}),
+            ...(Object.keys(contentUploadAuthByTool).length > 0
+              ? { contentUploadAuthByTool }
+              : {}),
+            ...(orchestratorEntry.maxInlineToolResultBytes !== undefined
+              ? { maxInlineToolResultBytes: orchestratorEntry.maxInlineToolResultBytes }
+              : {}),
+          },
+          recursionLimit: orchestratorEntry.recursionLimit ?? 25,
+          callbacks,
         },
-        recursionLimit: orchestratorEntry.recursionLimit ?? 25,
-        callbacks,
-      },
-    );
+      );
 
-    const last = result.messages.at(-1);
-    if (!last) throw new Error("Agent returned no messages");
-    const responseText = typeof last.content === "string" ? last.content : JSON.stringify(last.content);
-    this.maybeScheduleConversationTitleGeneration({
-      graphKey,
-      conversationId: params.conversationId,
-      userPrompt: params.prompt,
-      assistantResponse: responseText,
-      disableConversationTitleGeneration: params.disableConversationTitleGeneration,
-    });
-    return responseText;
+      const last = result.messages.at(-1);
+      if (!last) throw new Error("Agent returned no messages");
+      const responseText = typeof last.content === "string" ? last.content : JSON.stringify(last.content);
+      this.maybeScheduleConversationTitleGeneration({
+        graphKey,
+        conversationId: params.conversationId,
+        userPrompt: params.prompt,
+        assistantResponse: responseText,
+        disableConversationTitleGeneration: params.disableConversationTitleGeneration,
+      });
+      if (scopeObservabilityEnabled) {
+        observabilityMiddleware.emitScope({
+          conversationId: observabilityConversationId,
+          source: "gateway",
+          scopeType: "InvokeAgent",
+          scope: {
+            scopeId: invokeScopeId,
+            phase: "end",
+            output: responseText,
+            completedAt: new Date().toISOString(),
+          },
+        });
+      }
+      return responseText;
+    } catch (error) {
+      if (scopeObservabilityEnabled) {
+        observabilityMiddleware.emitScope({
+          conversationId: observabilityConversationId,
+          source: "gateway",
+          scopeType: "InvokeAgent",
+          scope: {
+            scopeId: invokeScopeId,
+            phase: "error",
+            error: error instanceof Error ? error.message : String(error),
+            timestamp: new Date().toISOString(),
+          },
+        });
+      }
+      throw error;
+    }
   }
 
   private maybeScheduleConversationTitleGeneration(params: {

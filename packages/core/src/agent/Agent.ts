@@ -1193,6 +1193,23 @@ export class GloveAgent {
       channels: observabilityTargets,
       config: this.config.observability,
     });
+    const scopesEnabled = observability.areScopesEnabled();
+    const invokeScopeId = `invoke_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+
+    if (scopesEnabled) {
+      observability.emitScope({
+        conversationId: message.conversationId,
+        source: "agent",
+        scopeType: "InvokeAgent",
+        scope: {
+          scopeId: invokeScopeId,
+          phase: "start",
+          input: message.text,
+          sourceChannel: sourceChannel.name,
+          startedAt: new Date().toISOString(),
+        },
+      });
+    }
 
     if (observabilityTargets.length > 0 && this.config.graphInfo) {
       const graphInfoText = JSON.stringify(
@@ -1252,6 +1269,19 @@ export class GloveAgent {
             source: "agent",
             payload,
           });
+
+          if (scopesEnabled) {
+            observability.emitScope({
+              conversationId: message.conversationId,
+              source: "agent",
+              scopeType: "Inference",
+              scope: {
+                phase: "request",
+                request: payload,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
         }
       : undefined;
     const sendModelResponse = observabilityTargets.length
@@ -1264,6 +1294,19 @@ export class GloveAgent {
             source: "agent",
             payload,
           });
+
+          if (scopesEnabled) {
+            observability.emitScope({
+              conversationId: message.conversationId,
+              source: "agent",
+              scopeType: "Inference",
+              scope: {
+                phase: "response",
+                response: payload,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
         }
       : undefined;
     const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
@@ -1314,6 +1357,7 @@ export class GloveAgent {
     const toolRunNameByRunId = new Map<string, string>();
     const toolStartArgsByRunId = new Map<string, unknown>();
     const toolAgentKeyByRunId = new Map<string, string>();
+    const toolStartedAtByRunId = new Map<string, number>();
     const toolNameByCallId = new Map<string, string>();
     const toolStartCallback = BaseCallbackHandler.fromMethods({
           handleToolStart: (
@@ -1343,6 +1387,7 @@ export class GloveAgent {
             toolRunNameByRunId.set(String(runId), toolName);
             const args = parseJsonMaybe(input);
             toolStartArgsByRunId.set(String(runId), args);
+            toolStartedAtByRunId.set(String(runId), Date.now());
             const agentKey = extractAgentKeyFromCallbackMetadata(metadata);
             if (agentKey) {
               toolAgentKeyByRunId.set(String(runId), agentKey);
@@ -1362,6 +1407,23 @@ export class GloveAgent {
               toolName,
               meta,
             );
+
+            if (scopesEnabled) {
+              observability.emitScope({
+                conversationId: message.conversationId,
+                source: "agent",
+                scopeType: "ExecuteTool",
+                toolName,
+                ...(agentKey ? { agentKey } : {}),
+                scope: {
+                  phase: "start",
+                  runId: String(runId),
+                  toolCallId,
+                  arguments: redactSensitiveArgs(args),
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
           },
           handleToolEnd: (output, runId): void => {
             const runKey = String(runId);
@@ -1371,6 +1433,8 @@ export class GloveAgent {
             toolStartArgsByRunId.delete(runKey);
             const agentKey = toolAgentKeyByRunId.get(runKey);
             toolAgentKeyByRunId.delete(runKey);
+            const startedAt = toolStartedAtByRunId.get(runKey);
+            toolStartedAtByRunId.delete(runKey);
             const content = (() => {
               if (typeof output === "string") return output;
               try {
@@ -1397,6 +1461,23 @@ export class GloveAgent {
               contentItems,
               references,
             );
+
+            if (scopesEnabled) {
+              observability.emitScope({
+                conversationId: message.conversationId,
+                source: "agent",
+                scopeType: "ExecuteTool",
+                ...(toolName ? { toolName } : {}),
+                ...(agentKey ? { agentKey } : {}),
+                scope: {
+                  phase: "end",
+                  runId: runKey,
+                  durationMs: typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : undefined,
+                  result: parseJsonMaybe(content),
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
           },
           handleToolError: (error, runId): void => {
             const runKey = String(runId);
@@ -1405,6 +1486,8 @@ export class GloveAgent {
             toolStartArgsByRunId.delete(runKey);
             const agentKey = toolAgentKeyByRunId.get(runKey);
             toolAgentKeyByRunId.delete(runKey);
+            const startedAt = toolStartedAtByRunId.get(runKey);
+            toolStartedAtByRunId.delete(runKey);
             const errorMessage = error instanceof Error ? error.message : String(error);
             const toolDef = toolName && toolLookup ? toolLookup(toolName) : undefined;
             const meta: ToolEventMetadata | undefined = toolDef
@@ -1416,6 +1499,23 @@ export class GloveAgent {
               toolName,
               meta,
             );
+
+            if (scopesEnabled) {
+              observability.emitScope({
+                conversationId: message.conversationId,
+                source: "agent",
+                scopeType: "ExecuteTool",
+                ...(toolName ? { toolName } : {}),
+                ...(agentKey ? { agentKey } : {}),
+                scope: {
+                  phase: "error",
+                  runId: runKey,
+                  durationMs: typeof startedAt === "number" ? Math.max(0, Date.now() - startedAt) : undefined,
+                  error: errorMessage,
+                  timestamp: new Date().toISOString(),
+                },
+              });
+            }
           },
         });
     const callbacks: BaseCallbackHandler[] = toolStartCallback
@@ -1449,6 +1549,21 @@ export class GloveAgent {
 
     const emitTurnComplete = (assistantText: string): void => {
       if (!assistantText.trim()) return;
+
+      if (scopesEnabled) {
+        observability.emitScope({
+          conversationId: message.conversationId,
+          source: "agent",
+          scopeType: "InvokeAgent",
+          scope: {
+            scopeId: invokeScopeId,
+            phase: "end",
+            output: assistantText,
+            completedAt: new Date().toISOString(),
+          },
+        });
+      }
+
       const onTurnComplete = this.config.onTurnComplete;
       if (!onTurnComplete) return;
       void Promise.resolve(
@@ -1505,6 +1620,19 @@ export class GloveAgent {
         const detail = formatError(err);
         const canFallbackToInvoke = fullText.length === 0;
         if (!canFallbackToInvoke) {
+          if (scopesEnabled) {
+            observability.emitScope({
+              conversationId: message.conversationId,
+              source: "agent",
+              scopeType: "InvokeAgent",
+              scope: {
+                scopeId: invokeScopeId,
+                phase: "error",
+                error: detail,
+                timestamp: new Date().toISOString(),
+              },
+            });
+          }
           throw err;
         }
 
@@ -1575,6 +1703,21 @@ export class GloveAgent {
             .catch((e: unknown) => logger.error(`Failed to broadcast to channel "${ch.name}"`, e));
         }
         emitTurnComplete(response);
+      } catch (err) {
+        if (scopesEnabled) {
+          observability.emitScope({
+            conversationId: message.conversationId,
+            source: "agent",
+            scopeType: "InvokeAgent",
+            scope: {
+              scopeId: invokeScopeId,
+              phase: "error",
+              error: formatError(err),
+              timestamp: new Date().toISOString(),
+            },
+          });
+        }
+        throw err;
       } finally {
         this.activeConversations.delete(message.conversationId);
         this.stoppedConversations.delete(message.conversationId);

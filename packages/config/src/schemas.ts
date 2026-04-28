@@ -621,6 +621,17 @@ export type ObservabilityTransport = z.infer<typeof ObservabilityTransportSchema
 
 export const ObservabilityModuleEntrySchema = z.object({
   enabled: z.boolean().optional(),
+  /**
+   * Opt-in flag for receiving structured scope payloads.
+   * When omitted/false, the module receives legacy observability events only.
+   */
+  acceptsScopes: z.boolean().optional(),
+  /**
+   * Optional package-specific settings bag consumed by the module itself.
+   * Secrets are resolved before validation, so string values may safely use
+   * `{SECRET:name}` placeholders.
+   */
+  settings: z.record(z.string(), z.unknown()).optional(),
   transport: ObservabilityTransportSchema.optional(),
   /** HTTP endpoint used by "http" transport. */
   url: z.string().url().optional(),

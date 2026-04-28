@@ -11,8 +11,22 @@
     },
     "agent365-http": {
       "enabled": false,
+      "acceptsScopes": true,
       "transport": "http",
       "url": "http://127.0.0.1:9401/events",
+      "settings": {
+        "sdk": {
+          "enabled": true,
+          "tenantId": "{SECRET:agent365TenantId}",
+          "agentId": "{SECRET:agent365AgentId}",
+          "agentName": "langgraph-glove-agent",
+          "userId": "{SECRET:agent365UserId}",
+          "userName": "{SECRET:agent365UserName}",
+          "userEmail": "{SECRET:agent365UserEmail}",
+          "clientId": "{SECRET:agent365ClientId}",
+          "clientSecret": "{SECRET:agent365ClientSecret}"
+        }
+      },
       "launcher": {
         "packageName": "@langgraph-glove/observe-agent365"
       },
@@ -22,8 +36,22 @@
     },
     "agent365-unix": {
       "enabled": false,
+      "acceptsScopes": true,
       "transport": "unix-socket",
       "socketName": "agent365-ingress",
+      "settings": {
+        "sdk": {
+          "enabled": true,
+          "tenantId": "{SECRET:agent365TenantId}",
+          "agentId": "{SECRET:agent365AgentId}",
+          "agentName": "langgraph-glove-agent",
+          "userId": "{SECRET:agent365UserId}",
+          "userName": "{SECRET:agent365UserName}",
+          "userEmail": "{SECRET:agent365UserEmail}",
+          "clientId": "{SECRET:agent365ClientId}",
+          "clientSecret": "{SECRET:agent365ClientSecret}"
+        }
+      },
       "launcher": {
         "packageName": "@langgraph-glove/observe-agent365"
       },
