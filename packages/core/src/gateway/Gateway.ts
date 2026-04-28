@@ -1,3 +1,4 @@
+import path from "node:path";
 import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import express from "express";
@@ -55,6 +56,11 @@ import type {
 } from "../rpc/RpcProtocol";
 import type { ToolEventMetadata } from "../rpc/RpcProtocol";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
+import { ObservabilityMiddleware } from "../observability/ObservabilityMiddleware.js";
+import {
+  ObserveProcessSupervisor,
+  collectObservabilityDiagnostics,
+} from "@langgraph-glove/observe-server";
 import { isGenericToolName, resolveToolName } from "../agent/toolNameUtils.js";
 
 const logger = new Logger("Gateway");
@@ -129,6 +135,8 @@ export class Gateway extends EventEmitter {
   private agentCapabilities: AgentCapabilityEntry[] = [];
   /** Tool set discovered during startup, reused to build non-default graphs on demand. */
   private discoveredTools: StructuredToolInterface[] = [];
+  /** Supervisor for observe relay processes (those with a launcher config). */
+  private observeSupervisor: ObserveProcessSupervisor | null = null;
 
   constructor(private readonly options: GatewayOptions) {
     super();
@@ -255,6 +263,23 @@ export class Gateway extends EventEmitter {
         }
       });
 
+      await this.measureStartupPhase("observe-processes", startupPhases, async () => {
+        if (this.config!.observability) {
+          const rootDir = path.resolve(this.options.configDir, "..");
+          this.observeSupervisor = new ObserveProcessSupervisor({
+            rootDir,
+            configDir: this.options.configDir,
+            secretsDir: this.options.secretsDir,
+          });
+          this.observeSupervisor.load(this.config!.observability);
+          const states = this.observeSupervisor.getStates();
+          if (states.length > 0) {
+            await this.observeSupervisor.startAll();
+            logger.info(`Observe relay processes: started ${states.length} module(s) (${states.map((s) => s.moduleKey).join(", ")})`);
+          }
+        }
+      });
+
       await this.measureStartupPhase("tool-discovery", startupPhases, async () => {
         tools = await this.discoverTools(this.config!.tools);
         this.discoveredTools = tools;
@@ -283,6 +308,7 @@ export class Gateway extends EventEmitter {
           toolLookup: (name) => this.toolRegistry.find((t) => t.name === name),
           getContentUploadAuthByTool: (conversationId) => this.buildContentUploadAuthByTool(conversationId),
           authService: this.authService ?? undefined,
+          observability: this.config!.observability,
           graphInfo: {
             graphKey: "default",
             mode: (defaultGraphEntry.subAgentKeys?.length ?? 0) > 0 ? "multi-agent" : "single-agent",
@@ -419,6 +445,15 @@ export class Gateway extends EventEmitter {
           deleteContentByRef: (contentRef) => {
             this.contentStore?.deleteContent(contentRef);
           },
+          getObservabilityStatus: async () => {
+            const rootDir = path.resolve(this.options.configDir, "..");
+            const processStates = this.observeSupervisor?.getStates() ?? [];
+            return collectObservabilityDiagnostics(
+              this.config?.observability,
+              processStates,
+              { cwd: rootDir },
+            );
+          },
         });
         await this.adminApi.listen();
         logger.info(`Admin API: http://${apiHost}:${apiPort}/api/conversations`);
@@ -486,6 +521,12 @@ export class Gateway extends EventEmitter {
       );
     }
     this.rpcClients = [];
+
+    // Stop observe relay processes
+    if (this.observeSupervisor) {
+      await this.observeSupervisor.stopAll();
+      this.observeSupervisor = null;
+    }
 
     this.setState("stopped");
     logger.info("Gateway stopped");
@@ -862,6 +903,10 @@ export class Gateway extends EventEmitter {
   }): Promise<string> {
     const graphKey = params.graphKey?.trim() || "default";
     const targets = (this.options.channels ?? []).filter((channel) => channel.receiveAgentProcessing);
+    const observabilityMiddleware = new ObservabilityMiddleware({
+      channels: targets,
+      config: this.config?.observability,
+    });
     const observabilityEnabled = params.observability?.enabled === true && targets.length > 0;
     const observabilityConversationId =
       params.observability?.conversationId?.trim() || params.conversationId;
@@ -882,20 +927,16 @@ export class Gateway extends EventEmitter {
         }
         return toolName;
       })();
-      for (const channel of targets) {
-        channel
-          .sendMessage({
-            conversationId: observabilityConversationId,
-            text,
-            role,
-            ...(resolvedToolName ? { toolName: resolvedToolName } : {}),
-            ...(toolEventMetadata ? { toolEventMetadata } : {}),
-            ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
-          })
-          .catch((err: unknown) =>
-            logger.error(`Failed to send observability message to channel "${channel.name}"`, err),
-          );
-      }
+      observabilityMiddleware.emit({
+        conversationId: observabilityConversationId,
+        text,
+        role,
+        source: "gateway",
+        ...(resolvedToolName ? { toolName: resolvedToolName } : {}),
+        ...(toolEventMetadata ? { toolEventMetadata } : {}),
+        ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
+        payload: parseJsonMaybe(text),
+      });
     };
 
     const contentUploadAuthByTool = this.buildContentUploadAuthByTool(params.conversationId);

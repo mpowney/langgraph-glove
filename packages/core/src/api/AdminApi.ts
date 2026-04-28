@@ -4,6 +4,7 @@ import { v4 as uuidv4 } from "uuid";
 import Database from "better-sqlite3";
 import type { Request } from "express";
 import { ConversationMetadataService } from "./ConversationMetadataService.js";
+import type { ObservabilityStatusSnapshot } from "@langgraph-glove/observe-server";
 import { registerSecretsRoutes } from "./SecretsRoutes.js";
 import type {
   ToolServerEntry,
@@ -414,6 +415,8 @@ export interface AdminApiConfig {
    * Defaults to the `GLOVE_SECRETS_DIR` environment variable when not supplied.
    */
   secretsDir?: string;
+  /** Optional callback returning observability diagnostics for `GET /api/observability/status`. */
+  getObservabilityStatus?: () => Promise<ObservabilityStatusSnapshot>;
 }
 
 /**
@@ -449,6 +452,7 @@ export class AdminApi {
   private readonly getContentBytesByRef?: AdminApiConfig["getContentBytesByRef"];
   private readonly deleteContentByRef?: AdminApiConfig["deleteContentByRef"];
   private readonly secretsDir?: string;
+  private readonly getObservabilityStatus?: AdminApiConfig["getObservabilityStatus"];
   private readonly app: Express;
   private httpServer?: http.Server;
   private readonly unixSocketRpcClients = new Map<string, UnixSocketRpcClient>();
@@ -475,6 +479,7 @@ export class AdminApi {
     this.getContentBytesByRef = config.getContentBytesByRef;
     this.deleteContentByRef = config.deleteContentByRef;
     this.secretsDir = config.secretsDir;
+    this.getObservabilityStatus = config.getObservabilityStatus;
 
     this.app = express();
     this.registerRoutes();
@@ -1132,6 +1137,35 @@ export class AdminApi {
         payload[key] = status;
       }
       res.json(payload);
+    });
+
+    // -----------------------------------------------------------------------
+    // Observability diagnostics (processes, queue state, and reachability probes)
+    // -----------------------------------------------------------------------
+    this.app.get("/api/observability/status", async (req, res) => {
+      if (!requireAuth(req, res)) return;
+      try {
+        const payload = await this.getObservabilityStatus?.();
+        res.json(
+          payload ?? {
+            generatedAt: new Date().toISOString(),
+            processes: [],
+            queue: {
+              configured: false,
+              dbExists: false,
+              totalPending: 0,
+              totalDueNow: 0,
+              byModule: {},
+            },
+            modules: {},
+          },
+        );
+      } catch (error) {
+        res.status(500).json({
+          error: "Failed to collect observability diagnostics",
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
     });
 
     // -----------------------------------------------------------------------

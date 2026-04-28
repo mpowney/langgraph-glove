@@ -10,6 +10,7 @@ import {
   ToolsConfigSchema,
   ToolManagerConfigSchema,
   GatewayConfigSchema,
+  ObservabilityConfigSchema,
   GraphsConfigSchema,
   SubgraphsConfigSchema,
   DEFAULT_GRAPH_ENTRY,
@@ -20,6 +21,7 @@ import {
   type ToolsConfig,
   type ToolManagerConfig,
   type GatewayConfig,
+  type ObservabilityConfig,
   type GraphsConfig,
   type SubgraphsConfig,
 } from "./schemas.js";
@@ -35,6 +37,7 @@ export interface GloveConfig {
   tools: ToolsConfig;
   toolManager: ToolManagerConfig;
   gateway: GatewayConfig;
+  observability: ObservabilityConfig;
   graphs: GraphsConfig;
   subgraphs: SubgraphsConfig;
 }
@@ -92,6 +95,7 @@ export class ConfigLoader {
     const tools = this.loadFileOptional("tools.json", ToolsConfigSchema) ?? {};
     const toolManager = this.loadFileOptional("tool-manager.json", ToolManagerConfigSchema) ?? {};
     const gateway = this.loadFileOptional("gateway.json", GatewayConfigSchema) ?? {};
+    const observability = this.loadFileOptional("observability.json", ObservabilityConfigSchema) ?? {};
     const graphs = this.loadFileOptional("graphs.json", GraphsConfigSchema) ?? {
       default: DEFAULT_GRAPH_ENTRY,
     };
@@ -99,7 +103,18 @@ export class ConfigLoader {
 
     this.validateSubgraphReferences(agents, graphs, subgraphs);
 
-    return { models, channels, agents, memories, tools, toolManager, gateway, graphs, subgraphs };
+    return {
+      models,
+      channels,
+      agents,
+      memories,
+      tools,
+      toolManager,
+      gateway,
+      observability,
+      graphs,
+      subgraphs,
+    };
   }
 
   private validateSubgraphReferences(

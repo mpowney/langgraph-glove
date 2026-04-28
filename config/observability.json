@@ -1,0 +1,41 @@
+{
+  "enabled": true,
+  "modules": {
+    "web-channel": {
+      "enabled": true,
+      "transport": "in-process"
+    },
+    "ui-observability": {
+      "enabled": true,
+      "transport": "in-process"
+    },
+    "agent365-http": {
+      "enabled": false,
+      "transport": "http",
+      "url": "http://127.0.0.1:9401/events",
+      "launcher": {
+        "packageName": "@langgraph-glove/observe-agent365"
+      },
+      "delivery": {
+        "durableRetry": true
+      }
+    },
+    "agent365-unix": {
+      "enabled": false,
+      "transport": "unix-socket",
+      "socketName": "agent365-ingress",
+      "launcher": {
+        "packageName": "@langgraph-glove/observe-agent365"
+      },
+      "delivery": {
+        "durableRetry": true
+      }
+    }
+  },
+  "queue": {
+    "dbPath": "data/observability-events.sqlite",
+    "maxAttempts": 10,
+    "baseBackoffMs": 250,
+    "maxBackoffMs": 10000
+  }
+}

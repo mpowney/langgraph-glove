@@ -569,3 +569,109 @@ export const GatewayConfigSchema = z.object({
   }).optional(),
 });
 export type GatewayConfig = z.infer<typeof GatewayConfigSchema>;
+
+// ---------------------------------------------------------------------------
+// Observability config schema
+// ---------------------------------------------------------------------------
+
+export const ObservabilityRoleSchema = z.enum([
+  "user",
+  "agent",
+  "prompt",
+  "tool-call",
+  "tool-result",
+  "agent-transfer",
+  "model-call",
+  "model-response",
+  "graph-definition",
+  "system-event",
+  "error",
+  "conversation-metadata",
+]);
+export type ObservabilityRole = z.infer<typeof ObservabilityRoleSchema>;
+
+export const ObservabilityRoleExcludeSchema = z.object({
+  tools: z.array(z.string().min(1)).optional(),
+  agents: z.array(z.string().min(1)).optional(),
+  payloadFields: z.array(z.string().min(1)).optional(),
+});
+export type ObservabilityRoleExclude = z.infer<typeof ObservabilityRoleExcludeSchema>;
+
+/**
+ * Exclusion-only filter policy. Missing fields mean "allow all".
+ */
+export const ObservabilityExcludeConfigSchema = z.object({
+  /** Excluded module keys. */
+  modules: z.array(z.string().min(1)).optional(),
+  /** Excluded event roles. */
+  roles: z.array(ObservabilityRoleSchema).optional(),
+  /** Excluded tool names. */
+  tools: z.array(z.string().min(1)).optional(),
+  /** Excluded agent keys. */
+  agents: z.array(z.string().min(1)).optional(),
+  /** Dot-path fields to strip from emitted payloads. */
+  payloadFields: z.array(z.string().min(1)).optional(),
+  /** Additional exclusions scoped per role. */
+  byRole: z.record(ObservabilityRoleSchema, ObservabilityRoleExcludeSchema).optional(),
+});
+export type ObservabilityExcludeConfig = z.infer<typeof ObservabilityExcludeConfigSchema>;
+
+export const ObservabilityTransportSchema = z.enum(["in-process", "http", "unix-socket"]);
+export type ObservabilityTransport = z.infer<typeof ObservabilityTransportSchema>;
+
+export const ObservabilityModuleEntrySchema = z.object({
+  enabled: z.boolean().optional(),
+  transport: ObservabilityTransportSchema.optional(),
+  /** HTTP endpoint used by "http" transport. */
+  url: z.string().url().optional(),
+  /** Socket name used by "unix-socket" transport. */
+  socketName: z.string().min(1).optional(),
+  /** Optional static headers (secrets can be injected via {SECRET:name}). */
+  headers: z.record(z.string(), z.string()).optional(),
+  /** Optional bearer token (can be injected via {SECRET:name}). */
+  authToken: z.string().optional(),
+  /** Module-scoped exclusions (still allow-all by default when omitted). */
+  exclude: ObservabilityExcludeConfigSchema.optional(),
+  /**
+   * Optional process launcher config.  When present, the Gateway will spawn
+   * the observe relay process at startup and stop it at shutdown.
+   * Mirrors the same `launcher` field on `ToolServerEntry`.
+   */
+  launcher: ToolLauncherConfigSchema.optional(),
+  delivery: z.object({
+    durableRetry: z.boolean().optional(),
+    timeoutMs: z.number().int().positive().optional(),
+    maxAttempts: z.number().int().positive().optional(),
+  }).optional(),
+}).superRefine((value, ctx) => {
+  if (value.transport === "http" && !value.url) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["url"],
+      message: '"url" is required when observability transport is "http"',
+    });
+  }
+  if (value.transport === "unix-socket" && !value.socketName) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["socketName"],
+      message: '"socketName" is required when observability transport is "unix-socket"',
+    });
+  }
+});
+export type ObservabilityModuleEntry = z.infer<typeof ObservabilityModuleEntrySchema>;
+
+export const ObservabilityConfigSchema = z.object({
+  enabled: z.boolean().optional(),
+  /** Global exclusions applied to all modules first. */
+  exclude: ObservabilityExcludeConfigSchema.optional(),
+  /** Observability module definitions keyed by module name. */
+  modules: z.record(z.string(), ObservabilityModuleEntrySchema).optional(),
+  queue: z.object({
+    dbPath: z.string().optional(),
+    maxAttempts: z.number().int().positive().optional(),
+    baseBackoffMs: z.number().int().positive().optional(),
+    maxBackoffMs: z.number().int().positive().optional(),
+  }).optional(),
+});
+export type ObservabilityConfig = z.infer<typeof ObservabilityConfigSchema>;

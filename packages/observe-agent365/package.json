@@ -1,0 +1,29 @@
+{
+  "name": "@langgraph-glove/observe-agent365",
+  "version": "0.1.0",
+  "description": "Agent365 observability relay with HTTP and unix-socket ingestion",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts src/main.ts --format esm --dts --out-dir dist",
+    "dev": "tsup src/index.ts src/main.ts --format esm --dts --out-dir dist --watch",
+    "typecheck": "tsc --noEmit",
+    "clean": "rm -rf dist",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@langgraph-glove/observe-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsup": "^8.3.0",
+    "typescript": "^5.6.0"
+  }
+}

@@ -1,5 +1,6 @@
 import { HumanMessage, AIMessageChunk } from "@langchain/core/messages";
 import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import type { ObservabilityConfig } from "@langgraph-glove/config";
 import type {
   Channel,
   IncomingMessage,
@@ -11,6 +12,7 @@ import type {
 import { Logger } from "../logging/Logger";
 import { LlmCallbackHandler } from "../logging/LlmCallbackHandler";
 import type { ToolDefinition, ToolEventMetadata } from "../rpc/RpcProtocol";
+import { ObservabilityMiddleware } from "../observability/ObservabilityMiddleware.js";
 import { isGenericToolName, toolNameFromToolCallId, resolveToolName } from "./toolNameUtils.js";
 
 const logger = new Logger("Agent.ts");
@@ -680,6 +682,8 @@ export interface AgentConfig {
     sourceChannel: string;
     graphKey?: string;
   }) => void | Promise<void>;
+  /** Optional observability routing/filtering config. */
+  observability?: ObservabilityConfig;
 }
 
 /**
@@ -1185,6 +1189,10 @@ export class GloveAgent {
     const receiveAgentProcessingChannels = this.channels.filter((ch) => ch.receiveAgentProcessing);
     const mirrorTargets = receiveAgentProcessingChannels.filter((ch) => ch !== sourceChannel);
     const observabilityTargets = receiveAgentProcessingChannels;
+    const observability = new ObservabilityMiddleware({
+      channels: observabilityTargets,
+      config: this.config.observability,
+    });
 
     if (observabilityTargets.length > 0 && this.config.graphInfo) {
       const graphInfoText = JSON.stringify(
@@ -1198,15 +1206,19 @@ export class GloveAgent {
         null,
         2,
       );
-      for (const ch of observabilityTargets) {
-        ch
-          .sendMessage({
-            conversationId: message.conversationId,
-            text: graphInfoText,
-            role: "graph-definition",
-          })
-          .catch((e: unknown) => logger.error(`Failed to send graph info to channel "${ch.name}"`, e));
-      }
+      observability.emit({
+        conversationId: message.conversationId,
+        text: graphInfoText,
+        role: "graph-definition",
+        source: "agent",
+        payload: {
+          type: "graph-info",
+          graphName: this.config.graphInfo.graphKey,
+          graph: this.config.graphInfo,
+          sourceChannel: sourceChannel.name,
+          ...(message.metadata?.chatGuid !== undefined ? { chatGuid: message.metadata.chatGuid } : {}),
+        },
+      });
     }
 
     // Mirror the user's message to other receiveAgentProcessing channels before the agent replies.
@@ -1222,31 +1234,36 @@ export class GloveAgent {
     // This includes the source channel when it is configured with receiveAgentProcessing=true.
     const sendPrompt = observabilityTargets.length
       ? (formatted: string): void => {
-          for (const ch of observabilityTargets) {
-            ch
-              .sendMessage({ conversationId: message.conversationId, text: formatted, role: "prompt" })
-              .catch((e: unknown) => logger.error(`Failed to send prompt to channel "${ch.name}"`, e));
-          }
+          observability.emit({
+            conversationId: message.conversationId,
+            text: formatted,
+            role: "prompt",
+            source: "agent",
+          });
         }
       : undefined;
     const sendModelCall = observabilityTargets.length
       ? (payload: Record<string, unknown>): void => {
           const text = JSON.stringify(payload, null, 2);
-          for (const ch of observabilityTargets) {
-            ch
-              .sendMessage({ conversationId: message.conversationId, text, role: "model-call" })
-              .catch((e: unknown) => logger.error(`Failed to send model call to channel "${ch.name}"`, e));
-          }
+          observability.emit({
+            conversationId: message.conversationId,
+            text,
+            role: "model-call",
+            source: "agent",
+            payload,
+          });
         }
       : undefined;
     const sendModelResponse = observabilityTargets.length
       ? (payload: Record<string, unknown>): void => {
           const text = JSON.stringify(payload, null, 2);
-          for (const ch of observabilityTargets) {
-            ch
-              .sendMessage({ conversationId: message.conversationId, text, role: "model-response" })
-              .catch((e: unknown) => logger.error(`Failed to send model response to channel "${ch.name}"`, e));
-          }
+          observability.emit({
+            conversationId: message.conversationId,
+            text,
+            role: "model-response",
+            source: "agent",
+            payload,
+          });
         }
       : undefined;
     const handler = new LlmCallbackHandler(sendPrompt, sendModelCall, sendModelResponse);
@@ -1278,19 +1295,18 @@ export class GloveAgent {
         }
         return toolName;
       })();
-      for (const ch of observabilityTargets) {
-        ch
-          .sendMessage({
-            conversationId: message.conversationId,
-            text,
-            role,
-            toolName: resolvedToolName,
-            toolEventMetadata,
-            ...(contentItems && contentItems.length > 0 ? { contentItems } : {}),
-            ...(references && references.length > 0 ? { references } : {}),
-          })
-          .catch((e: unknown) => logger.error(`Failed to send tool event to channel "${ch.name}"`, e));
-      }
+      observability.emit({
+        conversationId: message.conversationId,
+        text,
+        role,
+        source: "agent",
+        toolName: resolvedToolName,
+        toolEventMetadata,
+        contentItems,
+        references,
+        payload: parseJsonMaybe(text),
+        agentKey: toolEventMetadata?.agentKey,
+      });
     };
 
     // Emit tool-call and tool-result events from callback hooks so UI

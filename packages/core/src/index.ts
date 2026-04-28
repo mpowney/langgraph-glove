@@ -34,6 +34,15 @@ export type { WebChannelConfig } from "./channels/WebChannel";
 export { ObservabilityChannel } from "./channels/ObservabilityChannel";
 export type { ObservabilityChannelConfig } from "./channels/ObservabilityChannel";
 
+// Observability middleware primitives
+export type { ObservabilityEvent, ObservabilityEventRole } from "./observability/types.js";
+export { ObservabilityMiddleware } from "./observability/ObservabilityMiddleware.js";
+export {
+  shouldEmitObservabilityEvent,
+  applyObservabilityPayloadExcludes,
+  getActiveObservabilityModules,
+} from "./observability/filtering.js";
+
 // Admin API
 export { AdminApi } from "./api/AdminApi";
 export type { AdminApiConfig, BrowserMessage, ConversationSummary } from "./api/AdminApi";
